@@ -8,5 +8,5 @@ edition = "2018"
 vulkano = "0.11.1"
 
 [dependencies.sdl2]
-version = "0.31.0"
+version = "0.32.0-beta.2"
 features = ["image", "mixer"]

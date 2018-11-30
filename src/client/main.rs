@@ -1,15 +1,12 @@
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 
+use super::vulkan::RenderingContext;
+
 pub fn client_main() {
     let sdl_ctx = sdl2::init().unwrap();
     let sdl_vid = sdl_ctx.video().unwrap();
-    let window = sdl_vid
-        .window("BallX World", 1280, 720)
-        .position_centered()
-        .vulkan()
-        .build()
-        .unwrap();
+    let gfx = RenderingContext::new(&sdl_vid);
 
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     'running: loop {
