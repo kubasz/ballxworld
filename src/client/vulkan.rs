@@ -1,16 +1,20 @@
 use sdl2::video::Window;
 use std::ffi::CString;
 use std::sync::Arc;
+use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::device::Device;
 use vulkano::device::DeviceExtensions;
 use vulkano::device::Features;
 use vulkano::device::Queue;
+use vulkano::format::Format;
+use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract};
 use vulkano::image::SwapchainImage;
 use vulkano::instance::Instance;
 use vulkano::instance::InstanceExtensions;
 use vulkano::instance::PhysicalDevice;
 use vulkano::instance::RawInstanceExtensions;
 use vulkano::swapchain::{PresentMode, Surface, SurfaceTransform, Swapchain};
+use vulkano::sync::{FlushError, GpuFuture};
 
 pub enum Queues {
     /// Combined Graphics+Transfer+Compute queue
@@ -26,6 +30,9 @@ pub struct RenderingContext {
     queues: Queues,
     swapchain: Arc<Swapchain<()>>,
     swapimages: Vec<Arc<SwapchainImage<()>>>,
+    mainpass: Arc<RenderPassAbstract + Send + Sync>,
+    framebuffers: Vec<Arc<FramebufferAbstract + Send + Sync>>,
+    previous_frame_end: Box<GpuFuture>,
 }
 
 impl RenderingContext {
@@ -120,6 +127,39 @@ impl RenderingContext {
             .expect("failed to create swapchain")
         };
 
+        let mainpass = Arc::new(
+            single_pass_renderpass!(device.clone(),
+                attachments: {
+                    color: {
+                        load: Clear,
+                        store: Store,
+                        format: swapchain.format(),
+                        samples: 1,
+                    }
+                },
+                pass: {
+                    color: [color],
+                    depth_stencil: {}
+                }
+            )
+            .unwrap(),
+        );
+
+        let framebuffers: Vec<_> = swapimages
+            .iter()
+            .map(|img| {
+                Arc::new(
+                    Framebuffer::start(mainpass.clone())
+                        .add(img.clone())
+                        .unwrap()
+                        .build()
+                        .unwrap(),
+                ) as Arc<FramebufferAbstract + Send + Sync>
+            })
+            .collect();
+
+        let previous_frame_end = Box::new(vulkano::sync::now(device.clone()));
+
         RenderingContext {
             window,
             instance_extensions,
@@ -129,6 +169,50 @@ impl RenderingContext {
             queues: Queues::Combined(queue),
             swapchain,
             swapimages,
+            mainpass,
+            framebuffers,
+            previous_frame_end,
+        }
+    }
+
+    pub fn draw_next_frame(&mut self) {
+        self.previous_frame_end.cleanup_finished();
+        let Queues::Combined(ref queue) = self.queues;
+        let (image_num, acquire_future) =
+            vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None).unwrap();
+        let cmdbuf =
+            AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), queue.family())
+                .unwrap()
+                .begin_render_pass(
+                    self.framebuffers[image_num].clone(),
+                    false,
+                    vec![[0.0, 0.0, 1.0, 1.0].into()],
+                )
+                .unwrap()
+                .end_render_pass()
+                .unwrap()
+                .build()
+                .unwrap();
+        let myfuture = std::mem::replace(
+            &mut self.previous_frame_end,
+            Box::new(vulkano::sync::now(self.device.clone())),
+        );
+        let future = myfuture
+            .join(acquire_future)
+            .then_execute(queue.clone(), cmdbuf)
+            .unwrap()
+            .then_swapchain_present(queue.clone(), self.swapchain.clone(), image_num)
+            .then_signal_fence_and_flush();
+        match future {
+            Ok(future) => {
+                self.previous_frame_end = Box::new(future);
+            }
+            Err(FlushError::OutOfDate) => {
+                // out of date
+            }
+            Err(e) => {
+                println!("{:?}", e);
+            }
         }
     }
 }
