@@ -1,19 +1,19 @@
 use sdl2::video::Window;
 use std::ffi::CString;
 use std::sync::Arc;
-use vulkano::command_buffer::AutoCommandBufferBuilder;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
 use vulkano::device::Device;
-use vulkano::device::DeviceExtensions;
-use vulkano::device::Features;
 use vulkano::device::Queue;
-use vulkano::format::Format;
 use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract};
 use vulkano::image::SwapchainImage;
 use vulkano::instance::Instance;
 use vulkano::instance::InstanceExtensions;
 use vulkano::instance::PhysicalDevice;
 use vulkano::instance::RawInstanceExtensions;
-use vulkano::swapchain::{PresentMode, Surface, SurfaceTransform, Swapchain};
+use vulkano::pipeline::viewport::Viewport;
+use vulkano::swapchain::{
+    AcquireError, PresentMode, Surface, SurfaceTransform, Swapchain, SwapchainCreationError,
+};
 use vulkano::sync::{FlushError, GpuFuture};
 
 pub enum Queues {
@@ -22,17 +22,47 @@ pub enum Queues {
 }
 
 pub struct RenderingContext {
-    window: Window,
-    instance_extensions: InstanceExtensions,
-    instance: Arc<Instance>,
-    surface: Arc<Surface<()>>,
-    device: Arc<Device>,
-    queues: Queues,
-    swapchain: Arc<Swapchain<()>>,
-    swapimages: Vec<Arc<SwapchainImage<()>>>,
+    pub window: Window,
+    pub instance_extensions: InstanceExtensions,
+    pub instance: Arc<Instance>,
+    pub surface: Arc<Surface<()>>,
+    pub device: Arc<Device>,
+    pub queues: Queues,
+    pub swapchain: Arc<Swapchain<()>>,
+    pub swapimages: Vec<Arc<SwapchainImage<()>>>,
+    pub mainpass: Arc<RenderPassAbstract + Send + Sync>,
+    pub framebuffers: Vec<Arc<FramebufferAbstract + Send + Sync>>,
+    pub dynamic_state: DynamicState,
+    pub previous_frame_end: Box<GpuFuture>,
+    pub outdated_swapchain: bool,
+}
+
+fn generate_updated_framebuffers(
+    swapimages: &[Arc<SwapchainImage<()>>],
     mainpass: Arc<RenderPassAbstract + Send + Sync>,
-    framebuffers: Vec<Arc<FramebufferAbstract + Send + Sync>>,
-    previous_frame_end: Box<GpuFuture>,
+    dynamic_state: &mut DynamicState,
+) -> Vec<Arc<FramebufferAbstract + Send + Sync>> {
+    let dimensions = swapimages[0].dimensions();
+
+    let viewport = Viewport {
+        origin: [0.0, 0.0],
+        dimensions: [dimensions[0] as f32, dimensions[1] as f32],
+        depth_range: 0.0..1.0,
+    };
+    dynamic_state.viewports = Some(vec![viewport]);
+
+    swapimages
+        .iter()
+        .map(|img| {
+            Arc::new(
+                Framebuffer::start(mainpass.clone())
+                    .add(img.clone())
+                    .unwrap()
+                    .build()
+                    .unwrap(),
+            ) as Arc<FramebufferAbstract + Send + Sync>
+        })
+        .collect::<Vec<_>>()
 }
 
 impl RenderingContext {
@@ -145,18 +175,14 @@ impl RenderingContext {
             .unwrap(),
         );
 
-        let framebuffers: Vec<_> = swapimages
-            .iter()
-            .map(|img| {
-                Arc::new(
-                    Framebuffer::start(mainpass.clone())
-                        .add(img.clone())
-                        .unwrap()
-                        .build()
-                        .unwrap(),
-                ) as Arc<FramebufferAbstract + Send + Sync>
-            })
-            .collect();
+        let mut dynamic_state = DynamicState {
+            line_width: None,
+            viewports: None,
+            scissors: None,
+        };
+
+        let framebuffers =
+            generate_updated_framebuffers(&swapimages, mainpass.clone(), &mut dynamic_state);
 
         let previous_frame_end = Box::new(vulkano::sync::now(device.clone()));
 
@@ -171,15 +197,49 @@ impl RenderingContext {
             swapimages,
             mainpass,
             framebuffers,
+            dynamic_state,
             previous_frame_end,
+            outdated_swapchain: false,
         }
     }
 
-    pub fn draw_next_frame(&mut self) {
+    pub fn draw_next_frame(&mut self, _delta_time: f64) {
         self.previous_frame_end.cleanup_finished();
+
+        if self.outdated_swapchain {
+            let dims = {
+                let d = self.window.vulkan_drawable_size();
+                [d.0, d.1]
+            };
+
+            let (new_swapchain, new_images) = match self.swapchain.recreate_with_dimension(dims) {
+                Ok(r) => r,
+                // occurs on manual resizes, just ignore
+                Err(SwapchainCreationError::UnsupportedDimensions) => return,
+                Err(err) => panic!("{:?}", err),
+            };
+
+            self.swapchain = new_swapchain;
+            self.swapimages = new_images;
+            self.framebuffers = generate_updated_framebuffers(
+                &self.swapimages,
+                self.mainpass.clone(),
+                &mut self.dynamic_state,
+            );
+
+            self.outdated_swapchain = false;
+        }
+
         let Queues::Combined(ref queue) = self.queues;
         let (image_num, acquire_future) =
-            vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None).unwrap();
+            match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
+                Ok(r) => r,
+                Err(AcquireError::OutOfDate) => {
+                    self.outdated_swapchain = true;
+                    return;
+                }
+                Err(err) => panic!("{:?}", err),
+            };
         let cmdbuf =
             AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), queue.family())
                 .unwrap()
@@ -197,6 +257,7 @@ impl RenderingContext {
             &mut self.previous_frame_end,
             Box::new(vulkano::sync::now(self.device.clone())),
         );
+
         let future = myfuture
             .join(acquire_future)
             .then_execute(queue.clone(), cmdbuf)
@@ -208,7 +269,7 @@ impl RenderingContext {
                 self.previous_frame_end = Box::new(future);
             }
             Err(FlushError::OutOfDate) => {
-                // out of date
+                self.outdated_swapchain = true;
             }
             Err(e) => {
                 println!("{:?}", e);
