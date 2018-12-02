@@ -1,20 +1,61 @@
 use sdl2::video::Window;
 use std::ffi::CString;
 use std::sync::Arc;
+use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
-use vulkano::device::Device;
-use vulkano::device::Queue;
-use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract};
+use vulkano::device::{Device, Queue};
+use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
 use vulkano::image::SwapchainImage;
-use vulkano::instance::Instance;
-use vulkano::instance::InstanceExtensions;
-use vulkano::instance::PhysicalDevice;
-use vulkano::instance::RawInstanceExtensions;
+use vulkano::instance::{Instance, InstanceExtensions, PhysicalDevice, RawInstanceExtensions};
 use vulkano::pipeline::viewport::Viewport;
+use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::swapchain::{
     AcquireError, PresentMode, Surface, SurfaceTransform, Swapchain, SwapchainCreationError,
 };
 use vulkano::sync::{FlushError, GpuFuture};
+
+mod vox {
+    #[derive(Copy, Clone, Default)]
+    pub struct VoxelVertex {
+        pub position: [f32; 4],
+        pub color: [f32; 4],
+    }
+    impl_vertex!(VoxelVertex, position, color);
+
+    pub mod vs {
+        vulkano_shaders::shader! {
+        ty: "vertex",
+            src: "
+#version 450
+
+layout(location = 0) in vec4 position;
+layout(location = 1) in vec4 color;
+
+layout(location = 0) out vec4 v_color;
+
+void main() {
+    gl_Position = vec4(position.xyz, 1.0);
+    v_color = color;
+}"
+        }
+    }
+
+    pub mod fs {
+        vulkano_shaders::shader! {
+        ty: "fragment",
+            src: "
+#version 450
+
+layout(location = 0) in vec4 v_color;
+
+layout(location = 0) out vec4 f_color;
+
+void main() {
+    f_color = v_color;
+}"
+        }
+    }
+}
 
 pub enum Queues {
     /// Combined Graphics+Transfer+Compute queue
@@ -35,6 +76,8 @@ pub struct RenderingContext {
     pub dynamic_state: DynamicState,
     pub previous_frame_end: Box<GpuFuture>,
     pub outdated_swapchain: bool,
+    pub voxel_pipeline: Arc<GraphicsPipelineAbstract + Send + Sync>,
+    pub vbuffer: Arc<CpuAccessibleBuffer<[vox::VoxelVertex]>>,
 }
 
 fn generate_updated_framebuffers(
@@ -73,6 +116,7 @@ impl RenderingContext {
             .position_centered()
             .vulkan()
             .allow_highdpi()
+            .resizable()
             .build()
             .expect("Failed to create the game window");
         let instance_extensions;
@@ -186,6 +230,42 @@ impl RenderingContext {
 
         let previous_frame_end = Box::new(vulkano::sync::now(device.clone()));
 
+        let vbuffer = {
+            let v1 = vox::VoxelVertex {
+                position: [-0.5, -0.5, 0.0, 0.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+            };
+            let v2 = vox::VoxelVertex {
+                position: [0.0, 0.5, 0.0, 0.0],
+                color: [0.0, 1.0, 0.0, 1.0],
+            };
+            let v3 = vox::VoxelVertex {
+                position: [0.5, -0.25, 0.0, 0.0],
+                color: [0.0, 0.0, 1.0, 1.0],
+            };
+            CpuAccessibleBuffer::from_iter(
+                device.clone(),
+                BufferUsage::vertex_buffer(),
+                vec![v1, v2, v3].into_iter(),
+            )
+            .unwrap()
+        };
+
+        let voxel_pipeline = {
+            let vs = vox::vs::Shader::load(device.clone()).expect("Failed to create VS module");
+            let fs = vox::fs::Shader::load(device.clone()).expect("Failed to create FS module");
+            Arc::new(
+                GraphicsPipeline::start()
+                    .vertex_input_single_buffer::<vox::VoxelVertex>()
+                    .vertex_shader(vs.main_entry_point(), ())
+                    .viewports_dynamic_scissors_irrelevant(1)
+                    .fragment_shader(fs.main_entry_point(), ())
+                    .render_pass(Subpass::from(mainpass.clone(), 0).unwrap())
+                    .build(device.clone())
+                    .expect("Could not create voxel graphics pipeline"),
+            )
+        };
+
         RenderingContext {
             window,
             instance_extensions,
@@ -200,6 +280,8 @@ impl RenderingContext {
             dynamic_state,
             previous_frame_end,
             outdated_swapchain: false,
+            voxel_pipeline,
+            vbuffer,
         }
     }
 
@@ -240,17 +322,29 @@ impl RenderingContext {
                 }
                 Err(err) => panic!("{:?}", err),
             };
+
         let cmdbuf =
             AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), queue.family())
                 .unwrap()
                 .begin_render_pass(
                     self.framebuffers[image_num].clone(),
                     false,
-                    vec![[0.0, 0.0, 1.0, 1.0].into()],
+                    vec![[0.1, 0.1, 0.1, 1.0].into()],
                 )
                 .unwrap()
+                //
+                .draw(
+                    self.voxel_pipeline.clone(),
+                    &self.dynamic_state,
+                    vec![self.vbuffer.clone()],
+                    (),
+                    (),
+                )
+                .unwrap()
+                //
                 .end_render_pass()
                 .unwrap()
+                //
                 .build()
                 .unwrap();
         let myfuture = std::mem::replace(

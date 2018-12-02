@@ -1,5 +1,6 @@
 use sdl2::event::{Event, WindowEvent};
 
+use super::super::world;
 use super::vulkan::RenderingContext;
 
 const PHYSICS_FRAME_TIME: f64 = 1.0 / 60.0;
@@ -7,8 +8,16 @@ const PHYSICS_FRAME_TIME: f64 = 1.0 / 60.0;
 pub fn client_main() {
     let sdl_ctx = sdl2::init().unwrap();
     let sdl_vid = sdl_ctx.video().unwrap();
-    let sdl_timer = sdl_ctx.timer().unwrap();
+    let mut sdl_timer = sdl_ctx.timer().unwrap();
     let mut gfx = RenderingContext::new(&sdl_vid);
+
+    let mut vxreg = world::VoxelRegistry::new();
+    vxreg
+        .build_definition()
+        .name("core:green")
+        .has_physical_properties()
+        .finish()
+        .unwrap();
 
     let pf_mult = 1.0 / sdl_timer.performance_frequency() as f64;
     let mut previous_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
@@ -46,5 +55,7 @@ pub fn client_main() {
                 _ => {}
             }
         }
+
+        sdl_timer.delay(16);
     }
 }

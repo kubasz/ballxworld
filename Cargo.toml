@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 vulkano = "0.11.1"
+vulkano-shaders = "0.11.1"
 
 [dependencies.sdl2]
 version = "0.32.0-beta.2"
