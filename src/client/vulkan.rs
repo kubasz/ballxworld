@@ -14,7 +14,12 @@ use vulkano::swapchain::{
 };
 use vulkano::sync::{FlushError, GpuFuture};
 
-mod vox {
+pub mod vox {
+    pub struct ChunkBuffers {
+        pub vertices: Vec<VoxelVertex>,
+        pub indices: Vec<u32>
+    }
+
     #[derive(Copy, Clone, Default)]
     pub struct VoxelVertex {
         pub position: [f32; 4],
