@@ -1,6 +1,11 @@
-use sdl2::video::Window;
 use std::ffi::CString;
 use std::sync::Arc;
+
+use cgmath::prelude::*;
+use cgmath::{Matrix4, Rad, PerspectiveFov, vec3};
+
+use sdl2::video::Window;
+
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
 use vulkano::device::{Device, Queue};
@@ -12,12 +17,14 @@ use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::swapchain::{
     AcquireError, PresentMode, Surface, SurfaceTransform, Swapchain, SwapchainCreationError,
 };
+use vulkano::descriptor::DescriptorSet;
+use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::sync::{FlushError, GpuFuture};
 
 pub mod vox {
     pub struct ChunkBuffers {
         pub vertices: Vec<VoxelVertex>,
-        pub indices: Vec<u32>
+        pub indices: Vec<u32>,
     }
 
     #[derive(Copy, Clone, Default)]
@@ -27,37 +34,24 @@ pub mod vox {
     }
     impl_vertex!(VoxelVertex, position, color);
 
+    #[derive(Copy, Clone, Default)]
+    pub struct VoxelUBO {
+        pub model: [f32; 16],
+        pub view: [f32; 16],
+        pub proj: [f32; 16],
+    }
+
     pub mod vs {
-        vulkano_shaders::shader! {
+        shader! {
         ty: "vertex",
-            src: "
-#version 450
-
-layout(location = 0) in vec4 position;
-layout(location = 1) in vec4 color;
-
-layout(location = 0) out vec4 v_color;
-
-void main() {
-    gl_Position = vec4(position.xyz, 1.0);
-    v_color = color;
-}"
+        path: "src/client/shaders/voxel.vert"
         }
     }
 
     pub mod fs {
-        vulkano_shaders::shader! {
+        shader! {
         ty: "fragment",
-            src: "
-#version 450
-
-layout(location = 0) in vec4 v_color;
-
-layout(location = 0) out vec4 f_color;
-
-void main() {
-    f_color = v_color;
-}"
+        path: "src/client/shaders/voxel.frag"
         }
     }
 }
@@ -83,6 +77,9 @@ pub struct RenderingContext {
     pub outdated_swapchain: bool,
     pub voxel_pipeline: Arc<GraphicsPipelineAbstract + Send + Sync>,
     pub vbuffer: Arc<CpuAccessibleBuffer<[vox::VoxelVertex]>>,
+    pub ibuffer: Arc<CpuAccessibleBuffer<[u32]>>,
+    pub ubuffers: Vec<Arc<CpuAccessibleBuffer<vox::VoxelUBO>>>,
+    pub udsets: Vec<Arc<DescriptorSet + Send + Sync>>,
 }
 
 fn generate_updated_framebuffers(
@@ -132,12 +129,14 @@ impl RenderingContext {
             let raw_exts = RawInstanceExtensions::new(
                 sdl_exts
                     .into_iter()
-                    .map(|x| CString::new(x).expect("Invalid required VK instance extension")),
+                    .map(|x| CString::new(x)
+                        .expect("Invalid required VK instance extension")),
             );
             instance_extensions = InstanceExtensions::from(&raw_exts);
-            Instance::new(None, &instance_extensions, None)
+            Instance::new(Some(&app_info_from_cargo_toml!()),
+                          &instance_extensions, None)
         }
-        .expect("Failed to create Vulkan instance");
+            .expect("Failed to create Vulkan instance");
         let surface = Arc::new(unsafe {
             use vulkano::VulkanObject;
             let sdlvki = instance.internal_object() as sdl2::video::VkInstance;
@@ -177,7 +176,7 @@ impl RenderingContext {
                 &device_ext,
                 [(queue_family, 0.5)].iter().cloned(),
             )
-            .expect("failed to create device")
+                .expect("failed to create device")
         };
         let queue = queues.next().expect("Couldn't create rendering queue");
 
@@ -203,7 +202,7 @@ impl RenderingContext {
                 true,
                 None,
             )
-            .expect("failed to create swapchain")
+                .expect("failed to create swapchain")
         };
 
         let mainpass = Arc::new(
@@ -221,7 +220,7 @@ impl RenderingContext {
                     depth_stencil: {}
                 }
             )
-            .unwrap(),
+                .unwrap(),
         );
 
         let mut dynamic_state = DynamicState {
@@ -253,8 +252,14 @@ impl RenderingContext {
                 BufferUsage::vertex_buffer(),
                 vec![v1, v2, v3].into_iter(),
             )
-            .unwrap()
+                .unwrap()
         };
+
+        let ibuffer = CpuAccessibleBuffer::from_iter(
+            device.clone(),
+            BufferUsage::index_buffer(),
+            vec![0, 1, 2].into_iter(),
+        ).unwrap();
 
         let voxel_pipeline = {
             let vs = vox::vs::Shader::load(device.clone()).expect("Failed to create VS module");
@@ -267,9 +272,26 @@ impl RenderingContext {
                     .fragment_shader(fs.main_entry_point(), ())
                     .render_pass(Subpass::from(mainpass.clone(), 0).unwrap())
                     .build(device.clone())
-                    .expect("Could not create voxel graphics pipeline"),
+                    .expect("Could not create voxel graphics pipeline")
             )
         };
+
+        let mut ubuffers = Vec::new();
+        let mut udsets: Vec<Arc<DescriptorSet + Send + Sync>> = Vec::new();
+        for _ in 0..swapimages.len() {
+            let ubuffer: Arc<CpuAccessibleBuffer<vox::VoxelUBO>> = CpuAccessibleBuffer::from_data(
+                device.clone(),
+                BufferUsage::uniform_buffer(),
+                Default::default(),
+            ).unwrap();
+            ubuffers.push(ubuffer.clone());
+            let udset =
+                Arc::new(PersistentDescriptorSet::start(voxel_pipeline.clone(), 0)
+                    .add_buffer(ubuffer.clone())
+                    .unwrap()
+                    .build().unwrap());
+            udsets.push(udset);
+        }
 
         RenderingContext {
             window,
@@ -287,7 +309,24 @@ impl RenderingContext {
             outdated_swapchain: false,
             voxel_pipeline,
             vbuffer,
+            ibuffer,
+            ubuffers,
+            udsets,
         }
+    }
+
+    pub fn d_reset_buffers(&mut self, new_data: vox::ChunkBuffers) {
+        self.vbuffer = CpuAccessibleBuffer::from_iter(
+            self.device.clone(),
+            BufferUsage::vertex_buffer(),
+            new_data.vertices.into_iter(),
+        ).unwrap();
+
+        self.ibuffer = CpuAccessibleBuffer::from_iter(
+            self.device.clone(),
+            BufferUsage::index_buffer(),
+            new_data.indices.into_iter(),
+        ).unwrap();
     }
 
     pub fn draw_next_frame(&mut self, _delta_time: f64) {
@@ -299,7 +338,8 @@ impl RenderingContext {
                 [d.0, d.1]
             };
 
-            let (new_swapchain, new_images) = match self.swapchain.recreate_with_dimension(dims) {
+            let (new_swapchain, new_images) =
+            match self.swapchain.recreate_with_dimension(dims) {
                 Ok(r) => r,
                 // occurs on manual resizes, just ignore
                 Err(SwapchainCreationError::UnsupportedDimensions) => return,
@@ -328,8 +368,26 @@ impl RenderingContext {
                 Err(err) => panic!("{:?}", err),
             };
 
+        {
+            let mut ubo = self.ubuffers[image_num].write().unwrap();
+            let mmat: Matrix4<f32> = One::one();
+            ubo.model = AsRef::<[f32; 16]>::as_ref(&mmat).clone();
+            let mview: Matrix4<f32> = Matrix4::from_translation(vec3(0.0,0.0,-90.0));
+            ubo.view = AsRef::<[f32; 16]>::as_ref(&mview).clone();
+            let swdim = self.swapchain.dimensions();
+            let sfdim = [swdim[0] as f32, swdim[1] as f32];
+            let mproj: Matrix4<f32> = Matrix4::from(PerspectiveFov {
+                fovy: Rad(75.0*3.14/180.0),
+                aspect: sfdim[0] / sfdim[1],
+                near: 0.1,
+                far: 1000.0,
+            });
+            ubo.proj = AsRef::<[f32; 16]>::as_ref(&mproj).clone();
+        }
+
         let cmdbuf =
-            AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), queue.family())
+            AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(),
+                                                              queue.family())
                 .unwrap()
                 .begin_render_pass(
                     self.framebuffers[image_num].clone(),
@@ -338,11 +396,12 @@ impl RenderingContext {
                 )
                 .unwrap()
                 //
-                .draw(
+                .draw_indexed(
                     self.voxel_pipeline.clone(),
                     &self.dynamic_state,
                     vec![self.vbuffer.clone()],
-                    (),
+                    self.ibuffer.clone(),
+                    self.udsets[image_num].clone(),
                     (),
                 )
                 .unwrap()

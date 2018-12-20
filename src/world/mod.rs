@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
-const VOXEL_CHUNK_DIM: usize = 32;
-const VOXEL_CHUNK_CUBES: usize = VOXEL_CHUNK_DIM * VOXEL_CHUNK_DIM * VOXEL_CHUNK_DIM;
+pub const VOXEL_CHUNK_DIM: usize = 32;
+pub const VOXEL_CHUNK_CUBES: usize = VOXEL_CHUNK_DIM * VOXEL_CHUNK_DIM * VOXEL_CHUNK_DIM;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct VoxelDatum {
     pub id: u32,
 }
@@ -14,16 +14,23 @@ pub struct VoxelChunk {
     pub data: [VoxelDatum; VOXEL_CHUNK_CUBES],
 }
 
+impl VoxelChunk {
+    pub fn new() -> VoxelChunk {
+        VoxelChunk { data: [Default::default(); VOXEL_CHUNK_CUBES] }
+    }
+}
+
 type VoxelId = u32;
 
 #[derive(Debug, Clone, Default)]
 pub struct VoxelDefinition {
-    id: VoxelId,
+    pub id: VoxelId,
     /// eg. core:air
-    name: String,
-    has_mesh: bool,
-    has_collisions: bool,
-    has_hitbox: bool,
+    pub name: String,
+    pub has_mesh: bool,
+    pub has_collisions: bool,
+    pub has_hitbox: bool,
+    pub debug_color: [f32; 3],
 }
 
 impl VoxelDefinition {
@@ -43,6 +50,7 @@ pub struct VoxelDefinitionBuilder<'a> {
     has_mesh: bool,
     has_collisions: bool,
     has_hitbox: bool,
+    pub debug_color: [f32; 3],
 }
 
 #[derive(Default)]
@@ -80,6 +88,11 @@ impl<'a> VoxelDefinitionBuilder<'a> {
         self
     }
 
+    pub fn debug_color(mut self, r: f32, g: f32, b: f32) -> Self {
+        self.debug_color = [r, g, b];
+        self
+    }
+
     pub fn finish(self) -> Result<(), ()> {
         let def = Arc::new(VoxelDefinition {
             id: self.id,
@@ -87,6 +100,7 @@ impl<'a> VoxelDefinitionBuilder<'a> {
             has_mesh: self.has_mesh,
             has_collisions: self.has_collisions,
             has_hitbox: self.has_hitbox,
+            debug_color: self.debug_color,
         });
         if self.registry.definitions.contains_key(&def.id) {
             return Err(());
@@ -104,6 +118,7 @@ impl VoxelRegistry {
         let mut reg: VoxelRegistry = Default::default();
         reg.build_definition()
             .name("core:void")
+            .debug_color(0.0, 0.0, 0.0)
             .finish().unwrap();
         reg
     }
@@ -120,6 +135,11 @@ impl VoxelRegistry {
             has_mesh: false,
             has_collisions: false,
             has_hitbox: false,
+            debug_color: [1.0, 0.0, 1.0],
         }
+    }
+
+    pub fn get_definition_from_id(&self, datum: &VoxelDatum) -> &VoxelDefinition {
+        &self.definitions[&datum.id]
     }
 }

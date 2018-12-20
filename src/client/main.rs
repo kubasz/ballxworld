@@ -2,6 +2,8 @@ use sdl2::event::{Event, WindowEvent};
 
 use super::super::world;
 use super::vulkan::RenderingContext;
+use crate::client::voxmesh::mesh_from_chunk;
+use rand::Rng;
 
 const PHYSICS_FRAME_TIME: f64 = 1.0 / 60.0;
 
@@ -15,9 +17,22 @@ pub fn client_main() {
     vxreg
         .build_definition()
         .name("core:green")
+        .debug_color(0.1, 0.8, 0.1)
         .has_physical_properties()
         .finish()
         .unwrap();
+    vxreg
+        .build_definition()
+        .name("core:stone")
+        .debug_color(0.45, 0.4, 0.4)
+        .has_physical_properties()
+        .finish()
+        .unwrap();
+    let mut chunk = world::VoxelChunk::new();
+    for ch in chunk.data.iter_mut() {
+        ch.id = rand::thread_rng().gen_range(0, 3);
+    }
+    gfx.d_reset_buffers(mesh_from_chunk(&chunk, &vxreg));
 
     let pf_mult = 1.0 / sdl_timer.performance_frequency() as f64;
     let mut previous_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
