@@ -62,7 +62,10 @@ pub enum Queues {
     Combined(Arc<Queue>),
 }
 
+/// Made so that we can store the fence from each frame and wait for it
+/// without constructing a massive generic type signature.
 pub trait WaitableFuture: GpuFuture {
+    /// Wait for the fence to be signalled and unwrap the error code.
     fn wait_unwrap(&self);
 }
 impl<F> WaitableFuture for FenceSignalFuture<F> where F: GpuFuture {
@@ -70,6 +73,7 @@ impl<F> WaitableFuture for FenceSignalFuture<F> where F: GpuFuture {
         self.wait(None).unwrap();
     }
 }
+/// A do-nothing implementation for ease of use
 impl WaitableFuture for NowFuture {
     fn wait_unwrap(&self) {
         // do nothing
