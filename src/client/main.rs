@@ -67,6 +67,29 @@ pub fn client_main() {
                     }
                     _ => {}
                 },
+                Event::KeyDown {keycode, ..} => {
+                    match keycode {
+                        Some(sdl2::keyboard::Keycode::A) => {
+                            gfx.position.x += 10.0;
+                        },
+                        Some(sdl2::keyboard::Keycode::D) => {
+                            gfx.position.x -= 10.0;
+                        },
+                        Some(sdl2::keyboard::Keycode::W) => {
+                            gfx.position.z += 10.0;
+                        },
+                        Some(sdl2::keyboard::Keycode::S) => {
+                            gfx.position.z -= 10.0;
+                        },
+                        Some(sdl2::keyboard::Keycode::Q) => {
+                            gfx.position.y -= 10.0;
+                        },
+                        Some(sdl2::keyboard::Keycode::E) => {
+                            gfx.position.y += 10.0;
+                        },
+                        _ => {}
+                    }
+                },
                 _ => {}
             }
         }

@@ -2,7 +2,7 @@ use std::ffi::CString;
 use std::sync::Arc;
 
 use cgmath::prelude::*;
-use cgmath::{Matrix4, Rad, PerspectiveFov, vec3};
+use cgmath::{Matrix4, Rad, PerspectiveFov, vec3, Vector3, Deg};
 
 use sdl2::video::Window;
 
@@ -19,7 +19,8 @@ use vulkano::swapchain::{
 };
 use vulkano::descriptor::DescriptorSet;
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
-use vulkano::sync::{FlushError, GpuFuture};
+use vulkano::sync::{FlushError, GpuFuture, FenceSignalFuture, NowFuture};
+use std::cmp::max;
 
 pub mod vox {
     pub struct ChunkBuffers {
@@ -61,6 +62,20 @@ pub enum Queues {
     Combined(Arc<Queue>),
 }
 
+pub trait WaitableFuture: GpuFuture {
+    fn wait_unwrap(&self);
+}
+impl<F> WaitableFuture for FenceSignalFuture<F> where F: GpuFuture {
+    fn wait_unwrap(&self) {
+        self.wait(None).unwrap();
+    }
+}
+impl WaitableFuture for NowFuture {
+    fn wait_unwrap(&self) {
+        // do nothing
+    }
+}
+
 pub struct RenderingContext {
     pub window: Window,
     pub instance_extensions: InstanceExtensions,
@@ -73,13 +88,15 @@ pub struct RenderingContext {
     pub mainpass: Arc<RenderPassAbstract + Send + Sync>,
     pub framebuffers: Vec<Arc<FramebufferAbstract + Send + Sync>>,
     pub dynamic_state: DynamicState,
-    pub previous_frame_end: Box<GpuFuture>,
+    pub frame_fences: Vec<Option<Box<WaitableFuture>>>,
     pub outdated_swapchain: bool,
     pub voxel_pipeline: Arc<GraphicsPipelineAbstract + Send + Sync>,
     pub vbuffer: Arc<CpuAccessibleBuffer<[vox::VoxelVertex]>>,
     pub ibuffer: Arc<CpuAccessibleBuffer<[u32]>>,
     pub ubuffers: Vec<Arc<CpuAccessibleBuffer<vox::VoxelUBO>>>,
     pub udsets: Vec<Arc<DescriptorSet + Send + Sync>>,
+    pub position: Vector3<f32>,
+    pub angles: (f32, f32),
 }
 
 fn generate_updated_framebuffers(
@@ -190,7 +207,7 @@ impl RenderingContext {
             Swapchain::new(
                 device.clone(),
                 surface.clone(),
-                caps.min_image_count,
+                max(3,1+caps.min_image_count),
                 format,
                 dimensions,
                 1,
@@ -198,7 +215,7 @@ impl RenderingContext {
                 &queue,
                 SurfaceTransform::Identity,
                 alpha,
-                PresentMode::Fifo,
+                if caps.present_modes.mailbox {PresentMode::Mailbox} else {PresentMode::Fifo},
                 true,
                 None,
             )
@@ -232,7 +249,10 @@ impl RenderingContext {
         let framebuffers =
             generate_updated_framebuffers(&swapimages, mainpass.clone(), &mut dynamic_state);
 
-        let previous_frame_end = Box::new(vulkano::sync::now(device.clone()));
+        let mut frame_fences = Vec::new();
+        for _ in &swapimages {
+            frame_fences.push(None);
+        }
 
         let vbuffer = {
             let v1 = vox::VoxelVertex {
@@ -305,13 +325,15 @@ impl RenderingContext {
             mainpass,
             framebuffers,
             dynamic_state,
-            previous_frame_end,
+            frame_fences,
             outdated_swapchain: false,
             voxel_pipeline,
             vbuffer,
             ibuffer,
             ubuffers,
             udsets,
+            position: vec3(0.0,0.0,-90.0),
+            angles: (0.0, 0.0)
         }
     }
 
@@ -330,9 +352,11 @@ impl RenderingContext {
     }
 
     pub fn draw_next_frame(&mut self, _delta_time: f64) {
-        self.previous_frame_end.cleanup_finished();
-
         if self.outdated_swapchain {
+            unsafe {
+                self.device.wait().unwrap();
+            }
+
             let dims = {
                 let d = self.window.vulkan_drawable_size();
                 [d.0, d.1]
@@ -367,12 +391,18 @@ impl RenderingContext {
                 }
                 Err(err) => panic!("{:?}", err),
             };
+        if let Some(ref mut fence) = self.frame_fences[image_num] {
+            fence.wait_unwrap();
+            fence.cleanup_finished();
+        }
 
         {
             let mut ubo = self.ubuffers[image_num].write().unwrap();
             let mmat: Matrix4<f32> = One::one();
             ubo.model = AsRef::<[f32; 16]>::as_ref(&mmat).clone();
-            let mview: Matrix4<f32> = Matrix4::from_translation(vec3(0.0,0.0,-90.0));
+            let mut mview: Matrix4<f32> = Matrix4::from_translation(self.position);
+            mview = mview * Matrix4::from_angle_x( Deg(self.angles.0));
+            mview = mview * Matrix4::from_angle_y(Deg(-self.angles.1));
             ubo.view = AsRef::<[f32; 16]>::as_ref(&mview).clone();
             let swdim = self.swapchain.dimensions();
             let sfdim = [swdim[0] as f32, swdim[1] as f32];
@@ -412,9 +442,9 @@ impl RenderingContext {
                 .build()
                 .unwrap();
         let myfuture = std::mem::replace(
-            &mut self.previous_frame_end,
-            Box::new(vulkano::sync::now(self.device.clone())),
-        );
+            &mut self.frame_fences[image_num],
+            None,
+        ).unwrap_or(Box::new(vulkano::sync::now(self.device.clone())));
 
         let future = myfuture
             .join(acquire_future)
@@ -424,7 +454,7 @@ impl RenderingContext {
             .then_signal_fence_and_flush();
         match future {
             Ok(future) => {
-                self.previous_frame_end = Box::new(future);
+                self.frame_fences[image_num] = Some(Box::new(future));
             }
             Err(FlushError::OutOfDate) => {
                 self.outdated_swapchain = true;
