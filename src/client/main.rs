@@ -52,6 +52,7 @@ pub fn client_main() {
     //
 
     let mut input_state = InputState::default();
+    input_state.capture_mouse = true;
     let mut pressed_keys: HashSet<Keycode> = HashSet::new();
 
     sdl_ctx.mouse().set_relative_mouse_mode(true);
@@ -67,6 +68,13 @@ pub fn client_main() {
             physics_accum_time -= f64::from(physics_frames) * PHYSICS_FRAME_TIME;
             for _pfrm in 0..physics_frames {
                 // do physics tick
+                {// position
+                    let mut mview: Matrix3<f32> = Matrix3::identity();
+                    mview = Matrix3::from_angle_y(Deg(gfx.angles.1)) * mview;
+                    mview = Matrix3::from_angle_x(Deg(gfx.angles.0)) * mview;
+                    mview = mview.transpose();
+                    gfx.position -= mview * vec3(input_state.walk.0,0.0,input_state.walk.1);
+                }
             }
         }
 
@@ -130,16 +138,20 @@ pub fn client_main() {
         if pressed_keys.contains(&Keycode::D) {
             input_state.walk.0 -= 1.0;
         }
+        if pressed_keys.contains(&Keycode::LShift) {
+            input_state.walk.0 *= 0.3;
+            input_state.walk.1 *= 0.3;
+        }
+        if pressed_keys.contains(&Keycode::LCtrl) {
+            input_state.walk.0 *= 3.0;
+            input_state.walk.1 *= 3.0;
+        }
 
         gfx.angles.1 += input_state.look.0; // yaw
         gfx.angles.0 += input_state.look.1; // pitch
+        gfx.angles.0 = f32::min(90.0, f32::max(-90.0, gfx.angles.0));
+        gfx.angles.1 = gfx.angles.1 % 360.0;
 
-        {// position
-            let mut mview: Matrix3<f32> = Matrix3::identity();
-            mview = Matrix3::from_angle_y(Deg(gfx.angles.1)) * mview;
-            mview = Matrix3::from_angle_x(Deg(gfx.angles.0)) * mview;
-            mview = mview.transpose();
-            gfx.position -= mview * vec3(input_state.walk.0,0.0,input_state.walk.1);
-        }
+        sdl_timer.delay(8);
     }
 }
