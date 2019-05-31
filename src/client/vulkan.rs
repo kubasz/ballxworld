@@ -6,20 +6,20 @@ use cgmath::{Matrix4, Rad, PerspectiveFov, vec3, Vector3, Deg};
 
 use sdl2::video::Window;
 
-use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
+use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, CpuBufferPool};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
 use vulkano::device::{Device, Queue};
+use vulkano::format::Format;
 use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
-use vulkano::image::SwapchainImage;
+use vulkano::image::{SwapchainImage, AttachmentImage};
 use vulkano::instance::{Instance, InstanceExtensions, PhysicalDevice, RawInstanceExtensions};
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::swapchain::{
     AcquireError, PresentMode, Surface, SurfaceTransform, Swapchain, SwapchainCreationError,
 };
-use vulkano::descriptor::DescriptorSet;
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
-use vulkano::sync::{FlushError, GpuFuture, FenceSignalFuture, NowFuture};
+use vulkano::sync::{FlushError, GpuFuture};
 use std::cmp::max;
 
 pub mod vox {
@@ -62,24 +62,6 @@ pub enum Queues {
     Combined(Arc<Queue>),
 }
 
-/// Made so that we can store the fence from each frame and wait for it
-/// without constructing a massive generic type signature.
-pub trait WaitableFuture: GpuFuture {
-    /// Wait for the fence to be signalled and unwrap the error code.
-    fn wait_unwrap(&self);
-}
-impl<F> WaitableFuture for FenceSignalFuture<F> where F: GpuFuture {
-    fn wait_unwrap(&self) {
-        self.wait(None).unwrap();
-    }
-}
-/// A do-nothing implementation for ease of use
-impl WaitableFuture for NowFuture {
-    fn wait_unwrap(&self) {
-        // do nothing
-    }
-}
-
 pub struct RenderingContext {
     pub window: Window,
     pub instance_extensions: InstanceExtensions,
@@ -92,13 +74,12 @@ pub struct RenderingContext {
     pub mainpass: Arc<RenderPassAbstract + Send + Sync>,
     pub framebuffers: Vec<Arc<FramebufferAbstract + Send + Sync>>,
     pub dynamic_state: DynamicState,
-    pub frame_fences: Vec<Option<Box<WaitableFuture>>>,
+    pub previous_frame_future: Box<GpuFuture>,
     pub outdated_swapchain: bool,
     pub voxel_pipeline: Arc<GraphicsPipelineAbstract + Send + Sync>,
     pub vbuffer: Arc<CpuAccessibleBuffer<[vox::VoxelVertex]>>,
     pub ibuffer: Arc<CpuAccessibleBuffer<[u32]>>,
-    pub ubuffers: Vec<Arc<CpuAccessibleBuffer<vox::VoxelUBO>>>,
-    pub udsets: Vec<Arc<DescriptorSet + Send + Sync>>,
+    pub ubuffers: CpuBufferPool<vox::VoxelUBO>,
     pub position: Vector3<f32>,
     pub angles: (f32, f32),
 }
@@ -109,6 +90,12 @@ fn generate_updated_framebuffers(
     dynamic_state: &mut DynamicState,
 ) -> Vec<Arc<FramebufferAbstract + Send + Sync>> {
     let dimensions = swapimages[0].dimensions();
+
+    let depth_image =
+        AttachmentImage::transient(mainpass.device().clone(),
+                                   dimensions,
+                                   vulkano::format::D32Sfloat_S8Uint).unwrap()
+        ;
 
     let viewport = Viewport {
         origin: [0.0, 0.0],
@@ -123,6 +110,8 @@ fn generate_updated_framebuffers(
             Arc::new(
                 Framebuffer::start(mainpass.clone())
                     .add(img.clone())
+                    .unwrap()
+                    .add(depth_image.clone())
                     .unwrap()
                     .build()
                     .unwrap(),
@@ -211,7 +200,7 @@ impl RenderingContext {
             Swapchain::new(
                 device.clone(),
                 surface.clone(),
-                max(3,1+caps.min_image_count),
+                max(3, 1 + caps.min_image_count),
                 format,
                 dimensions,
                 1,
@@ -219,7 +208,7 @@ impl RenderingContext {
                 &queue,
                 SurfaceTransform::Identity,
                 alpha,
-                if caps.present_modes.mailbox {PresentMode::Mailbox} else {PresentMode::Fifo},
+                if caps.present_modes.mailbox { PresentMode::Mailbox } else { PresentMode::Fifo },
                 true,
                 None,
             )
@@ -234,11 +223,17 @@ impl RenderingContext {
                         store: Store,
                         format: swapchain.format(),
                         samples: 1,
+                    },
+                    depth: {
+                        load: Clear,
+                        store: DontCare,
+                        format: Format::D32Sfloat_S8Uint,
+                        samples: 1,
                     }
                 },
                 pass: {
                     color: [color],
-                    depth_stencil: {}
+                    depth_stencil: {depth}
                 }
             )
                 .unwrap(),
@@ -252,11 +247,6 @@ impl RenderingContext {
 
         let framebuffers =
             generate_updated_framebuffers(&swapimages, mainpass.clone(), &mut dynamic_state);
-
-        let mut frame_fences = Vec::new();
-        for _ in &swapimages {
-            frame_fences.push(None);
-        }
 
         let vbuffer = {
             let v1 = vox::VoxelVertex {
@@ -294,28 +284,16 @@ impl RenderingContext {
                     .vertex_shader(vs.main_entry_point(), ())
                     .viewports_dynamic_scissors_irrelevant(1)
                     .fragment_shader(fs.main_entry_point(), ())
+                    .depth_stencil_simple_depth()
                     .render_pass(Subpass::from(mainpass.clone(), 0).unwrap())
                     .build(device.clone())
                     .expect("Could not create voxel graphics pipeline")
             )
         };
 
-        let mut ubuffers = Vec::new();
-        let mut udsets: Vec<Arc<DescriptorSet + Send + Sync>> = Vec::new();
-        for _ in 0..swapimages.len() {
-            let ubuffer: Arc<CpuAccessibleBuffer<vox::VoxelUBO>> = CpuAccessibleBuffer::from_data(
-                device.clone(),
-                BufferUsage::uniform_buffer(),
-                Default::default(),
-            ).unwrap();
-            ubuffers.push(ubuffer.clone());
-            let udset =
-                Arc::new(PersistentDescriptorSet::start(voxel_pipeline.clone(), 0)
-                    .add_buffer(ubuffer.clone())
-                    .unwrap()
-                    .build().unwrap());
-            udsets.push(udset);
-        }
+        let ubuffers = CpuBufferPool::new(device.clone(), BufferUsage::uniform_buffer());
+
+        let previous_frame_future = Box::new(vulkano::sync::now(device.clone()));
 
         RenderingContext {
             window,
@@ -329,15 +307,14 @@ impl RenderingContext {
             mainpass,
             framebuffers,
             dynamic_state,
-            frame_fences,
+            previous_frame_future,
             outdated_swapchain: false,
             voxel_pipeline,
             vbuffer,
             ibuffer,
             ubuffers,
-            udsets,
-            position: vec3(0.0,0.0,-90.0),
-            angles: (0.0, 0.0)
+            position: vec3(0.0, 0.0, -90.0),
+            angles: (0.0, 0.0),
         }
     }
 
@@ -356,6 +333,7 @@ impl RenderingContext {
     }
 
     pub fn draw_next_frame(&mut self, _delta_time: f64) {
+        self.previous_frame_future.cleanup_finished();
         if self.outdated_swapchain {
             unsafe {
                 self.device.wait().unwrap();
@@ -367,12 +345,12 @@ impl RenderingContext {
             };
 
             let (new_swapchain, new_images) =
-            match self.swapchain.recreate_with_dimension(dims) {
-                Ok(r) => r,
-                // occurs on manual resizes, just ignore
-                Err(SwapchainCreationError::UnsupportedDimensions) => return,
-                Err(err) => panic!("{:?}", err),
-            };
+                match self.swapchain.recreate_with_dimension(dims) {
+                    Ok(r) => r,
+                    // occurs on manual resizes, just ignore
+                    Err(SwapchainCreationError::UnsupportedDimensions) => return,
+                    Err(err) => panic!("{:?}", err),
+                };
 
             self.swapchain = new_swapchain;
             self.swapimages = new_images;
@@ -395,29 +373,32 @@ impl RenderingContext {
                 }
                 Err(err) => panic!("{:?}", err),
             };
-        if let Some(ref mut fence) = self.frame_fences[image_num] {
-            fence.wait_unwrap();
-            fence.cleanup_finished();
-        }
 
-        {
-            let mut ubo = self.ubuffers[image_num].write().unwrap();
+        let ubo = {
+            let mut ubo = vox::VoxelUBO::default();
             let mmat: Matrix4<f32> = One::one();
             ubo.model = AsRef::<[f32; 16]>::as_ref(&mmat).clone();
             let mut mview: Matrix4<f32> = Matrix4::from_translation(self.position);
-            mview = mview * Matrix4::from_angle_x( Deg(self.angles.0));
+            mview = mview * Matrix4::from_angle_x(Deg(self.angles.0));
             mview = mview * Matrix4::from_angle_y(Deg(-self.angles.1));
             ubo.view = AsRef::<[f32; 16]>::as_ref(&mview).clone();
             let swdim = self.swapchain.dimensions();
             let sfdim = [swdim[0] as f32, swdim[1] as f32];
-            let mproj: Matrix4<f32> = Matrix4::from(PerspectiveFov {
-                fovy: Rad(75.0*3.14/180.0),
+            let mproj: Matrix4<f32> = PerspectiveFov {
+                fovy: Rad(75.0 * 3.14 / 180.0),
                 aspect: sfdim[0] / sfdim[1],
                 near: 0.1,
                 far: 1000.0,
-            });
+            }.into();
             ubo.proj = AsRef::<[f32; 16]>::as_ref(&mproj).clone();
-        }
+            self.ubuffers.next(ubo).unwrap()
+        };
+
+        let udset =
+            Arc::new(PersistentDescriptorSet::start(self.voxel_pipeline.clone(), 0)
+                .add_buffer(ubo.clone())
+                .unwrap()
+                .build().unwrap());
 
         let cmdbuf =
             AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(),
@@ -426,7 +407,8 @@ impl RenderingContext {
                 .begin_render_pass(
                     self.framebuffers[image_num].clone(),
                     false,
-                    vec![[0.1, 0.1, 0.1, 1.0].into()],
+                    vec![[0.1, 0.1, 0.1, 1.0].into(),
+                         (1f32, 0u32).into()],
                 )
                 .unwrap()
                 //
@@ -435,7 +417,7 @@ impl RenderingContext {
                     &self.dynamic_state,
                     vec![self.vbuffer.clone()],
                     self.ibuffer.clone(),
-                    self.udsets[image_num].clone(),
+                    udset.clone(),
                     (),
                 )
                 .unwrap()
@@ -445,10 +427,9 @@ impl RenderingContext {
                 //
                 .build()
                 .unwrap();
-        let myfuture = std::mem::replace(
-            &mut self.frame_fences[image_num],
-            None,
-        ).unwrap_or(Box::new(vulkano::sync::now(self.device.clone())));
+
+        let myfuture = std::mem::replace(&mut self.previous_frame_future,
+                                         Box::new(vulkano::sync::now(self.device.clone())));
 
         let future = myfuture
             .join(acquire_future)
@@ -458,7 +439,7 @@ impl RenderingContext {
             .then_signal_fence_and_flush();
         match future {
             Ok(future) => {
-                self.frame_fences[image_num] = Some(Box::new(future));
+                self.previous_frame_future = Box::new(future);
             }
             Err(FlushError::OutOfDate) => {
                 self.outdated_swapchain = true;
