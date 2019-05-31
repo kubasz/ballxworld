@@ -313,7 +313,7 @@ impl RenderingContext {
             vbuffer,
             ibuffer,
             ubuffers,
-            position: vec3(0.0, 0.0, -90.0),
+            position: vec3(0.0, 0.0, 90.0),
             angles: (0.0, 0.0),
         }
     }
@@ -378,9 +378,9 @@ impl RenderingContext {
             let mut ubo = vox::VoxelUBO::default();
             let mmat: Matrix4<f32> = One::one();
             ubo.model = AsRef::<[f32; 16]>::as_ref(&mmat).clone();
-            let mut mview: Matrix4<f32> = Matrix4::from_translation(self.position);
-            mview = mview * Matrix4::from_angle_x(Deg(self.angles.0));
-            mview = mview * Matrix4::from_angle_y(Deg(-self.angles.1));
+            let mut mview: Matrix4<f32> = Matrix4::from_translation(-self.position);
+            mview = Matrix4::from_angle_y(Deg(self.angles.1)) * mview;
+            mview = Matrix4::from_angle_x(Deg(self.angles.0)) * mview;
             ubo.view = AsRef::<[f32; 16]>::as_ref(&mview).clone();
             let swdim = self.swapchain.dimensions();
             let sfdim = [swdim[0] as f32, swdim[1] as f32];

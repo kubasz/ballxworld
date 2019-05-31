@@ -79,8 +79,6 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuf
         }
     }
 
-    dbg!(chunk.data.len());
-
     ChunkBuffers {
         vertices: vbuf,
         indices: ibuf,
