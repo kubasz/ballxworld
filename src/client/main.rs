@@ -4,7 +4,7 @@ use super::super::world;
 use super::vulkan::RenderingContext;
 use crate::client::voxmesh::mesh_from_chunk;
 use rand::Rng;
-use std::collections::{HashSet};
+use std::collections::HashSet;
 use sdl2::keyboard::Keycode;
 use cgmath::prelude::*;
 use cgmath::{Deg, Matrix3, vec3};
@@ -16,7 +16,14 @@ struct InputState {
     /// X (-Left,Right+) Y (-Down,Up+)
     walk: (f32, f32),
     look: (f32, f32),
-    capture_mouse: bool
+    capture_mouse: bool,
+}
+
+use conrod_core::widget_ids;
+use conrod_core::position::Positionable;
+use conrod_core::widget::Widget;
+widget_ids! {
+struct Ids{canvas, positionlbl}
 }
 
 pub fn client_main() {
@@ -55,6 +62,8 @@ pub fn client_main() {
     input_state.capture_mouse = true;
     let mut pressed_keys: HashSet<Keycode> = HashSet::new();
 
+    let ids = Ids::new(gfx.gui.widget_id_generator());
+
     sdl_ctx.mouse().set_relative_mouse_mode(true);
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     'running: loop {
@@ -73,7 +82,7 @@ pub fn client_main() {
                     mview = Matrix3::from_angle_y(Deg(gfx.angles.1)) * mview;
                     mview = Matrix3::from_angle_x(Deg(gfx.angles.0)) * mview;
                     mview = mview.transpose();
-                    gfx.position -= mview * vec3(input_state.walk.0,0.0,input_state.walk.1);
+                    gfx.position -= mview * vec3(input_state.walk.0, 0.0, input_state.walk.1);
                 }
             }
         }
@@ -81,7 +90,7 @@ pub fn client_main() {
         gfx.draw_next_frame(frame_delta_time);
 
         input_state.walk = (0.0, 0.0);
-        input_state.look = (0.0,0.0);
+        input_state.look = (0.0, 0.0);
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'running,
@@ -100,24 +109,24 @@ pub fn client_main() {
                     }
                     _ => {}
                 },
-                Event::KeyDown {keycode, ..} => {
+                Event::KeyDown { keycode, .. } => {
                     match keycode {
                         Some(sdl2::keyboard::Keycode::F) => {
                             input_state.capture_mouse = !input_state.capture_mouse;
                             sdl_ctx.mouse().set_relative_mouse_mode(input_state.capture_mouse);
-                        },
+                        }
                         _ => {}
                     }
                     if let Some(keycode) = keycode {
                         pressed_keys.insert(keycode);
                     }
-                },
-                Event::KeyUp {keycode, ..} => {
+                }
+                Event::KeyUp { keycode, .. } => {
                     if let Some(keycode) = keycode {
                         pressed_keys.remove(&keycode);
                     }
-                },
-                Event::MouseMotion {xrel, yrel, ..} => {
+                }
+                Event::MouseMotion { xrel, yrel, .. } => {
                     input_state.look.0 += xrel as f32 * 0.4;
                     input_state.look.1 -= yrel as f32 * 0.3;
                 }
@@ -152,6 +161,12 @@ pub fn client_main() {
         gfx.angles.0 = f32::min(90.0, f32::max(-90.0, gfx.angles.0));
         gfx.angles.1 = gfx.angles.1 % 360.0;
 
-        sdl_timer.delay(8);
+        // simple test gui
+        let mut ui = gfx.gui.set_widgets();
+        use conrod_core::*;
+        widget::Canvas::new().color(conrod_core::color::LIGHT_YELLOW).align_bottom().align_right().title_bar("Debug").floating(true).w_h(128.0,64.0).set(ids.canvas, &mut ui);
+        //let pos = format!("Position: {}, {}, {}", gfx.position.x as i32, gfx.position.y as i32, gfx.position.z as i32);
+        //widget::Text::new(&pos).font_size(10).mid_left_of(ids.canvas).set(ids.positionlbl,&mut ui);
+
     }
 }

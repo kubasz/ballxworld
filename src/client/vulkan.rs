@@ -20,7 +20,7 @@ use vulkano::swapchain::{
 };
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::sync::{FlushError, GpuFuture};
-use vulkano::{app_info_from_cargo_toml,single_pass_renderpass};
+use vulkano::{app_info_from_cargo_toml, single_pass_renderpass};
 use std::cmp::max;
 
 pub mod vox {
@@ -66,25 +66,33 @@ pub enum Queues {
 }
 
 pub struct RenderingContext {
+    // basic handles
     pub window: Window,
     pub instance_extensions: InstanceExtensions,
     pub instance: Arc<Instance>,
     pub surface: Arc<Surface<()>>,
     pub device: Arc<Device>,
     pub queues: Queues,
+    // swapchain
     pub swapchain: Arc<Swapchain<()>>,
     pub swapimages: Vec<Arc<SwapchainImage<()>>>,
+    pub previous_frame_future: Box<GpuFuture>,
+    pub outdated_swapchain: bool,
+    // default render set
     pub mainpass: Arc<RenderPassAbstract + Send + Sync>,
     pub framebuffers: Vec<Arc<FramebufferAbstract + Send + Sync>>,
     pub dynamic_state: DynamicState,
-    pub previous_frame_future: Box<GpuFuture>,
-    pub outdated_swapchain: bool,
+    // test voxel render stuff
     pub voxel_pipeline: Arc<GraphicsPipelineAbstract + Send + Sync>,
     pub vbuffer: Arc<CpuAccessibleBuffer<[vox::VoxelVertex]>>,
     pub ibuffer: Arc<CpuAccessibleBuffer<[u32]>>,
     pub ubuffers: CpuBufferPool<vox::VoxelUBO>,
     pub position: Vector3<f32>,
     pub angles: (f32, f32),
+    // GUI-related handles
+    pub gui_renderer: conrod_vulkano::Renderer,
+    pub gui: conrod_core::Ui,
+    pub gui_image_map: conrod_core::image::Map<conrod_vulkano::Image>,
 }
 
 fn generate_updated_framebuffers(
@@ -298,6 +306,24 @@ impl RenderingContext {
 
         let previous_frame_future = Box::new(vulkano::sync::now(device.clone()));
 
+        let dims = swapimages[0].dimensions();
+
+        let gui_renderer = conrod_vulkano::Renderer::new(
+            device.clone(),
+            Subpass::from(mainpass.clone(), 0).unwrap(),
+            queue.family(),
+            dims,
+            1.0, // FIXME: SDL2 DPI factor needs to be put here
+        ).unwrap();
+
+        let mut gui = conrod_core::UiBuilder::new(
+            [dims[0] as f64, dims[1] as f64]
+        ).build();
+
+        let gui_image_map = conrod_core::image::Map::new();
+
+        gui.fonts.insert_from_file("res/fonts/LiberationSans-Regular.ttf").expect("Couldn't load Liberation Sans font");
+
         RenderingContext {
             window,
             instance_extensions,
@@ -318,6 +344,9 @@ impl RenderingContext {
             ubuffers,
             position: vec3(0.0, 0.0, 90.0),
             angles: (0.0, 0.0),
+            gui_renderer,
+            gui,
+            gui_image_map,
         }
     }
 
@@ -336,17 +365,17 @@ impl RenderingContext {
     }
 
     pub fn draw_next_frame(&mut self, _delta_time: f64) {
+        unsafe {
+            self.device.wait().unwrap();
+        }
         self.previous_frame_future.cleanup_finished();
+
+        let dims = {
+            let d = self.window.vulkan_drawable_size();
+            [d.0, d.1]
+        };
+
         if self.outdated_swapchain {
-            unsafe {
-                self.device.wait().unwrap();
-            }
-
-            let dims = {
-                let d = self.window.vulkan_drawable_size();
-                [d.0, d.1]
-            };
-
             let (new_swapchain, new_images) =
                 match self.swapchain.recreate_with_dimension(dims) {
                     Ok(r) => r,
@@ -364,6 +393,8 @@ impl RenderingContext {
             );
 
             self.outdated_swapchain = false;
+            self.gui.win_w = dims[0] as f64;
+            self.gui.win_h = dims[1] as f64;
         }
 
         let Queues::Combined(ref queue) = self.queues;
@@ -403,33 +434,64 @@ impl RenderingContext {
                 .unwrap()
                 .build().unwrap());
 
-        let cmdbuf =
+        let mut cmdbufbuild =
             AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(),
                                                               queue.family())
-                .unwrap()
-                .begin_render_pass(
-                    self.framebuffers[image_num].clone(),
-                    false,
-                    vec![[0.1, 0.1, 0.1, 1.0].into(),
-                         (1f32, 0u32).into()],
-                )
-                .unwrap()
-                //
-                .draw_indexed(
-                    self.voxel_pipeline.clone(),
-                    &self.dynamic_state,
-                    vec![self.vbuffer.clone()],
-                    self.ibuffer.clone(),
-                    udset.clone(),
+                .unwrap();
+
+        let gui_primitives = self.gui.draw();
+        let gui_viewport = [0.0, 0.0, dims[0] as f32, dims[1] as f32];
+        let dpi_factor = 1.0f64; // FIXME: DPI factor
+        if let Some(cmd) = self.gui_renderer.fill(
+            &self.gui_image_map, gui_viewport, dpi_factor, gui_primitives).unwrap() {
+            let buffer = cmd.glyph_cpu_buffer_pool.chunk(cmd.glyph_cache_pixel_buffer.iter().cloned()).unwrap();
+            cmdbufbuild = cmdbufbuild.copy_buffer_to_image(buffer, cmd.glyph_cache_texture)
+                .expect("Failed to submit glyph cache update");
+        }
+
+        cmdbufbuild = cmdbufbuild.begin_render_pass(
+            self.framebuffers[image_num].clone(),
+            false,
+            vec![[0.1, 0.1, 0.1, 1.0].into(),
+                 (1f32, 0u32).into()],
+        )
+            .expect("Failed to begin render pass")
+            //
+            .draw_indexed(
+                self.voxel_pipeline.clone(),
+                &self.dynamic_state,
+                vec![self.vbuffer.clone()],
+                self.ibuffer.clone(),
+                udset.clone(),
+                (),
+            )
+            .expect("Failed to submit voxel chunk draw");
+
+        let gui_draw_cmds = self.gui_renderer.draw(
+            queue.clone(), &self.gui_image_map, gui_viewport).unwrap();
+        for cmd in gui_draw_cmds {
+            let conrod_vulkano::DrawCommand {
+                graphics_pipeline,
+                dynamic_state,
+                vertex_buffer,
+                descriptor_set,
+            } = cmd;
+            cmdbufbuild = cmdbufbuild
+                .draw(
+                    graphics_pipeline,
+                    &dynamic_state,
+                    vec![vertex_buffer],
+                    descriptor_set,
                     (),
                 )
-                .unwrap()
-                //
-                .end_render_pass()
-                .unwrap()
-                //
-                .build()
-                .unwrap();
+                .expect("Failed to submit GUI draw command");
+        }
+
+        let cmdbuf = cmdbufbuild.end_render_pass()
+            .expect("Failed to end render pass")
+            //
+            .build()
+            .expect("Failed to build frame draw commands");
 
         let myfuture = std::mem::replace(&mut self.previous_frame_future,
                                          Box::new(vulkano::sync::now(self.device.clone())));
@@ -453,3 +515,4 @@ impl RenderingContext {
         }
     }
 }
+
