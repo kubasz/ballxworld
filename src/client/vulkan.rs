@@ -20,9 +20,12 @@ use vulkano::swapchain::{
 };
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::sync::{FlushError, GpuFuture};
+use vulkano::{app_info_from_cargo_toml,single_pass_renderpass};
 use std::cmp::max;
 
 pub mod vox {
+    use vulkano::impl_vertex;
+
     pub struct ChunkBuffers {
         pub vertices: Vec<VoxelVertex>,
         pub indices: Vec<u32>,
@@ -43,14 +46,14 @@ pub mod vox {
     }
 
     pub mod vs {
-        shader! {
+        vulkano_shaders::shader! {
         ty: "vertex",
         path: "src/client/shaders/voxel.vert"
         }
     }
 
     pub mod fs {
-        shader! {
+        vulkano_shaders::shader! {
         ty: "fragment",
         path: "src/client/shaders/voxel.frag"
         }
