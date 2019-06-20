@@ -4,7 +4,7 @@ use super::super::world;
 use super::vulkan::RenderingContext;
 use crate::client::voxmesh::mesh_from_chunk;
 use rand::Rng;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use sdl2::keyboard::Keycode;
 use cgmath::prelude::*;
 use cgmath::{Deg, Matrix3, vec3};
@@ -20,8 +20,6 @@ struct InputState {
 }
 
 use conrod_core::widget_ids;
-use conrod_core::position::Positionable;
-use conrod_core::widget::Widget;
 widget_ids! {
 struct Ids{canvas, positionlbl}
 }
@@ -31,6 +29,9 @@ pub fn client_main() {
     let sdl_vid = sdl_ctx.video().unwrap();
     let mut sdl_timer = sdl_ctx.timer().unwrap();
     let mut gfx = RenderingContext::new(&sdl_vid);
+
+    let mut frametimes = VecDeque::new();
+    let frametime_count: usize = 100;
 
     let mut vxreg = world::VoxelRegistry::new();
     vxreg
@@ -68,8 +69,14 @@ pub fn client_main() {
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     'running: loop {
         let current_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
+
         // avoid any nasty divisions by 0
         let frame_delta_time = 1.0e-6f64.max(current_frame_time - previous_frame_time);
+        while frametimes.len() >= frametime_count {
+            frametimes.pop_front();
+        }
+        frametimes.push_back(frame_delta_time);
+
         physics_accum_time += frame_delta_time;
         previous_frame_time = current_frame_time;
         let physics_frames = (physics_accum_time / PHYSICS_FRAME_TIME) as i32;
@@ -95,11 +102,13 @@ pub fn client_main() {
             match event {
                 Event::Quit { .. } => break 'running,
                 Event::Window { win_event, .. } => match win_event {
-                    WindowEvent::Resized(_w, _h) => {
+                    WindowEvent::Resized(w, h) => {
                         gfx.outdated_swapchain = true;
+                        gfx.gui.handle_event(conrod_core::event::Input::Resize(w as f64, h as f64));
                     }
-                    WindowEvent::SizeChanged(_w, _h) => {
+                    WindowEvent::SizeChanged(w, h) => {
                         gfx.outdated_swapchain = true;
+                        gfx.gui.handle_event(conrod_core::event::Input::Resize(w as f64, h as f64));
                     }
                     WindowEvent::FocusGained => {
                         sdl_ctx.mouse().set_relative_mouse_mode(input_state.capture_mouse);
@@ -126,9 +135,18 @@ pub fn client_main() {
                         pressed_keys.remove(&keycode);
                     }
                 }
-                Event::MouseMotion { xrel, yrel, .. } => {
-                    input_state.look.0 += xrel as f32 * 0.4;
-                    input_state.look.1 -= yrel as f32 * 0.3;
+                Event::MouseMotion { x, y, xrel, yrel, .. } => {
+                    if input_state.capture_mouse {
+                        input_state.look.0 += xrel as f32 * 0.4;
+                        input_state.look.1 -= yrel as f32 * 0.3;
+                    } else {
+                        let wsz = gfx.window.size();
+                        let m = conrod_core::input::Motion::MouseCursor {
+                            x: (x - wsz.0 as i32/2) as f64,
+                            y: -(y - wsz.0 as i32/2) as f64
+                        };
+                        gfx.gui.handle_event(conrod_core::event::Input::Motion(m));
+                    }
                 }
                 _ => {}
             }
@@ -164,9 +182,15 @@ pub fn client_main() {
         // simple test gui
         let mut ui = gfx.gui.set_widgets();
         use conrod_core::*;
-        widget::Canvas::new().color(conrod_core::color::LIGHT_YELLOW).align_bottom().align_right().title_bar("Debug").floating(true).w_h(128.0,64.0).set(ids.canvas, &mut ui);
-        //let pos = format!("Position: {}, {}, {}", gfx.position.x as i32, gfx.position.y as i32, gfx.position.z as i32);
-        //widget::Text::new(&pos).font_size(10).mid_left_of(ids.canvas).set(ids.positionlbl,&mut ui);
-
+        let avg_ft = frametimes.iter().sum::<f64>() / frametime_count as f64;
+        widget::Canvas::new().color(conrod_core::color::TRANSPARENT).set(ids.canvas, &mut ui);
+        let pos = format!("Position: {:.1}, {:.1}, {:.1}\nAngles: {:.1}, {:.1}\nLast FT (ms): {:.1}\nAvg FT (ms): {:.1}\n Avg FPS: {:.1}",
+                          gfx.position.x, gfx.position.y, gfx.position.z,
+                          gfx.angles.0, gfx.angles.1,
+                          frame_delta_time * 1000.0,
+                          avg_ft * 1000.0,
+                          1.0/avg_ft
+        );
+        widget::Text::new(&pos).font_size(14).color(conrod_core::color::WHITE).top_left_of(ids.canvas).set(ids.positionlbl,&mut ui);
     }
 }

@@ -19,7 +19,7 @@ use vulkano::swapchain::{
     AcquireError, PresentMode, Surface, SurfaceTransform, Swapchain, SwapchainCreationError,
 };
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
-use vulkano::sync::{FlushError, GpuFuture};
+use vulkano::sync::{FlushError, GpuFuture, FenceSignalFuture, NowFuture};
 use vulkano::{app_info_from_cargo_toml, single_pass_renderpass};
 use std::cmp::max;
 
@@ -32,6 +32,7 @@ pub mod vox {
     }
 
     #[derive(Copy, Clone, Default)]
+    #[repr(C)]
     pub struct VoxelVertex {
         pub position: [f32; 4],
         pub color: [f32; 4],
@@ -39,6 +40,7 @@ pub mod vox {
     impl_vertex!(VoxelVertex, position, color);
 
     #[derive(Copy, Clone, Default)]
+    #[repr(C)]
     pub struct VoxelUBO {
         pub model: [f32; 16],
         pub view: [f32; 16],
@@ -65,6 +67,22 @@ pub enum Queues {
     Combined(Arc<Queue>),
 }
 
+trait WaitableFuture : GpuFuture {
+    fn wait_or_noop(&mut self);
+}
+
+impl<F> WaitableFuture for FenceSignalFuture<F> where F: GpuFuture {
+    fn wait_or_noop(&mut self) {
+        self.wait(None).unwrap();
+    }
+}
+
+impl WaitableFuture for NowFuture {
+    fn wait_or_noop(&mut self) {
+        // noop
+    }
+}
+
 pub struct RenderingContext {
     // basic handles
     pub window: Window,
@@ -76,7 +94,7 @@ pub struct RenderingContext {
     // swapchain
     pub swapchain: Arc<Swapchain<()>>,
     pub swapimages: Vec<Arc<SwapchainImage<()>>>,
-    pub previous_frame_future: Box<GpuFuture>,
+    previous_frame_future: Box<WaitableFuture>,
     pub outdated_swapchain: bool,
     // default render set
     pub mainpass: Arc<RenderPassAbstract + Send + Sync>,
@@ -365,9 +383,6 @@ impl RenderingContext {
     }
 
     pub fn draw_next_frame(&mut self, _delta_time: f64) {
-        unsafe {
-            self.device.wait().unwrap();
-        }
         self.previous_frame_future.cleanup_finished();
 
         let dims = {
@@ -493,10 +508,9 @@ impl RenderingContext {
             .build()
             .expect("Failed to build frame draw commands");
 
-        let myfuture = std::mem::replace(&mut self.previous_frame_future,
-                                         Box::new(vulkano::sync::now(self.device.clone())));
+        self.previous_frame_future.wait_or_noop();
 
-        let future = myfuture
+        let future = vulkano::sync::now(self.device.clone())
             .join(acquire_future)
             .then_execute(queue.clone(), cmdbuf)
             .unwrap()
@@ -507,9 +521,11 @@ impl RenderingContext {
                 self.previous_frame_future = Box::new(future);
             }
             Err(FlushError::OutOfDate) => {
+                self.previous_frame_future = Box::new(vulkano::sync::now(self.device.clone()));
                 self.outdated_swapchain = true;
             }
             Err(e) => {
+                self.previous_frame_future = Box::new(vulkano::sync::now(self.device.clone()));
                 println!("{:?}", e);
             }
         }

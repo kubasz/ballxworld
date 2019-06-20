@@ -18,3 +18,6 @@ features = ["image", "mixer"]
 [dependencies.cgmath]
 version = "0.17.0"
 features = ["swizzle"]
+
+[profile.dev]
+opt-level = 2
