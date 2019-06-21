@@ -1,5 +1,6 @@
-use super::super::world::{VoxelChunk, VoxelRegistry, VOXEL_CHUNK_DIM};
-use super::vulkan::vox::{ChunkBuffers, VoxelVertex};
+use crate::world::{VoxelChunk, VOXEL_CHUNK_DIM};
+use crate::world::registry::VoxelRegistry;
+use crate::client::vulkan::vox::{ChunkBuffers, VoxelVertex};
 
 pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuffers {
     let mut vbuf: Vec<VoxelVertex> = Vec::new();

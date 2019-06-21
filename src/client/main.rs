@@ -1,13 +1,17 @@
 use sdl2::event::{Event, WindowEvent};
 
-use super::super::world;
-use super::vulkan::RenderingContext;
+use crate::world;
+use crate::client::vulkan::RenderingContext;
 use crate::client::voxmesh::mesh_from_chunk;
-use rand::Rng;
 use std::collections::{HashSet, VecDeque};
 use sdl2::keyboard::Keycode;
 use cgmath::prelude::*;
 use cgmath::{Deg, Matrix3, vec3};
+
+use crate::world::generation::WorldGenerator;
+use crate::world::badgen::BadGenerator;
+
+use conrod_core::widget_ids;
 
 const PHYSICS_FRAME_TIME: f64 = 1.0 / 60.0;
 
@@ -19,7 +23,6 @@ struct InputState {
     capture_mouse: bool,
 }
 
-use conrod_core::widget_ids;
 widget_ids! {
 struct Ids{canvas, positionlbl}
 }
@@ -27,16 +30,16 @@ struct Ids{canvas, positionlbl}
 pub fn client_main() {
     let sdl_ctx = sdl2::init().unwrap();
     let sdl_vid = sdl_ctx.video().unwrap();
-    let mut sdl_timer = sdl_ctx.timer().unwrap();
+    let sdl_timer = sdl_ctx.timer().unwrap();
     let mut gfx = RenderingContext::new(&sdl_vid);
 
     let mut frametimes = VecDeque::new();
     let frametime_count: usize = 100;
 
-    let mut vxreg = world::VoxelRegistry::new();
+    let mut vxreg = world::registry::VoxelRegistry::new();
     vxreg
         .build_definition()
-        .name("core:green")
+        .name("core:grass")
         .debug_color(0.1, 0.8, 0.1)
         .has_physical_properties()
         .finish()
@@ -49,9 +52,10 @@ pub fn client_main() {
         .finish()
         .unwrap();
     let mut chunk = world::VoxelChunk::new();
-    for ch in chunk.data.iter_mut() {
-        ch.id = rand::thread_rng().gen_range(0, 3);
-    }
+    let gen = BadGenerator {};
+    gen.generate_chunk(
+        world::VoxelChunkMutRef { chunk: &mut chunk, position: vec3(0, 0, 0) },
+        &vxreg);
     gfx.d_reset_buffers(mesh_from_chunk(&chunk, &vxreg));
 
     let pf_mult = 1.0 / sdl_timer.performance_frequency() as f64;
@@ -88,6 +92,7 @@ pub fn client_main() {
                     let mut mview: Matrix3<f32> = Matrix3::identity();
                     mview = Matrix3::from_angle_y(Deg(gfx.angles.1)) * mview;
                     mview = Matrix3::from_angle_x(Deg(gfx.angles.0)) * mview;
+                    mview.replace_col(1, -mview.y);
                     mview = mview.transpose();
                     gfx.position -= mview * vec3(input_state.walk.0, 0.0, input_state.walk.1);
                 }
@@ -142,8 +147,8 @@ pub fn client_main() {
                     } else {
                         let wsz = gfx.window.size();
                         let m = conrod_core::input::Motion::MouseCursor {
-                            x: (x - wsz.0 as i32/2) as f64,
-                            y: -(y - wsz.0 as i32/2) as f64
+                            x: (x - wsz.0 as i32 / 2) as f64,
+                            y: -(y - wsz.0 as i32 / 2) as f64,
                         };
                         gfx.gui.handle_event(conrod_core::event::Input::Motion(m));
                     }
@@ -183,14 +188,20 @@ pub fn client_main() {
         let mut ui = gfx.gui.set_widgets();
         use conrod_core::*;
         let avg_ft = frametimes.iter().sum::<f64>() / frametime_count as f64;
-        widget::Canvas::new().color(conrod_core::color::TRANSPARENT).set(ids.canvas, &mut ui);
+        widget::Canvas::new()
+            .color(conrod_core::color::TRANSPARENT)
+            .set(ids.canvas, &mut ui);
         let pos = format!("Position: {:.1}, {:.1}, {:.1}\nAngles: {:.1}, {:.1}\nLast FT (ms): {:.1}\nAvg FT (ms): {:.1}\n Avg FPS: {:.1}",
                           gfx.position.x, gfx.position.y, gfx.position.z,
                           gfx.angles.0, gfx.angles.1,
                           frame_delta_time * 1000.0,
                           avg_ft * 1000.0,
-                          1.0/avg_ft
+                          1.0 / avg_ft
         );
-        widget::Text::new(&pos).font_size(14).color(conrod_core::color::WHITE).top_left_of(ids.canvas).set(ids.positionlbl,&mut ui);
+        widget::Text::new(&pos)
+            .font_size(14)
+            .color(conrod_core::color::WHITE)
+            .top_left_of(ids.canvas)
+            .set(ids.positionlbl, &mut ui);
     }
 }
