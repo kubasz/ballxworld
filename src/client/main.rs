@@ -1,15 +1,15 @@
 use sdl2::event::{Event, WindowEvent};
 
-use crate::world;
-use crate::client::vulkan::RenderingContext;
 use crate::client::voxmesh::mesh_from_chunk;
-use std::collections::{HashSet, VecDeque};
-use sdl2::keyboard::Keycode;
+use crate::client::vulkan::RenderingContext;
+use crate::world;
 use cgmath::prelude::*;
-use cgmath::{Deg, Matrix3, vec3};
+use cgmath::{vec3, Deg, Matrix3};
+use sdl2::keyboard::Keycode;
+use std::collections::{HashSet, VecDeque};
 
-use crate::world::generation::WorldGenerator;
 use crate::world::badgen::BadGenerator;
+use crate::world::generation::WorldGenerator;
 
 use conrod_core::widget_ids;
 
@@ -54,8 +54,12 @@ pub fn client_main() {
     let mut chunk = world::VoxelChunk::new();
     let gen = BadGenerator {};
     gen.generate_chunk(
-        world::VoxelChunkMutRef { chunk: &mut chunk, position: vec3(0, 0, 0) },
-        &vxreg);
+        world::VoxelChunkMutRef {
+            chunk: &mut chunk,
+            position: vec3(0, 0, 0),
+        },
+        &vxreg,
+    );
     gfx.d_reset_buffers(mesh_from_chunk(&chunk, &vxreg));
 
     let pf_mult = 1.0 / sdl_timer.performance_frequency() as f64;
@@ -88,7 +92,8 @@ pub fn client_main() {
             physics_accum_time -= f64::from(physics_frames) * PHYSICS_FRAME_TIME;
             for _pfrm in 0..physics_frames {
                 // do physics tick
-                {// position
+                {
+                    // position
                     let mut mview: Matrix3<f32> = Matrix3::identity();
                     mview = Matrix3::from_angle_y(Deg(gfx.angles.1)) * mview;
                     mview = Matrix3::from_angle_x(Deg(gfx.angles.0)) * mview;
@@ -109,14 +114,22 @@ pub fn client_main() {
                 Event::Window { win_event, .. } => match win_event {
                     WindowEvent::Resized(w, h) => {
                         gfx.outdated_swapchain = true;
-                        gfx.gui.handle_event(conrod_core::event::Input::Resize(w as f64, h as f64));
+                        gfx.gui.handle_event(conrod_core::event::Input::Resize(
+                            f64::from(w),
+                            f64::from(h),
+                        ));
                     }
                     WindowEvent::SizeChanged(w, h) => {
                         gfx.outdated_swapchain = true;
-                        gfx.gui.handle_event(conrod_core::event::Input::Resize(w as f64, h as f64));
+                        gfx.gui.handle_event(conrod_core::event::Input::Resize(
+                            f64::from(w),
+                            f64::from(h),
+                        ));
                     }
                     WindowEvent::FocusGained => {
-                        sdl_ctx.mouse().set_relative_mouse_mode(input_state.capture_mouse);
+                        sdl_ctx
+                            .mouse()
+                            .set_relative_mouse_mode(input_state.capture_mouse);
                     }
                     WindowEvent::FocusLost => {
                         sdl_ctx.mouse().set_relative_mouse_mode(false);
@@ -127,7 +140,12 @@ pub fn client_main() {
                     match keycode {
                         Some(sdl2::keyboard::Keycode::F) => {
                             input_state.capture_mouse = !input_state.capture_mouse;
-                            sdl_ctx.mouse().set_relative_mouse_mode(input_state.capture_mouse);
+                            sdl_ctx
+                                .mouse()
+                                .set_relative_mouse_mode(input_state.capture_mouse);
+                        }
+                        Some(sdl2::keyboard::Keycode::Escape) => {
+                            break 'running;
                         }
                         _ => {}
                     }
@@ -140,15 +158,17 @@ pub fn client_main() {
                         pressed_keys.remove(&keycode);
                     }
                 }
-                Event::MouseMotion { x, y, xrel, yrel, .. } => {
+                Event::MouseMotion {
+                    x, y, xrel, yrel, ..
+                } => {
                     if input_state.capture_mouse {
                         input_state.look.0 += xrel as f32 * 0.4;
                         input_state.look.1 -= yrel as f32 * 0.3;
                     } else {
                         let wsz = gfx.window.size();
                         let m = conrod_core::input::Motion::MouseCursor {
-                            x: (x - wsz.0 as i32 / 2) as f64,
-                            y: -(y - wsz.0 as i32 / 2) as f64,
+                            x: f64::from(x - wsz.0 as i32 / 2),
+                            y: -f64::from(y - wsz.0 as i32 / 2),
                         };
                         gfx.gui.handle_event(conrod_core::event::Input::Motion(m));
                     }
@@ -182,7 +202,7 @@ pub fn client_main() {
         gfx.angles.1 += input_state.look.0; // yaw
         gfx.angles.0 += input_state.look.1; // pitch
         gfx.angles.0 = f32::min(90.0, f32::max(-90.0, gfx.angles.0));
-        gfx.angles.1 = gfx.angles.1 % 360.0;
+        gfx.angles.1 %= 360.0;
 
         // simple test gui
         let mut ui = gfx.gui.set_widgets();

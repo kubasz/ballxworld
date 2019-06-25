@@ -1,6 +1,6 @@
-use crate::world::{VoxelChunk, VOXEL_CHUNK_DIM};
-use crate::world::registry::VoxelRegistry;
 use crate::client::vulkan::vox::{ChunkBuffers, VoxelVertex};
+use crate::world::registry::VoxelRegistry;
+use crate::world::{VoxelChunk, VOXEL_CHUNK_DIM};
 
 pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuffers {
     let mut vbuf: Vec<VoxelVertex> = Vec::new();
@@ -50,16 +50,16 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuf
         },
     ];
 
-    let mut vidx: usize = 0;
-    for vox in chunk.data.iter() {
+    for (vidx, vox) in chunk.data.iter().enumerate() {
         let vdef = registry.get_definition_from_id(&vox);
 
         let x = (vidx % VOXEL_CHUNK_DIM) as f32;
         let y = ((vidx / VOXEL_CHUNK_DIM) % VOXEL_CHUNK_DIM) as f32;
         let z = ((vidx / VOXEL_CHUNK_DIM / VOXEL_CHUNK_DIM) % VOXEL_CHUNK_DIM) as f32;
-        vidx += 1;
 
-        if !vdef.has_mesh { continue; }
+        if !vdef.has_mesh {
+            continue;
+        }
 
         for side in &SIDES {
             let voff = vbuf.len() as u32;
@@ -70,13 +70,18 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuf
                     z + side.verts[t * 3 + 2],
                     1.0,
                 ];
-                let shade = (t+10) as f32 / 13.0;
+                let shade = (t + 10) as f32 / 13.0;
                 vbuf.push(VoxelVertex {
                     position,
-                    color: [vdef.debug_color[0]*shade, vdef.debug_color[1]*shade, vdef.debug_color[2]*shade, 1.0],
+                    color: [
+                        vdef.debug_color[0] * shade,
+                        vdef.debug_color[1] * shade,
+                        vdef.debug_color[2] * shade,
+                        1.0,
+                    ],
                 });
             }
-            ibuf.extend([voff, voff + 1, voff + 2, voff + 2, voff + 3, voff].into_iter());
+            ibuf.extend([voff, voff + 1, voff + 2, voff + 2, voff + 3, voff].iter());
         }
     }
 

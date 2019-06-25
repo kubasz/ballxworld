@@ -65,9 +65,7 @@ impl<'a> VoxelDefinitionBuilder<'a> {
             return Err(());
         }
         self.registry.definitions.insert(def.id, def.clone());
-        self.registry
-            .name_lut
-            .insert(def.name.clone(), def.clone());
+        self.registry.name_lut.insert(def.name.clone(), def.clone());
         Ok(())
     }
 }
@@ -78,7 +76,8 @@ impl VoxelRegistry {
         reg.build_definition()
             .name("core:void")
             .debug_color(0.0, 0.0, 0.0)
-            .finish().unwrap();
+            .finish()
+            .unwrap();
         reg
     }
 

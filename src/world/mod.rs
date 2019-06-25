@@ -1,8 +1,8 @@
 use cgmath::Vector3;
 
-pub mod registry;
-pub mod generation;
 pub mod badgen;
+pub mod generation;
+pub mod registry;
 
 pub const VOXEL_CHUNK_DIM: usize = 32;
 pub const VOXEL_CHUNK_CUBES: usize = VOXEL_CHUNK_DIM * VOXEL_CHUNK_DIM * VOXEL_CHUNK_DIM;
@@ -17,19 +17,29 @@ pub struct VoxelChunk {
     pub data: [VoxelDatum; VOXEL_CHUNK_CUBES],
 }
 
+impl Default for VoxelChunk {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub type ChunkPosition = Vector3<i32>;
+
 pub struct VoxelChunkRef<'a> {
     pub chunk: &'a VoxelChunk,
-    pub position: Vector3<i32>
+    pub position: ChunkPosition,
 }
 
 pub struct VoxelChunkMutRef<'a> {
     pub chunk: &'a mut VoxelChunk,
-    pub position: Vector3<i32>
+    pub position: ChunkPosition,
 }
 
 impl VoxelChunk {
     pub fn new() -> VoxelChunk {
-        VoxelChunk { data: [Default::default(); VOXEL_CHUNK_CUBES] }
+        VoxelChunk {
+            data: [Default::default(); VOXEL_CHUNK_CUBES],
+        }
     }
 }
 
