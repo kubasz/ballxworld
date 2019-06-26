@@ -1,13 +1,18 @@
 use std::ffi::CString;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
 use cgmath::prelude::*;
 use cgmath::{vec3, Deg, Matrix4, PerspectiveFov, Rad, Vector3};
 
 use sdl2::video::Window;
 
+use crate::client::voxmesh::mesh_from_chunk;
+use crate::world::generation::World;
+use crate::world::{ChunkPosition, VoxelChunk, VOXEL_CHUNK_DIM};
 use std::cmp::max;
-use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, CpuBufferPool};
+use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
+use vulkano::buffer::{BufferUsage, CpuBufferPool, ImmutableBuffer, TypedBufferAccess};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::device::{Device, Queue};
@@ -49,6 +54,12 @@ pub mod vox {
         pub proj: [[f32; 4]; 4],
     }
 
+    #[derive(Copy, Clone, Default)]
+    #[repr(C)]
+    pub struct VoxelPC {
+        pub chunk_offset: [f32; 3],
+    }
+
     pub mod vs {
         vulkano_shaders::shader! {
         ty: "vertex",
@@ -88,6 +99,19 @@ impl WaitableFuture for NowFuture {
     }
 }
 
+struct DrawnChunk {
+    pub chunk: Weak<Mutex<VoxelChunk>>,
+    pub last_dirty: u64,
+    pub vbuffer: Arc<ImmutableBuffer<[vox::VoxelVertex]>>,
+    pub ibuffer: Arc<ImmutableBuffer<[u32]>>,
+}
+
+impl Debug for DrawnChunk {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "DrawnChunk {{ last_dirty: {} }}", self.last_dirty)
+    }
+}
+
 pub struct RenderingContext {
     // basic handles
     pub window: Window,
@@ -106,9 +130,11 @@ pub struct RenderingContext {
     pub framebuffers: Vec<Arc<FramebufferAbstract + Send + Sync>>,
     pub dynamic_state: DynamicState,
     // test voxel render stuff
+    pub world: Option<Arc<Mutex<World>>>,
     pub voxel_pipeline: Arc<GraphicsPipelineAbstract + Send + Sync>,
-    pub vbuffer: Arc<CpuAccessibleBuffer<[vox::VoxelVertex]>>,
-    pub ibuffer: Arc<CpuAccessibleBuffer<[u32]>>,
+    voxel_staging_v: CpuBufferPool<vox::VoxelVertex>,
+    voxel_staging_i: CpuBufferPool<u32>,
+    drawn_chunks: HashMap<ChunkPosition, Arc<Mutex<DrawnChunk>>>,
     pub ubuffers: CpuBufferPool<vox::VoxelUBO>,
     pub position: Vector3<f32>,
     pub angles: (f32, f32),
@@ -116,6 +142,8 @@ pub struct RenderingContext {
     pub gui_renderer: conrod_vulkano::Renderer,
     pub gui: conrod_core::Ui,
     pub gui_image_map: conrod_core::image::Map<conrod_vulkano::Image>,
+
+    pub do_dump: bool,
 }
 
 fn generate_updated_framebuffers(
@@ -289,34 +317,6 @@ impl RenderingContext {
         let framebuffers =
             generate_updated_framebuffers(&swapimages, mainpass.clone(), &mut dynamic_state);
 
-        let vbuffer = {
-            let v1 = vox::VoxelVertex {
-                position: [-0.5, -0.5, 0.0, 0.0],
-                color: [1.0, 0.0, 0.0, 1.0],
-            };
-            let v2 = vox::VoxelVertex {
-                position: [0.0, 0.5, 0.0, 0.0],
-                color: [0.0, 1.0, 0.0, 1.0],
-            };
-            let v3 = vox::VoxelVertex {
-                position: [0.5, -0.25, 0.0, 0.0],
-                color: [0.0, 0.0, 1.0, 1.0],
-            };
-            CpuAccessibleBuffer::from_iter(
-                device.clone(),
-                BufferUsage::vertex_buffer(),
-                vec![v1, v2, v3].into_iter(),
-            )
-            .unwrap()
-        };
-
-        let ibuffer = CpuAccessibleBuffer::from_iter(
-            device.clone(),
-            BufferUsage::index_buffer(),
-            vec![0, 1, 2].into_iter(),
-        )
-        .unwrap();
-
         let voxel_pipeline = {
             let vs = vox::vs::Shader::load(device.clone()).expect("Failed to create VS module");
             let fs = vox::fs::Shader::load(device.clone()).expect("Failed to create FS module");
@@ -360,7 +360,7 @@ impl RenderingContext {
             window,
             instance_extensions,
             instance,
-            device,
+            device: device.clone(),
             surface,
             queues: Queues::Combined(queue),
             swapchain,
@@ -370,32 +370,110 @@ impl RenderingContext {
             dynamic_state,
             previous_frame_future,
             outdated_swapchain: false,
+            world: None,
             voxel_pipeline,
-            vbuffer,
-            ibuffer,
+            voxel_staging_v: CpuBufferPool::upload(device.clone()),
+            voxel_staging_i: CpuBufferPool::upload(device.clone()),
+            drawn_chunks: HashMap::new(),
             ubuffers,
             position: vec3(0.0, 0.0, 90.0),
             angles: (0.0, 0.0),
             gui_renderer,
             gui,
             gui_image_map,
+            do_dump: false,
         }
     }
 
-    pub fn d_reset_buffers(&mut self, new_data: vox::ChunkBuffers) {
-        self.vbuffer = CpuAccessibleBuffer::from_iter(
-            self.device.clone(),
-            BufferUsage::vertex_buffer(),
-            new_data.vertices.into_iter(),
-        )
-        .unwrap();
+    fn update_chunks(&mut self, cmd: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
+        if self.world.is_none() {
+            self.drawn_chunks.clear();
+            return cmd;
+        }
+        let world_some = self.world.as_ref().unwrap();
+        let world = world_some.lock().unwrap();
 
-        self.ibuffer = CpuAccessibleBuffer::from_iter(
-            self.device.clone(),
-            BufferUsage::index_buffer(),
-            new_data.indices.into_iter(),
-        )
-        .unwrap();
+        let mut chunks_to_remove: Vec<ChunkPosition> = Vec::new();
+        self.drawn_chunks
+            .keys()
+            .filter(|p| !world.loaded_chunks.contains_key(p))
+            .for_each(|p| chunks_to_remove.push(*p));
+        let mut chunks_to_add: Vec<ChunkPosition> = Vec::new();
+        for (cpos, chunk) in world.loaded_chunks.iter() {
+            if !self.drawn_chunks.contains_key(&cpos) {
+                chunks_to_add.push(*cpos);
+                continue;
+            }
+            if self
+                .drawn_chunks
+                .get(&cpos)
+                .unwrap()
+                .lock()
+                .unwrap()
+                .last_dirty
+                != chunk.lock().unwrap().dirty
+            {
+                chunks_to_add.push(*cpos);
+            }
+        }
+
+        for cpos in chunks_to_remove {
+            self.drawn_chunks.remove(&cpos);
+        }
+
+        let mut cmd = cmd;
+        let cposition = self.position.map(|c| (c as i32) / 16);
+        chunks_to_add.sort_by_cached_key(|p| {
+            let d = cposition - p;
+            d.x * d.x + d.y * d.y + d.z * d.z
+        });
+        for cpos in chunks_to_add.iter().take(3) {
+            let cpos = *cpos;
+            self.drawn_chunks.remove(&cpos);
+            let chunk_arc = world.loaded_chunks.get(&cpos).unwrap();
+            let chunk = chunk_arc.lock().unwrap();
+            let mesh = mesh_from_chunk(&chunk, &world.registry);
+
+            let vchunk = self
+                .voxel_staging_v
+                .chunk(mesh.vertices.into_iter())
+                .unwrap();
+            let ichunk = self
+                .voxel_staging_i
+                .chunk(mesh.indices.into_iter())
+                .unwrap();
+
+            let dchunk = {
+                let (vbuffer, vfill) = unsafe {
+                    ImmutableBuffer::<[vox::VoxelVertex]>::uninitialized_array(
+                        self.device.clone(),
+                        vchunk.len(),
+                        BufferUsage::vertex_buffer_transfer_destination(),
+                    )
+                    .unwrap()
+                };
+                cmd = cmd.copy_buffer(vchunk, vfill).unwrap();
+                let (ibuffer, ifill) = unsafe {
+                    ImmutableBuffer::<[u32]>::uninitialized_array(
+                        self.device.clone(),
+                        ichunk.len(),
+                        BufferUsage::index_buffer_transfer_destination(),
+                    )
+                    .unwrap()
+                };
+                cmd = cmd.copy_buffer(ichunk, ifill).unwrap();
+
+                DrawnChunk {
+                    chunk: Arc::downgrade(chunk_arc),
+                    last_dirty: chunk.dirty,
+                    vbuffer,
+                    ibuffer,
+                }
+            };
+            self.drawn_chunks.insert(cpos, Arc::new(Mutex::new(dchunk)));
+        }
+
+        cmd
     }
 
     pub fn draw_next_frame(&mut self, _delta_time: f64) {
@@ -428,6 +506,7 @@ impl RenderingContext {
         }
 
         let Queues::Combined(ref queue) = self.queues;
+        let queue = queue.clone();
         let (image_num, acquire_future) =
             match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
                 Ok(r) => r,
@@ -498,23 +577,32 @@ impl RenderingContext {
                 .expect("Failed to submit glyph cache update");
         }
 
+        cmdbufbuild = self.update_chunks(cmdbufbuild);
+
         cmdbufbuild = cmdbufbuild
             .begin_render_pass(
                 self.framebuffers[image_num].clone(),
                 false,
                 vec![[0.1, 0.1, 0.1, 1.0].into(), (1f32, 0u32).into()],
             )
-            .expect("Failed to begin render pass")
-            //
-            .draw_indexed(
-                self.voxel_pipeline.clone(),
-                &self.dynamic_state,
-                vec![self.vbuffer.clone()],
-                self.ibuffer.clone(),
-                udset.clone(),
-                (),
-            )
-            .expect("Failed to submit voxel chunk draw");
+            .expect("Failed to begin render pass");
+
+        for (pos, chunkmut) in self.drawn_chunks.iter() {
+            let pc = vox::VoxelPC {
+                chunk_offset: pos.map(|x| (x as f32) * (VOXEL_CHUNK_DIM as f32)).into(),
+            };
+            let chunk = chunkmut.lock().unwrap();
+            cmdbufbuild = cmdbufbuild
+                .draw_indexed(
+                    self.voxel_pipeline.clone(),
+                    &self.dynamic_state,
+                    vec![chunk.vbuffer.clone()],
+                    chunk.ibuffer.clone(),
+                    udset.clone(),
+                    pc,
+                )
+                .expect("Failed to submit voxel chunk draw");
+        }
 
         let gui_draw_cmds = self
             .gui_renderer
@@ -565,6 +653,11 @@ impl RenderingContext {
                 self.previous_frame_future = Box::new(vulkano::sync::now(self.device.clone()));
                 println!("{:?}", e);
             }
+        }
+
+        if self.do_dump {
+            self.do_dump = false;
+            eprintln!("{:?}", &self.drawn_chunks);
         }
     }
 }

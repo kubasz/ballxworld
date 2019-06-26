@@ -1,4 +1,5 @@
 use cgmath::Vector3;
+use std::sync::{Mutex, Weak};
 
 pub mod badgen;
 pub mod generation;
@@ -14,7 +15,10 @@ pub struct VoxelDatum {
 
 #[derive(Clone)]
 pub struct VoxelChunk {
+    /// The raw voxel data
     pub data: [VoxelDatum; VOXEL_CHUNK_CUBES],
+    /// A number increased after each change to this chunk while it's loaded
+    pub dirty: u64,
 }
 
 impl Default for VoxelChunk {
@@ -25,13 +29,8 @@ impl Default for VoxelChunk {
 
 pub type ChunkPosition = Vector3<i32>;
 
-pub struct VoxelChunkRef<'a> {
-    pub chunk: &'a VoxelChunk,
-    pub position: ChunkPosition,
-}
-
-pub struct VoxelChunkMutRef<'a> {
-    pub chunk: &'a mut VoxelChunk,
+pub struct VoxelChunkRef {
+    pub chunk: Weak<Mutex<VoxelChunk>>,
     pub position: ChunkPosition,
 }
 
@@ -39,6 +38,7 @@ impl VoxelChunk {
     pub fn new() -> VoxelChunk {
         VoxelChunk {
             data: [Default::default(); VOXEL_CHUNK_CUBES],
+            dirty: 0,
         }
     }
 }

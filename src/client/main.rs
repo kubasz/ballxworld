@@ -1,15 +1,14 @@
 use sdl2::event::{Event, WindowEvent};
 
-use crate::client::voxmesh::mesh_from_chunk;
 use crate::client::vulkan::RenderingContext;
 use crate::world;
 use cgmath::prelude::*;
 use cgmath::{vec3, Deg, Matrix3};
 use sdl2::keyboard::Keycode;
 use std::collections::{HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
 
 use crate::world::badgen::BadGenerator;
-use crate::world::generation::WorldGenerator;
 
 use conrod_core::widget_ids;
 
@@ -51,16 +50,20 @@ pub fn client_main() {
         .has_physical_properties()
         .finish()
         .unwrap();
-    let mut chunk = world::VoxelChunk::new();
-    let gen = BadGenerator {};
-    gen.generate_chunk(
-        world::VoxelChunkMutRef {
-            chunk: &mut chunk,
-            position: vec3(0, 0, 0),
-        },
-        &vxreg,
-    );
-    gfx.d_reset_buffers(mesh_from_chunk(&chunk, &vxreg));
+    vxreg
+        .build_definition()
+        .name("core:border")
+        .debug_color(0.1, 0.3, 0.8)
+        .has_physical_properties()
+        .finish()
+        .unwrap();
+    let vxreg = Arc::new(vxreg);
+    let mut world = world::generation::World::new("world".to_owned(), vxreg.clone());
+    world.load_anchor.chunk_radius = 4;
+    world.change_generator(Arc::new(BadGenerator::default()));
+    let world = Arc::new(Mutex::new(world));
+
+    gfx.world = Some(world.clone());
 
     let pf_mult = 1.0 / sdl_timer.performance_frequency() as f64;
     let mut previous_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
@@ -90,6 +93,7 @@ pub fn client_main() {
         let physics_frames = (physics_accum_time / PHYSICS_FRAME_TIME) as i32;
         if physics_frames > 0 {
             physics_accum_time -= f64::from(physics_frames) * PHYSICS_FRAME_TIME;
+            let mut world = world.lock().unwrap();
             for _pfrm in 0..physics_frames {
                 // do physics tick
                 {
@@ -100,6 +104,9 @@ pub fn client_main() {
                     mview.replace_col(1, -mview.y);
                     mview = mview.transpose();
                     gfx.position -= mview * vec3(input_state.walk.0, 0.0, input_state.walk.1);
+                    world.load_anchor.position = gfx.position;
+                    //
+                    world.physics_tick();
                 }
             }
         }
@@ -143,6 +150,9 @@ pub fn client_main() {
                             sdl_ctx
                                 .mouse()
                                 .set_relative_mouse_mode(input_state.capture_mouse);
+                        }
+                        Some(sdl2::keyboard::Keycode::Backquote) => {
+                            gfx.do_dump = true;
                         }
                         Some(sdl2::keyboard::Keycode::Escape) => {
                             break 'running;

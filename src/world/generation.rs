@@ -1,5 +1,5 @@
 use crate::world::registry::VoxelRegistry;
-use crate::world::{ChunkPosition, VoxelChunk, VoxelChunkMutRef, VOXEL_CHUNK_DIM};
+use crate::world::{ChunkPosition, VoxelChunk, VoxelChunkRef, VOXEL_CHUNK_DIM};
 use cgmath::prelude::*;
 use cgmath::{vec3, Vector3};
 use std::collections::{HashMap, HashSet};
@@ -7,7 +7,7 @@ use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, Mutex};
 
 pub trait WorldGenerator {
-    fn generate_chunk(&self, cref: VoxelChunkMutRef, registry: &VoxelRegistry);
+    fn generate_chunk(&self, cref: VoxelChunkRef, registry: &VoxelRegistry);
 }
 
 #[derive(Debug, Clone)]
@@ -29,11 +29,11 @@ impl Default for LoadAnchor {
 
 pub struct World {
     pub name: String,
-    loaded_chunks: HashMap<ChunkPosition, Arc<Mutex<VoxelChunk>>>,
-    loading_queue: HashSet<ChunkPosition>,
-    load_anchor: LoadAnchor,
-    worldgen: Option<Arc<WorldGenerator>>,
-    registry: Arc<VoxelRegistry>
+    pub loaded_chunks: HashMap<ChunkPosition, Arc<Mutex<VoxelChunk>>>,
+    pub loading_queue: HashSet<ChunkPosition>,
+    pub load_anchor: LoadAnchor,
+    pub worldgen: Option<Arc<WorldGenerator>>,
+    pub registry: Arc<VoxelRegistry>,
 }
 
 impl Debug for World {
@@ -56,7 +56,7 @@ impl World {
             loading_queue: HashSet::new(),
             load_anchor: Default::default(),
             worldgen: None,
-            registry
+            registry,
         }
     }
 
@@ -115,13 +115,14 @@ impl World {
 
             let worldgen = self.worldgen.as_mut().unwrap();
             for p in pos_to_load {
-                let mut chunk = VoxelChunk::new();
-                let cref = VoxelChunkMutRef{
-                    chunk: &mut chunk,
-                    position: p
+                let chunk = Arc::new(Mutex::new(VoxelChunk::new()));
+                let cref = VoxelChunkRef {
+                    chunk: Arc::downgrade(&chunk),
+                    position: p,
                 };
                 worldgen.generate_chunk(cref, &self.registry);
-                self.loaded_chunks.insert(p, Arc::new(Mutex::new(chunk)));
+                chunk.lock().unwrap().dirty += 1;
+                self.loaded_chunks.insert(p, chunk);
             }
             for p in pos_to_unload {
                 self.loaded_chunks.remove(&p);
