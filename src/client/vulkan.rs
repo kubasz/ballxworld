@@ -27,6 +27,7 @@ use vulkano::swapchain::{
 };
 use vulkano::sync::{FenceSignalFuture, FlushError, GpuFuture, NowFuture};
 use vulkano::{app_info_from_cargo_toml, single_pass_renderpass};
+use crate::client::config::Config;
 
 #[allow(clippy::ref_in_deref)] // in impl_vertex! macro
 pub mod vox {
@@ -184,15 +185,18 @@ fn generate_updated_framebuffers(
 }
 
 impl RenderingContext {
-    pub fn new(sdl_video: &sdl2::VideoSubsystem) -> RenderingContext {
+    pub fn new(sdl_video: &sdl2::VideoSubsystem, cfg: &Config) -> RenderingContext {
         sdl_video.vulkan_load_library_default().unwrap();
-        let window = sdl_video
-            .window("BallX World", 1280, 720)
-            .position_centered()
+        let mut window = sdl_video
+            .window("BallX World", cfg.window_width, cfg.window_height);
+        window.position_centered()
             .vulkan()
             .allow_highdpi()
-            .resizable()
-            .build()
+            .resizable();
+        if cfg.window_fullscreen {
+            window.fullscreen();
+        }
+        let window = window.build()
             .expect("Failed to create the game window");
         let instance_extensions;
         let instance = {
@@ -273,7 +277,7 @@ impl RenderingContext {
                 &queue,
                 SurfaceTransform::Identity,
                 alpha,
-                if caps.present_modes.mailbox {
+                if caps.present_modes.mailbox && !cfg.render_wait_for_vsync {
                     PresentMode::Mailbox
                 } else {
                     PresentMode::Fifo

@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::world::badgen::BadGenerator;
 
+use crate::client::config::Config;
 use conrod_core::widget_ids;
+use std::io::{Read, Write};
 
 const PHYSICS_FRAME_TIME: f64 = 1.0 / 60.0;
 
@@ -29,8 +31,32 @@ struct Ids{canvas, positionlbl}
 pub fn client_main() {
     let sdl_ctx = sdl2::init().unwrap();
     let sdl_vid = sdl_ctx.video().unwrap();
-    let sdl_timer = sdl_ctx.timer().unwrap();
-    let mut gfx = RenderingContext::new(&sdl_vid);
+    let mut sdl_timer = sdl_ctx.timer().unwrap();
+
+    let mut cfg = Config::new();
+    {
+        let cfg_file = std::fs::File::open("settings.toml");
+        match cfg_file {
+            Err(_) => {
+                eprintln!("Creating new settings.toml");
+            }
+            Ok(mut cfg_file) => {
+                let mut cfg_text = String::new();
+                cfg_file
+                    .read_to_string(&mut cfg_text)
+                    .expect("Error reading settings.toml");
+                cfg.load_from_toml(&cfg_text);
+            }
+        }
+        let cfg_file = std::fs::File::create("settings.toml");
+        let cfg_text = cfg.save_toml();
+        cfg_file
+            .expect("Couldn't open settings.toml for writing")
+            .write_all(cfg_text.as_bytes())
+            .expect("Couldn't write to settings.toml");
+    }
+
+    let mut gfx = RenderingContext::new(&sdl_vid, &cfg);
 
     let mut frametimes = VecDeque::new();
     let frametime_count: usize = 100;
@@ -233,5 +259,14 @@ pub fn client_main() {
             .color(conrod_core::color::WHITE)
             .top_left_of(ids.canvas)
             .set(ids.positionlbl, &mut ui);
+
+        if let Some(fps) = cfg.render_fps_lock {
+            let end_current_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
+            let target_ft = 1.0 / f64::from(fps);
+            let ms = (target_ft - end_current_frame_time + current_frame_time) * 1000.0;
+            if ms > 0.0 {
+                sdl_timer.delay(ms as u32);
+            }
+        }
     }
 }
