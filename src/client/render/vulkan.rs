@@ -18,7 +18,7 @@ use vulkano::swapchain::{
     AcquireError, PresentMode, Surface, SurfaceTransform, Swapchain, SwapchainAcquireFuture,
     SwapchainCreationError,
 };
-use vulkano::sync::{FenceSignalFuture, FlushError, GpuFuture, NowFuture};
+use vulkano::sync::{Fence, FenceSignalFuture, FlushError, GpuFuture, NowFuture};
 use vulkano::{app_info_from_cargo_toml, single_pass_renderpass};
 
 pub enum Queues {
@@ -53,6 +53,7 @@ pub struct RenderingContext {
     pub surface: Arc<Surface<()>>,
     pub device: Arc<Device>,
     pub queues: Queues,
+    pub sync_transfer_fence: Fence,
     // swapchain
     pub swapchain: Arc<Swapchain<()>>,
     pub swapimages: Vec<Arc<SwapchainImage<()>>>,
@@ -300,6 +301,9 @@ impl RenderingContext {
             .insert_from_file("res/fonts/LiberationSans-Regular.ttf")
             .expect("Couldn't load Liberation Sans font");
 
+        let sync_transfer_fence = Fence::alloc_signaled(device.clone())
+            .expect("Could not create synchronous transfer GPU fence");
+
         RenderingContext {
             window,
             instance_extensions,
@@ -307,6 +311,7 @@ impl RenderingContext {
             device: device.clone(),
             surface,
             queues: Queues::Combined(queue),
+            sync_transfer_fence,
             swapchain,
             swapimages,
             mainpass,
@@ -318,6 +323,11 @@ impl RenderingContext {
             gui,
             gui_image_map,
         }
+    }
+
+    pub fn get_transfer_queue(&self) -> Arc<Queue> {
+        let Queues::Combined(ref q) = self.queues;
+        q.clone()
     }
 
     /// Returns None if e.g. swapchain is in the process of being recreated

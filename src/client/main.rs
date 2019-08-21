@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use crate::world::badgen::BadGenerator;
 
 use crate::client::config::Config;
+use crate::world::TextureMapping;
 use conrod_core::widget_ids;
 use std::io::{Read, Write};
 
@@ -57,7 +58,7 @@ pub fn client_main() {
     }
 
     let mut rctx = RenderingContext::new(&sdl_vid, &cfg);
-    let mut vctx = VoxelRenderer::new(&mut rctx);
+    let mut vctx = VoxelRenderer::new(&cfg, &mut rctx);
 
     let mut frametimes = VecDeque::new();
     let frametime_count: usize = 100;
@@ -66,21 +67,31 @@ pub fn client_main() {
     vxreg
         .build_definition()
         .name("core:grass")
-        .debug_color(0.1, 0.8, 0.1)
+        .debug_color(1.0, 1.0, 1.0)
+        .texture_names(
+            &vctx,
+            TextureMapping::TiledTSB {
+                top: "grass_top",
+                side: "grass_side",
+                bottom: "grass_bottom",
+            },
+        )
         .has_physical_properties()
         .finish()
         .unwrap();
     vxreg
         .build_definition()
         .name("core:stone")
-        .debug_color(0.45, 0.4, 0.4)
+        .debug_color(1.0, 1.0, 1.0)
+        .texture_names(&vctx, TextureMapping::TiledSingle("stone"))
         .has_physical_properties()
         .finish()
         .unwrap();
     vxreg
         .build_definition()
         .name("core:border")
-        .debug_color(0.1, 0.3, 0.8)
+        .debug_color(1.0, 1.0, 1.0)
+        .texture_names(&vctx, TextureMapping::TiledSingle("unknown"))
         .has_physical_properties()
         .finish()
         .unwrap();

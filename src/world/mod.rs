@@ -45,6 +45,32 @@ impl VoxelChunk {
 
 type VoxelId = u32;
 
+#[derive(Clone, Debug)]
+pub enum TextureMapping<T> {
+    TiledSingle(T),
+    TiledTSB { top: T, side: T, bottom: T },
+}
+
+impl Default for TextureMapping<u32> {
+    fn default() -> Self {
+        TextureMapping::TiledSingle(0)
+    }
+}
+
+impl<T> TextureMapping<T> {
+    pub fn map<U, F: Fn(T) -> U>(self, f: F) -> TextureMapping<U> {
+        use TextureMapping::*;
+        match self {
+            TiledSingle(a) => TiledSingle(f(a)),
+            TiledTSB { top, side, bottom } => TiledTSB {
+                top: f(top),
+                side: f(side),
+                bottom: f(bottom),
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct VoxelDefinition {
     pub id: VoxelId,
@@ -54,6 +80,7 @@ pub struct VoxelDefinition {
     pub has_collisions: bool,
     pub has_hitbox: bool,
     pub debug_color: [f32; 3],
+    pub texture_mapping: TextureMapping<u32>,
 }
 
 impl VoxelDefinition {

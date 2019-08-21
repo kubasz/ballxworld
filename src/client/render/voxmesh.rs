@@ -10,7 +10,10 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuf
     struct CubeSide {
         // counter-clockwise coords of the face
         pub verts: [f32; 3 * 4],
+        // what to add to position to find neighbor
         pub ioffset: Vector3<i32>,
+        // texture coordinates (u,v) matched with vertex coordinates
+        pub texcs: [f32; 2 * 4],
     }
 
     const SIDES: [CubeSide; 6] = [
@@ -20,6 +23,7 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuf
                 0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5,
             ],
             ioffset: vec3(1, 0, 0),
+            texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
         },
         // x- -> "left"
         CubeSide {
@@ -27,6 +31,7 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuf
                 -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5, -0.5, -0.5,
             ],
             ioffset: vec3(-1, 0, 0),
+            texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
         },
         // y+ -> "bottom"
         CubeSide {
@@ -34,6 +39,7 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuf
                 -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5,
             ],
             ioffset: vec3(0, 1, 0),
+            texcs: [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0],
         },
         // y- -> "top"
         CubeSide {
@@ -41,6 +47,7 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuf
                 0.5, -0.5, -0.5, 0.5, -0.5, 0.5, -0.5, -0.5, 0.5, -0.5, -0.5, -0.5,
             ],
             ioffset: vec3(0, -1, 0),
+            texcs: [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0],
         },
         // z+ -> "back"
         CubeSide {
@@ -48,6 +55,7 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuf
                 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5,
             ],
             ioffset: vec3(0, 0, 1),
+            texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
         },
         // z- -> "front"
         CubeSide {
@@ -55,6 +63,7 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuf
                 -0.5, -0.5, -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5,
             ],
             ioffset: vec3(0, 0, -1),
+            texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
         },
     ];
 
@@ -95,15 +104,35 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuf
                     z + side.verts[t * 3 + 2],
                     1.0,
                 ];
-                let shade = (t + 10) as f32 / 13.0;
+                let texid;
+                use crate::world::TextureMapping;
+                match &vdef.texture_mapping {
+                    TextureMapping::TiledSingle(t) => {
+                        texid = *t;
+                    }
+                    TextureMapping::TiledTSB {
+                        top,
+                        side: tside,
+                        bottom,
+                    } => {
+                        if side.ioffset.y == 1 {
+                            texid = *top;
+                        } else if side.ioffset.y == -1 {
+                            texid = *bottom;
+                        } else {
+                            texid = *tside;
+                        }
+                    }
+                }
                 vbuf.push(VoxelVertex {
                     position,
                     color: [
-                        vdef.debug_color[0] * shade,
-                        vdef.debug_color[1] * shade,
-                        vdef.debug_color[2] * shade,
+                        vdef.debug_color[0],
+                        vdef.debug_color[1],
+                        vdef.debug_color[2],
                         1.0,
                     ],
+                    texcoord: [side.texcs[t * 2], side.texcs[t * 2 + 1], texid as f32],
                 });
             }
             ibuf.extend([voff, voff + 1, voff + 2, voff + 2, voff + 3, voff].iter());

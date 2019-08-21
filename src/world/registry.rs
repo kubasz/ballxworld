@@ -1,4 +1,5 @@
-use crate::world::{VoxelDatum, VoxelDefinition, VoxelId};
+use crate::client::render::VoxelRenderer;
+use crate::world::{TextureMapping, VoxelDatum, VoxelDefinition, VoxelId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -9,7 +10,8 @@ pub struct VoxelDefinitionBuilder<'a> {
     has_mesh: bool,
     has_collisions: bool,
     has_hitbox: bool,
-    pub debug_color: [f32; 3],
+    debug_color: [f32; 3],
+    texture_mapping: TextureMapping<u32>,
 }
 
 #[derive(Default)]
@@ -60,6 +62,7 @@ impl<'a> VoxelDefinitionBuilder<'a> {
             has_collisions: self.has_collisions,
             has_hitbox: self.has_hitbox,
             debug_color: self.debug_color,
+            texture_mapping: self.texture_mapping,
         });
         if self.registry.definitions.contains_key(&def.id) {
             return Err(());
@@ -67,6 +70,11 @@ impl<'a> VoxelDefinitionBuilder<'a> {
         self.registry.definitions.insert(def.id, def.clone());
         self.registry.name_lut.insert(def.name.clone(), def.clone());
         Ok(())
+    }
+
+    pub fn texture_names(mut self, vctx: &VoxelRenderer, t: TextureMapping<&str>) -> Self {
+        self.texture_mapping = t.map(|n| vctx.get_texture_id(n));
+        self
     }
 }
 
@@ -94,6 +102,7 @@ impl VoxelRegistry {
             has_collisions: false,
             has_hitbox: false,
             debug_color: [1.0, 0.0, 1.0],
+            texture_mapping: TextureMapping::TiledSingle(0),
         }
     }
 

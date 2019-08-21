@@ -11,6 +11,9 @@ pub struct Config {
     pub performance_load_distance: u32,
     pub performance_draw_distance: u32,
 
+    /// not in TOML
+    pub debug_logging: bool,
+
     toml_doc: Option<toml_edit::Document>,
 }
 
@@ -27,6 +30,8 @@ impl Config {
 
             performance_load_distance: 4,
             performance_draw_distance: 4,
+
+            debug_logging: cfg!(debug_assertions),
 
             toml_doc: None,
         }

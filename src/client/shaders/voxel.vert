@@ -12,10 +12,15 @@ layout(push_constant) uniform PushConstants {
 
 layout(location = 0) in vec4 position;
 layout(location = 1) in vec4 color;
+layout(location = 2) in vec3 texcoord;
 
-layout(location = 0) out vec4 v_color;
+layout(location = 0) out vec4 v_position;
+layout(location = 1) out vec4 v_color;
+layout(location = 2) out vec3 v_texcoord;
 
 void main() {
     gl_Position = ubo.proj * ubo.view * ubo.model * vec4(position.xyz + push_constants.chunk_offset, 1.0);
+    v_position = position;
     v_color = color;
+    v_texcoord = texcoord;
 }

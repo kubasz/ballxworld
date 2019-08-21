@@ -11,6 +11,7 @@ rand = "0.7"
 conrod_core = "0.67"
 conrod_vulkano = "0.67"
 toml_edit = "0.1"
+image = "0.22"
 
 [dependencies.sdl2]
 version = "0.32"

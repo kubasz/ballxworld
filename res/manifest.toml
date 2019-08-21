@@ -1,0 +1,6 @@
+[textures]
+unknown = "unknown.png"
+grass_side = "grass_side.png"
+grass_top = "grass_top.png"
+grass_bottom = "grass_bottom.png"
+stone = "stone.png"
