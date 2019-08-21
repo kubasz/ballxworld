@@ -102,14 +102,14 @@ impl VoxelRenderer {
         use vulkano::sampler::*;
         let texture_sampler = Sampler::new(
             rctx.device.clone(),
-            Filter::Linear,
-            Filter::Linear,
-            MipmapMode::Linear,
-            SamplerAddressMode::MirroredRepeat,
-            SamplerAddressMode::MirroredRepeat,
+            Filter::Nearest,
+            Filter::Nearest,
+            MipmapMode::Nearest,
+            SamplerAddressMode::Repeat,
+            SamplerAddressMode::Repeat,
             SamplerAddressMode::ClampToEdge,
             0.0,
-            1.0,
+            4.0,
             0.0,
             0.0,
         )
