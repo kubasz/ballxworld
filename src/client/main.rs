@@ -1,6 +1,6 @@
 use sdl2::event::{Event, WindowEvent};
 
-use crate::client::vulkan::RenderingContext;
+use crate::client::render::vulkan::RenderingContext;
 use crate::world;
 use cgmath::prelude::*;
 use cgmath::{vec3, Deg, Matrix3};

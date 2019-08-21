@@ -1,4 +1,4 @@
-use crate::client::vulkan::vox::{ChunkBuffers, VoxelVertex};
+use crate::client::render::vulkan::vox::{ChunkBuffers, VoxelVertex};
 use crate::world::registry::VoxelRegistry;
 use crate::world::{VoxelChunk, VOXEL_CHUNK_DIM};
 use cgmath::{vec3, Vector3};

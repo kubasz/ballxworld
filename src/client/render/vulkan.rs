@@ -7,7 +7,7 @@ use cgmath::{vec3, Deg, Matrix4, PerspectiveFov, Rad, Vector3};
 use sdl2::video::Window;
 
 use crate::client::config::Config;
-use crate::client::voxmesh::mesh_from_chunk;
+use crate::client::render::voxmesh::mesh_from_chunk;
 use crate::world::generation::World;
 use crate::world::{ChunkPosition, VoxelChunk, VOXEL_CHUNK_DIM};
 use std::cmp::max;
@@ -124,15 +124,15 @@ pub struct RenderingContext {
     // swapchain
     pub swapchain: Arc<Swapchain<()>>,
     pub swapimages: Vec<Arc<SwapchainImage<()>>>,
-    previous_frame_future: Box<WaitableFuture>,
+    previous_frame_future: Box<dyn WaitableFuture>,
     pub outdated_swapchain: bool,
     // default render set
-    pub mainpass: Arc<RenderPassAbstract + Send + Sync>,
-    pub framebuffers: Vec<Arc<FramebufferAbstract + Send + Sync>>,
+    pub mainpass: Arc<dyn RenderPassAbstract + Send + Sync>,
+    pub framebuffers: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
     pub dynamic_state: DynamicState,
     // test voxel render stuff
     pub world: Option<Arc<Mutex<World>>>,
-    pub voxel_pipeline: Arc<GraphicsPipelineAbstract + Send + Sync>,
+    pub voxel_pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
     voxel_staging_v: CpuBufferPool<vox::VoxelVertex>,
     voxel_staging_i: CpuBufferPool<u32>,
     drawn_chunks: HashMap<ChunkPosition, Arc<Mutex<DrawnChunk>>>,
@@ -147,11 +147,12 @@ pub struct RenderingContext {
     pub do_dump: bool,
 }
 
+
 fn generate_updated_framebuffers(
     swapimages: &[Arc<SwapchainImage<()>>],
-    mainpass: Arc<RenderPassAbstract + Send + Sync>,
+    mainpass: Arc<dyn RenderPassAbstract + Send + Sync>,
     dynamic_state: &mut DynamicState,
-) -> Vec<Arc<FramebufferAbstract + Send + Sync>> {
+) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
     let dimensions = swapimages[0].dimensions();
 
     let depth_image = AttachmentImage::transient(
@@ -179,7 +180,7 @@ fn generate_updated_framebuffers(
                     .unwrap()
                     .build()
                     .unwrap(),
-            ) as Arc<FramebufferAbstract + Send + Sync>
+            ) as Arc<dyn FramebufferAbstract + Send + Sync>
         })
         .collect::<Vec<_>>()
 }

@@ -32,7 +32,7 @@ pub struct World {
     pub loaded_chunks: HashMap<ChunkPosition, Arc<Mutex<VoxelChunk>>>,
     pub loading_queue: HashSet<ChunkPosition>,
     pub load_anchor: LoadAnchor,
-    pub worldgen: Option<Arc<WorldGenerator>>,
+    pub worldgen: Option<Arc<dyn WorldGenerator>>,
     pub registry: Arc<VoxelRegistry>,
 }
 
@@ -60,7 +60,7 @@ impl World {
         }
     }
 
-    pub fn change_generator(&mut self, new_generator: Arc<WorldGenerator>) {
+    pub fn change_generator(&mut self, new_generator: Arc<dyn WorldGenerator>) {
         self.worldgen = Some(new_generator);
     }
 
