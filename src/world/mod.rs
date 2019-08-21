@@ -2,6 +2,7 @@ use cgmath::Vector3;
 use std::sync::{Mutex, Weak};
 
 pub mod badgen;
+pub mod ecs;
 pub mod generation;
 pub mod registry;
 
