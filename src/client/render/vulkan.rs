@@ -1,87 +1,32 @@
 use std::ffi::CString;
-use std::sync::{Arc, Mutex, Weak};
-
-use cgmath::prelude::*;
-use cgmath::{vec3, Deg, Matrix4, PerspectiveFov, Rad, Vector3};
+use std::marker::PhantomData;
+use std::sync::Arc;
 
 use sdl2::video::Window;
 
 use crate::client::config::Config;
-use crate::client::render::voxmesh::mesh_from_chunk;
-use crate::world::generation::World;
-use crate::world::{ChunkPosition, VoxelChunk, VOXEL_CHUNK_DIM};
+
 use std::cmp::max;
-use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
-use vulkano::buffer::{BufferUsage, CpuBufferPool, ImmutableBuffer, TypedBufferAccess};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
-use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::device::{Device, Queue};
 use vulkano::format::Format;
 use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
 use vulkano::image::{AttachmentImage, SwapchainImage};
 use vulkano::instance::{Instance, InstanceExtensions, PhysicalDevice, RawInstanceExtensions};
 use vulkano::pipeline::viewport::Viewport;
-use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::swapchain::{
-    AcquireError, PresentMode, Surface, SurfaceTransform, Swapchain, SwapchainCreationError,
+    AcquireError, PresentMode, Surface, SurfaceTransform, Swapchain, SwapchainAcquireFuture,
+    SwapchainCreationError,
 };
 use vulkano::sync::{FenceSignalFuture, FlushError, GpuFuture, NowFuture};
 use vulkano::{app_info_from_cargo_toml, single_pass_renderpass};
-
-#[allow(clippy::ref_in_deref)] // in impl_vertex! macro
-pub mod vox {
-    use vulkano::impl_vertex;
-
-    pub struct ChunkBuffers {
-        pub vertices: Vec<VoxelVertex>,
-        pub indices: Vec<u32>,
-    }
-
-    #[derive(Copy, Clone, Default)]
-    #[repr(C)]
-    pub struct VoxelVertex {
-        pub position: [f32; 4],
-        pub color: [f32; 4],
-    }
-
-    impl_vertex!(VoxelVertex, position, color);
-
-    #[derive(Copy, Clone, Default)]
-    #[repr(C)]
-    pub struct VoxelUBO {
-        pub model: [[f32; 4]; 4],
-        pub view: [[f32; 4]; 4],
-        pub proj: [[f32; 4]; 4],
-    }
-
-    #[derive(Copy, Clone, Default)]
-    #[repr(C)]
-    pub struct VoxelPC {
-        pub chunk_offset: [f32; 3],
-    }
-
-    pub mod vs {
-        vulkano_shaders::shader! {
-        ty: "vertex",
-        path: "src/client/shaders/voxel.vert"
-        }
-    }
-
-    pub mod fs {
-        vulkano_shaders::shader! {
-        ty: "fragment",
-        path: "src/client/shaders/voxel.frag"
-        }
-    }
-}
 
 pub enum Queues {
     /// Combined Graphics+Transfer+Compute queue
     Combined(Arc<Queue>),
 }
 
-trait WaitableFuture: GpuFuture {
+pub trait WaitableFuture: GpuFuture {
     fn wait_or_noop(&mut self);
 }
 
@@ -97,19 +42,6 @@ where
 impl WaitableFuture for NowFuture {
     fn wait_or_noop(&mut self) {
         // noop
-    }
-}
-
-struct DrawnChunk {
-    pub chunk: Weak<Mutex<VoxelChunk>>,
-    pub last_dirty: u64,
-    pub vbuffer: Arc<ImmutableBuffer<[vox::VoxelVertex]>>,
-    pub ibuffer: Arc<ImmutableBuffer<[u32]>>,
-}
-
-impl Debug for DrawnChunk {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "DrawnChunk {{ last_dirty: {} }}", self.last_dirty)
     }
 }
 
@@ -130,23 +62,49 @@ pub struct RenderingContext {
     pub mainpass: Arc<dyn RenderPassAbstract + Send + Sync>,
     pub framebuffers: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
     pub dynamic_state: DynamicState,
-    // test voxel render stuff
-    pub world: Option<Arc<Mutex<World>>>,
-    pub voxel_pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
-    voxel_staging_v: CpuBufferPool<vox::VoxelVertex>,
-    voxel_staging_i: CpuBufferPool<u32>,
-    drawn_chunks: HashMap<ChunkPosition, Arc<Mutex<DrawnChunk>>>,
-    pub ubuffers: CpuBufferPool<vox::VoxelUBO>,
-    pub position: Vector3<f32>,
-    pub angles: (f32, f32),
     // GUI-related handles
     pub gui_renderer: conrod_vulkano::Renderer,
     pub gui: conrod_core::Ui,
     pub gui_image_map: conrod_core::image::Map<conrod_vulkano::Image>,
-
-    pub do_dump: bool,
 }
 
+pub trait FrameStage {}
+
+pub struct PrePassStage {}
+
+impl FrameStage for PrePassStage {}
+
+pub struct InPassStage {}
+
+impl FrameStage for InPassStage {}
+
+pub struct PostPassStage {}
+
+impl FrameStage for PostPassStage {}
+
+#[must_use]
+pub struct FrameContext<'r, Stage: FrameStage> {
+    pub rctx: &'r mut RenderingContext,
+    pub cmd: Option<AutoCommandBufferBuilder>,
+    pub delta_time: f64,
+    pub dims: [u32; 2],
+    pub image_num: usize,
+    pub queue: Arc<Queue>,
+    acquire_future: SwapchainAcquireFuture<()>,
+    _phantom: PhantomData<Stage>,
+}
+
+impl<'r, Stage: FrameStage> FrameContext<'r, Stage> {
+    /// Replaces cmd with None, so that it can be modified and put back
+    #[must_use]
+    pub fn replace_cmd(&mut self) -> AutoCommandBufferBuilder {
+        std::mem::replace(&mut self.cmd, None).unwrap()
+    }
+}
+
+pub type PrePassFrameContext<'r> = FrameContext<'r, PrePassStage>;
+pub type InPassFrameContext<'r> = FrameContext<'r, InPassStage>;
+pub type PostPassFrameContext<'r> = FrameContext<'r, PostPassStage>;
 
 fn generate_updated_framebuffers(
     swapimages: &[Arc<SwapchainImage<()>>],
@@ -321,25 +279,6 @@ impl RenderingContext {
         let framebuffers =
             generate_updated_framebuffers(&swapimages, mainpass.clone(), &mut dynamic_state);
 
-        let voxel_pipeline = {
-            let vs = vox::vs::Shader::load(device.clone()).expect("Failed to create VS module");
-            let fs = vox::fs::Shader::load(device.clone()).expect("Failed to create FS module");
-            Arc::new(
-                GraphicsPipeline::start()
-                    .cull_mode_back()
-                    .vertex_input_single_buffer::<vox::VoxelVertex>()
-                    .vertex_shader(vs.main_entry_point(), ())
-                    .viewports_dynamic_scissors_irrelevant(1)
-                    .fragment_shader(fs.main_entry_point(), ())
-                    .depth_stencil_simple_depth()
-                    .render_pass(Subpass::from(mainpass.clone(), 0).unwrap())
-                    .build(device.clone())
-                    .expect("Could not create voxel graphics pipeline"),
-            )
-        };
-
-        let ubuffers = CpuBufferPool::new(device.clone(), BufferUsage::uniform_buffer());
-
         let previous_frame_future = Box::new(vulkano::sync::now(device.clone()));
 
         let dims = swapimages[0].dimensions();
@@ -375,134 +314,26 @@ impl RenderingContext {
             dynamic_state,
             previous_frame_future,
             outdated_swapchain: false,
-            world: None,
-            voxel_pipeline,
-            voxel_staging_v: CpuBufferPool::upload(device.clone()),
-            voxel_staging_i: CpuBufferPool::upload(device.clone()),
-            drawn_chunks: HashMap::new(),
-            ubuffers,
-            position: vec3(0.0, 0.0, 90.0),
-            angles: (0.0, 0.0),
             gui_renderer,
             gui,
             gui_image_map,
-            do_dump: false,
         }
     }
 
-    fn update_chunks(&mut self, cmd: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
-        if self.world.is_none() {
-            self.drawn_chunks.clear();
-            return cmd;
-        }
-        let world_some = self.world.as_ref().unwrap();
-        let world = world_some.lock().unwrap();
-
-        let mut chunks_to_remove: Vec<ChunkPosition> = Vec::new();
-        self.drawn_chunks
-            .keys()
-            .filter(|p| !world.loaded_chunks.contains_key(p))
-            .for_each(|p| chunks_to_remove.push(*p));
-        let mut chunks_to_add: Vec<ChunkPosition> = Vec::new();
-        for (cpos, chunk) in world.loaded_chunks.iter() {
-            if !self.drawn_chunks.contains_key(&cpos) {
-                chunks_to_add.push(*cpos);
-                continue;
-            }
-            if self
-                .drawn_chunks
-                .get(&cpos)
-                .unwrap()
-                .lock()
-                .unwrap()
-                .last_dirty
-                != chunk.lock().unwrap().dirty
-            {
-                chunks_to_add.push(*cpos);
-            }
-        }
-
-        let mut cmd = cmd;
-        let ref_pos = self.position; // TODO: Add velocity-based position prediction
-        let cposition = ref_pos.map(|c| (c as i32) / 16);
-        let dist_key = |p: &Vector3<i32>| {
-            let d = cposition - p;
-            d.x * d.x + d.y * d.y + d.z * d.z
-        };
-        // Load nearest chunks first
-        chunks_to_add.sort_by_cached_key(&dist_key);
-        // Unload farthest chunks first
-        chunks_to_remove.sort_by_cached_key(|p| -dist_key(p));
-
-        let mut remover_iter = chunks_to_remove.into_iter();
-        for cpos in chunks_to_add.iter().take(3) {
-            let cpos = *cpos;
-            self.drawn_chunks.remove(&cpos);
-            let chunk_arc = world.loaded_chunks.get(&cpos).unwrap();
-            let chunk = chunk_arc.lock().unwrap();
-            let mesh = mesh_from_chunk(&chunk, &world.registry);
-
-            let vchunk = self
-                .voxel_staging_v
-                .chunk(mesh.vertices.into_iter())
-                .unwrap();
-            let ichunk = self
-                .voxel_staging_i
-                .chunk(mesh.indices.into_iter())
-                .unwrap();
-
-            let dchunk = {
-                let (vbuffer, vfill) = unsafe {
-                    ImmutableBuffer::<[vox::VoxelVertex]>::uninitialized_array(
-                        self.device.clone(),
-                        vchunk.len(),
-                        BufferUsage::vertex_buffer_transfer_destination(),
-                    )
-                    .unwrap()
-                };
-                cmd = cmd.copy_buffer(vchunk, vfill).unwrap();
-                let (ibuffer, ifill) = unsafe {
-                    ImmutableBuffer::<[u32]>::uninitialized_array(
-                        self.device.clone(),
-                        ichunk.len(),
-                        BufferUsage::index_buffer_transfer_destination(),
-                    )
-                    .unwrap()
-                };
-                cmd = cmd.copy_buffer(ichunk, ifill).unwrap();
-
-                DrawnChunk {
-                    chunk: Arc::downgrade(chunk_arc),
-                    last_dirty: chunk.dirty,
-                    vbuffer,
-                    ibuffer,
-                }
-            };
-            // For each loaded chunk unload 0..# chunks
-            for _ in 0..2 {
-                if let Some(rpos) = remover_iter.next() {
-                    self.drawn_chunks.remove(&rpos);
-                }
-            }
-            self.drawn_chunks.insert(cpos, Arc::new(Mutex::new(dchunk)));
-        }
-
-        cmd
-    }
-
-    pub fn draw_next_frame(&mut self, _delta_time: f64) {
+    /// Returns None if e.g. swapchain is in the process of being recreated
+    pub fn frame_begin_prepass(&mut self, delta_time: f64) -> Option<PrePassFrameContext> {
         self.previous_frame_future.cleanup_finished();
 
         let dims = {
             let d = self.window.vulkan_drawable_size();
-            [d.0, d.1]
+            [max(16, d.0), max(16, d.1)]
         };
 
         if self.outdated_swapchain {
             let (new_swapchain, new_images) = match self.swapchain.recreate_with_dimension(dims) {
                 Ok(r) => r,
                 // occurs on manual resizes, just ignore
-                Err(SwapchainCreationError::UnsupportedDimensions) => return,
+                Err(SwapchainCreationError::UnsupportedDimensions) => return None,
                 Err(err) => panic!("{:?}", err),
             };
 
@@ -515,9 +346,9 @@ impl RenderingContext {
             );
 
             self.outdated_swapchain = false;
-            self.gui.win_w = f64::from(dims[0]);
-            self.gui.win_h = f64::from(dims[1]);
         }
+        self.gui.win_w = f64::from(dims[0]);
+        self.gui.win_h = f64::from(dims[1]);
 
         let Queues::Combined(ref queue) = self.queues;
         let queue = queue.clone();
@@ -526,44 +357,10 @@ impl RenderingContext {
                 Ok(r) => r,
                 Err(AcquireError::OutOfDate) => {
                     self.outdated_swapchain = true;
-                    return;
+                    return None;
                 }
                 Err(err) => panic!("{:?}", err),
             };
-
-        let ubo = {
-            let mut ubo = vox::VoxelUBO::default();
-            let mmdl: Matrix4<f32> = One::one();
-            ubo.model = mmdl.into();
-            let mut mview: Matrix4<f32> = Matrix4::from_translation(-{
-                let mut p = self.position;
-                p.y = -p.y;
-                p
-            });
-            mview = Matrix4::from_angle_y(Deg(self.angles.1)) * mview;
-            mview = Matrix4::from_angle_x(Deg(self.angles.0)) * mview;
-            mview.replace_col(1, -mview.y);
-            ubo.view = mview.into();
-            let swdim = self.swapchain.dimensions();
-            let sfdim = [swdim[0] as f32, swdim[1] as f32];
-            let mproj: Matrix4<f32> = PerspectiveFov {
-                fovy: Rad(75.0 * std::f32::consts::PI / 180.0),
-                aspect: sfdim[0] / sfdim[1],
-                near: 0.1,
-                far: 1000.0,
-            }
-            .into();
-            ubo.proj = mproj.into();
-            self.ubuffers.next(ubo).unwrap()
-        };
-
-        let udset = Arc::new(
-            PersistentDescriptorSet::start(self.voxel_pipeline.clone(), 0)
-                .add_buffer(ubo.clone())
-                .unwrap()
-                .build()
-                .unwrap(),
-        );
 
         let mut cmdbufbuild =
             AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), queue.family())
@@ -591,36 +388,58 @@ impl RenderingContext {
                 .expect("Failed to submit glyph cache update");
         }
 
-        cmdbufbuild = self.update_chunks(cmdbufbuild);
+        Some(PrePassFrameContext {
+            rctx: self,
+            cmd: Some(cmdbufbuild),
+            delta_time,
+            dims,
+            image_num,
+            acquire_future,
+            queue,
+            _phantom: PhantomData,
+        })
+    }
 
+    pub fn frame_goto_pass(fctx: PrePassFrameContext) -> InPassFrameContext {
+        let PrePassFrameContext {
+            rctx: me,
+            cmd,
+            delta_time,
+            dims,
+            image_num,
+            acquire_future,
+            queue,
+            _phantom,
+        } = fctx;
+        let mut cmdbufbuild = cmd.unwrap();
         cmdbufbuild = cmdbufbuild
             .begin_render_pass(
-                self.framebuffers[image_num].clone(),
+                me.framebuffers[image_num].clone(),
                 false,
                 vec![[0.1, 0.1, 0.1, 1.0].into(), (1f32, 0u32).into()],
             )
             .expect("Failed to begin render pass");
 
-        for (pos, chunkmut) in self.drawn_chunks.iter() {
-            let pc = vox::VoxelPC {
-                chunk_offset: pos.map(|x| (x as f32) * (VOXEL_CHUNK_DIM as f32)).into(),
-            };
-            let chunk = chunkmut.lock().unwrap();
-            cmdbufbuild = cmdbufbuild
-                .draw_indexed(
-                    self.voxel_pipeline.clone(),
-                    &self.dynamic_state,
-                    vec![chunk.vbuffer.clone()],
-                    chunk.ibuffer.clone(),
-                    udset.clone(),
-                    pc,
-                )
-                .expect("Failed to submit voxel chunk draw");
+        InPassFrameContext {
+            rctx: me,
+            cmd: Some(cmdbufbuild),
+            delta_time,
+            dims,
+            image_num,
+            queue,
+            acquire_future,
+            _phantom: PhantomData,
         }
+    }
 
-        let gui_draw_cmds = self
+    pub fn inpass_draw_gui(fctx: &mut InPassFrameContext) {
+        let mut cmdbufbuild = fctx.replace_cmd();
+
+        let gui_viewport = [0.0, 0.0, fctx.dims[0] as f32, fctx.dims[1] as f32];
+        let gui_draw_cmds = fctx
+            .rctx
             .gui_renderer
-            .draw(queue.clone(), &self.gui_image_map, gui_viewport)
+            .draw(fctx.queue.clone(), &fctx.rctx.gui_image_map, gui_viewport)
             .unwrap();
         for cmd in gui_draw_cmds {
             let conrod_vulkano::DrawCommand {
@@ -640,38 +459,59 @@ impl RenderingContext {
                 .expect("Failed to submit GUI draw command");
         }
 
-        let cmdbuf = cmdbufbuild
-            .end_render_pass()
-            .expect("Failed to end render pass")
-            //
+        fctx.cmd = Some(cmdbufbuild);
+    }
+
+    pub fn frame_goto_postpass(fctx: InPassFrameContext) -> PostPassFrameContext {
+        PostPassFrameContext {
+            rctx: fctx.rctx,
+            cmd: fctx
+                .cmd
+                .map(|c| c.end_render_pass().expect("Failed to end render pass")),
+            delta_time: fctx.delta_time,
+            dims: fctx.dims,
+            image_num: fctx.image_num,
+            acquire_future: fctx.acquire_future,
+            queue: fctx.queue,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn frame_finish(fctx: PostPassFrameContext) {
+        let PostPassFrameContext {
+            rctx: me,
+            cmd,
+            image_num,
+            acquire_future,
+            queue,
+            ..
+        } = fctx;
+
+        let cmdbuf = cmd
+            .unwrap()
             .build()
             .expect("Failed to build frame draw commands");
 
-        self.previous_frame_future.wait_or_noop();
+        me.previous_frame_future.wait_or_noop();
 
-        let future = vulkano::sync::now(self.device.clone())
+        let future = vulkano::sync::now(me.device.clone())
             .join(acquire_future)
             .then_execute(queue.clone(), cmdbuf)
             .unwrap()
-            .then_swapchain_present(queue.clone(), self.swapchain.clone(), image_num)
+            .then_swapchain_present(queue.clone(), me.swapchain.clone(), image_num)
             .then_signal_fence_and_flush();
         match future {
             Ok(future) => {
-                self.previous_frame_future = Box::new(future);
+                me.previous_frame_future = Box::new(future);
             }
             Err(FlushError::OutOfDate) => {
-                self.previous_frame_future = Box::new(vulkano::sync::now(self.device.clone()));
-                self.outdated_swapchain = true;
+                me.previous_frame_future = Box::new(vulkano::sync::now(me.device.clone()));
+                me.outdated_swapchain = true;
             }
             Err(e) => {
-                self.previous_frame_future = Box::new(vulkano::sync::now(self.device.clone()));
+                me.previous_frame_future = Box::new(vulkano::sync::now(me.device.clone()));
                 println!("{:?}", e);
             }
-        }
-
-        if self.do_dump {
-            self.do_dump = false;
-            eprintln!("{:?}", &self.drawn_chunks);
         }
     }
 }

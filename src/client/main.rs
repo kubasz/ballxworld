@@ -1,6 +1,6 @@
 use sdl2::event::{Event, WindowEvent};
 
-use crate::client::render::vulkan::RenderingContext;
+use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::world;
 use cgmath::prelude::*;
 use cgmath::{vec3, Deg, Matrix3};
@@ -56,7 +56,8 @@ pub fn client_main() {
             .expect("Couldn't write to settings.toml");
     }
 
-    let mut gfx = RenderingContext::new(&sdl_vid, &cfg);
+    let mut rctx = RenderingContext::new(&sdl_vid, &cfg);
+    let mut vctx = VoxelRenderer::new(&mut rctx);
 
     let mut frametimes = VecDeque::new();
     let frametime_count: usize = 100;
@@ -85,11 +86,11 @@ pub fn client_main() {
         .unwrap();
     let vxreg = Arc::new(vxreg);
     let mut world = world::generation::World::new("world".to_owned(), vxreg.clone());
-    world.load_anchor.chunk_radius = 4;
+    world.load_anchor.chunk_radius = cfg.performance_load_distance as i32;
     world.change_generator(Arc::new(BadGenerator::default()));
     let world = Arc::new(Mutex::new(world));
 
-    gfx.world = Some(world.clone());
+    vctx.world = Some(world.clone());
 
     let pf_mult = 1.0 / sdl_timer.performance_frequency() as f64;
     let mut previous_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
@@ -100,7 +101,7 @@ pub fn client_main() {
     input_state.capture_mouse = true;
     let mut pressed_keys: HashSet<Keycode> = HashSet::new();
 
-    let ids = Ids::new(gfx.gui.widget_id_generator());
+    let ids = Ids::new(rctx.gui.widget_id_generator());
 
     sdl_ctx.mouse().set_relative_mouse_mode(true);
     let mut event_pump = sdl_ctx.event_pump().unwrap();
@@ -125,19 +126,26 @@ pub fn client_main() {
                 {
                     // position
                     let mut mview: Matrix3<f32> = Matrix3::identity();
-                    mview = Matrix3::from_angle_y(Deg(gfx.angles.1)) * mview;
-                    mview = Matrix3::from_angle_x(Deg(gfx.angles.0)) * mview;
+                    mview = Matrix3::from_angle_y(Deg(vctx.angles.1)) * mview;
+                    mview = Matrix3::from_angle_x(Deg(vctx.angles.0)) * mview;
                     mview.replace_col(1, -mview.y);
                     mview = mview.transpose();
-                    gfx.position -= mview * vec3(input_state.walk.0, 0.0, input_state.walk.1);
-                    world.load_anchor.position = gfx.position;
+                    vctx.position -= mview * vec3(input_state.walk.0, 0.0, input_state.walk.1);
+                    world.load_anchor.position = vctx.position;
                     //
                     world.physics_tick();
                 }
             }
         }
 
-        gfx.draw_next_frame(frame_delta_time);
+        if let Some(mut fc) = rctx.frame_begin_prepass(frame_delta_time) {
+            vctx.prepass_draw(&mut fc);
+            let mut fc = RenderingContext::frame_goto_pass(fc);
+            vctx.inpass_draw(&mut fc);
+            RenderingContext::inpass_draw_gui(&mut fc);
+            let fc = RenderingContext::frame_goto_postpass(fc);
+            RenderingContext::frame_finish(fc);
+        }
 
         input_state.walk = (0.0, 0.0);
         input_state.look = (0.0, 0.0);
@@ -146,15 +154,15 @@ pub fn client_main() {
                 Event::Quit { .. } => break 'running,
                 Event::Window { win_event, .. } => match win_event {
                     WindowEvent::Resized(w, h) => {
-                        gfx.outdated_swapchain = true;
-                        gfx.gui.handle_event(conrod_core::event::Input::Resize(
+                        rctx.outdated_swapchain = true;
+                        rctx.gui.handle_event(conrod_core::event::Input::Resize(
                             f64::from(w),
                             f64::from(h),
                         ));
                     }
                     WindowEvent::SizeChanged(w, h) => {
-                        gfx.outdated_swapchain = true;
-                        gfx.gui.handle_event(conrod_core::event::Input::Resize(
+                        rctx.outdated_swapchain = true;
+                        rctx.gui.handle_event(conrod_core::event::Input::Resize(
                             f64::from(w),
                             f64::from(h),
                         ));
@@ -178,7 +186,7 @@ pub fn client_main() {
                                 .set_relative_mouse_mode(input_state.capture_mouse);
                         }
                         Some(sdl2::keyboard::Keycode::Backquote) => {
-                            gfx.do_dump = true;
+                            // rctx.do_dump = true;
                         }
                         Some(sdl2::keyboard::Keycode::Escape) => {
                             break 'running;
@@ -201,12 +209,12 @@ pub fn client_main() {
                         input_state.look.0 += xrel as f32 * 0.4;
                         input_state.look.1 -= yrel as f32 * 0.3;
                     } else {
-                        let wsz = gfx.window.size();
+                        let wsz = rctx.window.size();
                         let m = conrod_core::input::Motion::MouseCursor {
                             x: f64::from(x - wsz.0 as i32 / 2),
                             y: -f64::from(y - wsz.0 as i32 / 2),
                         };
-                        gfx.gui.handle_event(conrod_core::event::Input::Motion(m));
+                        rctx.gui.handle_event(conrod_core::event::Input::Motion(m));
                     }
                 }
                 _ => {}
@@ -235,23 +243,28 @@ pub fn client_main() {
             input_state.walk.1 *= 3.0;
         }
 
-        gfx.angles.1 += input_state.look.0; // yaw
-        gfx.angles.0 += input_state.look.1; // pitch
-        gfx.angles.0 = f32::min(90.0, f32::max(-90.0, gfx.angles.0));
-        gfx.angles.1 %= 360.0;
+        vctx.angles.1 += input_state.look.0; // yaw
+        vctx.angles.0 += input_state.look.1; // pitch
+        vctx.angles.0 = f32::min(90.0, f32::max(-90.0, vctx.angles.0));
+        vctx.angles.1 %= 360.0;
 
         // simple test gui
-        let mut ui = gfx.gui.set_widgets();
+        let mut ui = rctx.gui.set_widgets();
         use conrod_core::*;
         let avg_ft = frametimes.iter().sum::<f64>() / frametime_count as f64;
+        let max_ft = frametimes
+            .iter()
+            .copied()
+            .fold(std::f64::NEG_INFINITY, f64::max);
         widget::Canvas::new()
             .color(conrod_core::color::TRANSPARENT)
             .set(ids.canvas, &mut ui);
-        let pos = format!("Position: {:.1}, {:.1}, {:.1}\nAngles: {:.1}, {:.1}\nLast FT (ms): {:.1}\nAvg FT (ms): {:.1}\n Avg FPS: {:.1}",
-                          gfx.position.x, gfx.position.y, gfx.position.z,
-                          gfx.angles.0, gfx.angles.1,
+        let pos = format!("Position: {:.1}, {:.1}, {:.1}\nAngles: {:.1}, {:.1}\nLast FT (ms): {:.1}\nAvg FT (ms): {:.1}\nMax FT (ms): {:.1}\n Avg FPS: {:.1}",
+                          vctx.position.x, vctx.position.y, vctx.position.z,
+                          vctx.angles.0, vctx.angles.1,
                           frame_delta_time * 1000.0,
                           avg_ft * 1000.0,
+                          max_ft * 1000.0,
                           1.0 / avg_ft
         );
         widget::Text::new(&pos)

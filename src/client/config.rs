@@ -8,6 +8,9 @@ pub struct Config {
     pub render_wait_for_vsync: bool,
     pub render_fps_lock: Option<u32>,
 
+    pub performance_load_distance: u32,
+    pub performance_draw_distance: u32,
+
     toml_doc: Option<toml_edit::Document>,
 }
 
@@ -21,6 +24,9 @@ impl Config {
 
             render_wait_for_vsync: false,
             render_fps_lock: None,
+
+            performance_load_distance: 4,
+            performance_draw_distance: 4,
 
             toml_doc: None,
         }
@@ -59,6 +65,14 @@ impl Config {
                     }
                 });
 
+        self.performance_load_distance = toml_doc["performance"]["load_distance"]
+            .as_integer()
+            .map_or(self.performance_load_distance, |v| v as u32);
+
+        self.performance_draw_distance = toml_doc["performance"]["draw_distance"]
+            .as_integer()
+            .map_or(self.performance_draw_distance, |v| v as u32);
+
         self.toml_doc = Some(toml_doc);
     }
 
@@ -75,6 +89,11 @@ impl Config {
         toml_doc["render"]["wait_for_vsync"] = Item::Value(Value::from(self.render_wait_for_vsync));
         toml_doc["render"]["fps_lock"] =
             Item::Value(Value::from(self.render_fps_lock.unwrap_or(0) as i64));
+
+        toml_doc["performance"]["load_distance"] =
+            Item::Value(Value::from(self.performance_load_distance as i64));
+        toml_doc["performance"]["draw_distance"] =
+            Item::Value(Value::from(self.performance_draw_distance as i64));
 
         self.toml_doc = Some(toml_doc);
         self.toml_doc.as_ref().unwrap().to_string()
