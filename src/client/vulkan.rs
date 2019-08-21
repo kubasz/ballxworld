@@ -6,6 +6,7 @@ use cgmath::{vec3, Deg, Matrix4, PerspectiveFov, Rad, Vector3};
 
 use sdl2::video::Window;
 
+use crate::client::config::Config;
 use crate::client::voxmesh::mesh_from_chunk;
 use crate::world::generation::World;
 use crate::world::{ChunkPosition, VoxelChunk, VOXEL_CHUNK_DIM};
@@ -27,7 +28,6 @@ use vulkano::swapchain::{
 };
 use vulkano::sync::{FenceSignalFuture, FlushError, GpuFuture, NowFuture};
 use vulkano::{app_info_from_cargo_toml, single_pass_renderpass};
-use crate::client::config::Config;
 
 #[allow(clippy::ref_in_deref)] // in impl_vertex! macro
 pub mod vox {
@@ -187,17 +187,16 @@ fn generate_updated_framebuffers(
 impl RenderingContext {
     pub fn new(sdl_video: &sdl2::VideoSubsystem, cfg: &Config) -> RenderingContext {
         sdl_video.vulkan_load_library_default().unwrap();
-        let mut window = sdl_video
-            .window("BallX World", cfg.window_width, cfg.window_height);
-        window.position_centered()
+        let mut window = sdl_video.window("BallX World", cfg.window_width, cfg.window_height);
+        window
+            .position_centered()
             .vulkan()
             .allow_highdpi()
             .resizable();
         if cfg.window_fullscreen {
             window.fullscreen();
         }
-        let window = window.build()
-            .expect("Failed to create the game window");
+        let window = window.build().expect("Failed to create the game window");
         let instance_extensions;
         let instance = {
             let sdl_exts = window
@@ -326,6 +325,7 @@ impl RenderingContext {
             let fs = vox::fs::Shader::load(device.clone()).expect("Failed to create FS module");
             Arc::new(
                 GraphicsPipeline::start()
+                    .cull_mode_back()
                     .vertex_input_single_buffer::<vox::VoxelVertex>()
                     .vertex_shader(vs.main_entry_point(), ())
                     .viewports_dynamic_scissors_irrelevant(1)
@@ -421,16 +421,19 @@ impl RenderingContext {
             }
         }
 
-        for cpos in chunks_to_remove {
-            self.drawn_chunks.remove(&cpos);
-        }
-
         let mut cmd = cmd;
-        let cposition = self.position.map(|c| (c as i32) / 16);
-        chunks_to_add.sort_by_cached_key(|p| {
+        let ref_pos = self.position; // TODO: Add velocity-based position prediction
+        let cposition = ref_pos.map(|c| (c as i32) / 16);
+        let dist_key = |p: &Vector3<i32>| {
             let d = cposition - p;
             d.x * d.x + d.y * d.y + d.z * d.z
-        });
+        };
+        // Load nearest chunks first
+        chunks_to_add.sort_by_cached_key(&dist_key);
+        // Unload farthest chunks first
+        chunks_to_remove.sort_by_cached_key(|p| -dist_key(p));
+
+        let mut remover_iter = chunks_to_remove.into_iter();
         for cpos in chunks_to_add.iter().take(3) {
             let cpos = *cpos;
             self.drawn_chunks.remove(&cpos);
@@ -474,6 +477,12 @@ impl RenderingContext {
                     ibuffer,
                 }
             };
+            // For each loaded chunk unload 0..# chunks
+            for _ in 0..2 {
+                if let Some(rpos) = remover_iter.next() {
+                    self.drawn_chunks.remove(&rpos);
+                }
+            }
             self.drawn_chunks.insert(cpos, Arc::new(Mutex::new(dchunk)));
         }
 
