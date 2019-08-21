@@ -5,19 +5,19 @@ authors = ["Jakub Szewczyk <kubasz51@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-vulkano = "0.12.0"
-vulkano-shaders = "0.12.0"
-rand = "0.6.5"
-conrod_core = "0.65.0"
-conrod_vulkano = "0.65.0"
-toml_edit = "0.1.3"
+vulkano = "0.14"
+vulkano-shaders = "0.14"
+rand = "0.7"
+conrod_core = "0.67"
+conrod_vulkano = "0.67"
+toml_edit = "0.1"
 
 [dependencies.sdl2]
-version = "0.32.2"
+version = "0.32"
 features = ["image", "mixer"]
 
 [dependencies.cgmath]
-version = "0.17.0"
+version = "0.17"
 features = ["swizzle"]
 
 [profile.dev]
