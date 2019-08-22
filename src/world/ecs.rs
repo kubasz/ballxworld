@@ -166,48 +166,17 @@ pub struct ECS {
     debug_infos: Vec<CDebugInfo>,
 }
 
-macro_rules! impl_ecs_fns {
-    ( $t:ty, $snake_name:ident, $plural_name:ident ) => {
-        impl ECSHandler<$t> for ECS {
-            fn has_component(&self, e: EntityID) -> bool {
-                let cid = self.entities.get(&e).unwrap().$snake_name.clone();
-                cid.map(|i| &self.$plural_name[i.0]).is_some()
-            }
-
-            fn get_component(&self, e: EntityID) -> Option<&$t> {
-                let cid = self.entities.get(&e).unwrap().$snake_name.clone();
-                cid.map(|i| &self.$plural_name[i.0])
-            }
-
-            fn get_mut_component(&mut self, e: EntityID) -> Option<&mut $t> {
-                let cid = self.entities.get(&e).unwrap().$snake_name.clone();
-                cid.map(move |i| &mut self.$plural_name[i.0])
-            }
-
-            fn set_component(&mut self, e: EntityID, c: $t) {
-                let cid = self
-                    .entities
-                    .get(&e)
-                    .clone()
-                    .and_then(|e| e.$snake_name.clone());
-                match cid {
-                    Some(cid) => {
-                        self.$plural_name[cid.0] = c;
-                    }
-                    None => {
-                        let cid = ComponentId::new(self.$plural_name.len());
-                        self.$plural_name.push(c);
-                        self.entities.get_mut(&e).unwrap().$snake_name = Some(cid);
-                    }
-                }
-            }
-        }
-    };
-}
-
 impl ECS {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    pub fn iter(&self) -> std::collections::hash_map::Values<'_, EntityID, Entity> {
+        self.entities.values()
+    }
+
+    pub fn iter_mut(&mut self) -> std::collections::hash_map::ValuesMut<'_, EntityID, Entity> {
+        self.entities.values_mut()
     }
 
     pub fn add_new_entity(&mut self, domain: EntityDomain) -> EntityID {
@@ -248,6 +217,55 @@ pub trait ECSHandler<C: Component> {
     fn get_component(&self, e: EntityID) -> Option<&C>;
     fn get_mut_component(&mut self, e: EntityID) -> Option<&mut C>;
     fn set_component(&mut self, e: EntityID, c: C);
+    fn iter(&self) -> std::slice::Iter<C>;
+    fn iter_mut(&mut self) -> std::slice::IterMut<C>;
+}
+
+macro_rules! impl_ecs_fns {
+    ( $t:ty, $snake_name:ident, $plural_name:ident ) => {
+        impl ECSHandler<$t> for ECS {
+            fn has_component(&self, e: EntityID) -> bool {
+                let cid = self.entities.get(&e).unwrap().$snake_name.clone();
+                cid.map(|i| &self.$plural_name[i.0]).is_some()
+            }
+
+            fn get_component(&self, e: EntityID) -> Option<&$t> {
+                let cid = self.entities.get(&e).unwrap().$snake_name.clone();
+                cid.map(|i| &self.$plural_name[i.0])
+            }
+
+            fn get_mut_component(&mut self, e: EntityID) -> Option<&mut $t> {
+                let cid = self.entities.get(&e).unwrap().$snake_name.clone();
+                cid.map(move |i| &mut self.$plural_name[i.0])
+            }
+
+            fn iter(&self) -> std::slice::Iter<$t> {
+                self.$plural_name.iter()
+            }
+
+            fn iter_mut(&mut self) -> std::slice::IterMut<$t> {
+                self.$plural_name.iter_mut()
+            }
+
+            fn set_component(&mut self, e: EntityID, c: $t) {
+                let cid = self
+                    .entities
+                    .get(&e)
+                    .clone()
+                    .and_then(|e| e.$snake_name.clone());
+                match cid {
+                    Some(cid) => {
+                        self.$plural_name[cid.0] = c;
+                    }
+                    None => {
+                        let cid = ComponentId::new(self.$plural_name.len());
+                        self.$plural_name.push(c);
+                        self.entities.get_mut(&e).unwrap().$snake_name = Some(cid);
+                    }
+                }
+            }
+        }
+    };
 }
 
 impl_ecs_fns!(CLocation, location, locations);
