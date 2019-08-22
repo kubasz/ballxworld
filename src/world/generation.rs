@@ -37,7 +37,7 @@ pub struct World {
     pub load_anchor: LoadAnchor,
     pub worldgen: Option<Arc<dyn WorldGenerator>>,
     pub registry: Arc<VoxelRegistry>,
-    pub entities: Arc<RwLock<ECS>>,
+    pub entities: RwLock<ECS>,
     pub client_world: Option<ClientWorld>,
 }
 
@@ -62,7 +62,7 @@ impl World {
             load_anchor: Default::default(),
             worldgen: None,
             registry,
-            entities: Arc::new(RwLock::new(ECS::new())),
+            entities: RwLock::new(ECS::new()),
             client_world: None,
         }
     }

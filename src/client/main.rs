@@ -12,6 +12,7 @@ use crate::world::badgen::BadGenerator;
 
 use crate::client::config::Config;
 use crate::client::world::{ClientWorld, ClientWorldMethods};
+use crate::world::ecs::{CLocation, ECSHandler};
 use crate::world::TextureMapping;
 use conrod_core::widget_ids;
 use std::io::{Read, Write};
@@ -133,21 +134,27 @@ pub fn client_main() {
         let physics_frames = (physics_accum_time / PHYSICS_FRAME_TIME) as i32;
         if physics_frames > 0 {
             physics_accum_time -= f64::from(physics_frames) * PHYSICS_FRAME_TIME;
+
             let mut world = world.write().unwrap();
+            let local_player = world.local_player();
+
             for _pfrm in 0..physics_frames {
                 // do physics tick
-                {
-                    // position
-                    let mut mview: Matrix3<f32> = Matrix3::identity();
-                    mview = Matrix3::from_angle_y(Deg(vctx.angles.1)) * mview;
-                    mview = Matrix3::from_angle_x(Deg(vctx.angles.0)) * mview;
-                    mview.replace_col(1, -mview.y);
-                    mview = mview.transpose();
-                    vctx.position -= mview * vec3(input_state.walk.0, 0.0, input_state.walk.1);
-                    world.load_anchor.position = vctx.position;
-                    //
-                    world.physics_tick();
-                }
+                let entities = world.entities.get_mut().unwrap();
+                // position
+                let mut mview: Matrix3<f32> = Matrix3::identity();
+                mview = Matrix3::from_angle_y(Deg(vctx.angles.1)) * mview;
+                mview = Matrix3::from_angle_x(Deg(vctx.angles.0)) * mview;
+                mview.replace_col(1, -mview.y);
+                mview = mview.transpose();
+                let lp_loc: &mut CLocation = entities.get_component_mut(local_player).unwrap();
+                let wvel = vec3(input_state.walk.0, 0.0, input_state.walk.1);
+                lp_loc.position -= mview * wvel;
+                lp_loc.velocity = -(PHYSICS_FRAME_TIME as f32) * wvel;
+                let ppos = lp_loc.position;
+                world.load_anchor.position = ppos;
+                //
+                world.physics_tick();
             }
         }
 
@@ -272,8 +279,17 @@ pub fn client_main() {
         widget::Canvas::new()
             .color(conrod_core::color::TRANSPARENT)
             .set(ids.canvas, &mut ui);
+        let player_pos;
+        let player_ang;
+        {
+            let world = world.read().unwrap();
+            let entities = world.entities.read().unwrap();
+            let lp_loc: &CLocation = entities.get_component(world.local_player()).unwrap();
+            player_pos = lp_loc.position;
+            player_ang = lp_loc.orientation;
+        }
         let pos = format!("Position: {:.1}, {:.1}, {:.1}\nAngles: {:.1}, {:.1}\nLast FT (ms): {:.1}\nAvg FT (ms): {:.1}\nMax FT (ms): {:.1}\n Avg FPS: {:.1}",
-                          vctx.position.x, vctx.position.y, vctx.position.z,
+                          player_pos.x, player_pos.y, player_pos.z,
                           vctx.angles.0, vctx.angles.1,
                           frame_delta_time * 1000.0,
                           avg_ft * 1000.0,

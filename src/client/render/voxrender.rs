@@ -1,10 +1,12 @@
 use crate::client::config::Config;
 use crate::client::render::voxmesh::mesh_from_chunk;
 use crate::client::render::*;
+use crate::client::world::ClientWorldMethods;
+use crate::world::ecs::{CLocation, ECSHandler};
 use crate::world::generation::World;
 use crate::world::{ChunkPosition, VoxelChunk, VOXEL_CHUNK_DIM};
 use cgmath::prelude::*;
-use cgmath::{vec3, Deg, Matrix4, PerspectiveFov, Rad, Vector3};
+use cgmath::{vec3, Deg, Matrix4, PerspectiveFov, Quaternion, Rad, Vector3};
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
@@ -90,7 +92,6 @@ pub struct VoxelRenderer {
     voxel_staging_i: CpuBufferPool<u32>,
     drawn_chunks: HashMap<ChunkPosition, Arc<RwLock<DrawnChunk>>>,
     pub ubuffers: CpuBufferPool<vox::VoxelUBO>,
-    pub position: Vector3<f32>,
     pub angles: (f32, f32),
 }
 
@@ -157,7 +158,6 @@ impl VoxelRenderer {
             voxel_staging_i: CpuBufferPool::upload(rctx.device.clone()),
             drawn_chunks: HashMap::new(),
             ubuffers,
-            position: vec3(0.0, 0.0, 90.0),
             angles: (0.0, 0.0),
         }
     }
@@ -282,7 +282,12 @@ impl VoxelRenderer {
         }
 
         let mut cmd = cmd;
-        let ref_pos = self.position; // TODO: Add velocity-based position prediction
+        let ref_pos; // TODO: Add velocity-based position prediction
+        {
+            let entities = world.entities.read().unwrap();
+            let lp_loc: &CLocation = entities.get_component(world.local_player()).unwrap();
+            ref_pos = lp_loc.position;
+        }
         let cposition = ref_pos.map(|c| (c as i32) / 16);
         let dist_key = |p: &Vector3<i32>| {
             let d = cposition - p;
@@ -351,6 +356,19 @@ impl VoxelRenderer {
     }
 
     pub fn inpass_draw(&mut self, fctx: &mut InPassFrameContext) {
+        let player_pos;
+        let player_ang;
+        if let Some(world) = &self.world {
+            let world = world.read().unwrap();
+            let entities = world.entities.read().unwrap();
+            let lp_loc: &CLocation = entities.get_component(world.local_player()).unwrap();
+            player_pos = lp_loc.position;
+            player_ang = lp_loc.orientation;
+        } else {
+            player_pos = vec3(0.0, 0.0, 0.0);
+            player_ang = Quaternion::one();
+        }
+
         let mut cmdbufbuild = fctx.replace_cmd();
 
         let ubo = {
@@ -358,7 +376,7 @@ impl VoxelRenderer {
             let mmdl: Matrix4<f32> = One::one();
             ubo.model = mmdl.into();
             let mut mview: Matrix4<f32> = Matrix4::from_translation(-{
-                let mut p = self.position;
+                let mut p = player_pos;
                 p.y = -p.y;
                 p
             });
