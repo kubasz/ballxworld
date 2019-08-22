@@ -3,7 +3,7 @@ use crate::world::generation::World;
 
 #[derive(Clone, Debug)]
 pub enum CameraSettings {
-    FPS,
+    FPS { pitch: f32, yaw: f32 },
 }
 
 #[derive(Clone, Debug)]
@@ -25,7 +25,10 @@ impl ClientWorld {
         );
         world.client_world = Some(ClientWorld {
             local_player,
-            camera_settings: CameraSettings::FPS,
+            camera_settings: CameraSettings::FPS {
+                pitch: 0.0,
+                yaw: 0.0,
+            },
         });
     }
 }

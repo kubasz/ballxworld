@@ -3,7 +3,7 @@ use sdl2::event::{Event, WindowEvent};
 use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::world;
 use cgmath::prelude::*;
-use cgmath::{vec3, Deg, Matrix3};
+use cgmath::{vec3, Matrix3, Quaternion, Rad};
 use sdl2::keyboard::Keycode;
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
@@ -11,10 +11,11 @@ use std::sync::{Arc, RwLock};
 use crate::world::badgen::BadGenerator;
 
 use crate::client::config::Config;
-use crate::client::world::{ClientWorld, ClientWorldMethods};
+use crate::client::world::{CameraSettings, ClientWorld, ClientWorldMethods};
 use crate::world::ecs::{CLoadAnchor, CLocation, ECSHandler};
 use crate::world::TextureMapping;
 use conrod_core::widget_ids;
+use std::f32::consts::PI;
 use std::io::{Read, Write};
 
 const PHYSICS_FRAME_TIME: f64 = 1.0 / 60.0;
@@ -144,15 +145,27 @@ pub fn client_main() {
             let local_player = world.local_player();
 
             for _pfrm in 0..physics_frames {
+                let (dyaw, dpitch) = input_state.look;
+                let CameraSettings::FPS { pitch, yaw } =
+                    &mut world.client_world.as_mut().unwrap().camera_settings;
+                *pitch += dpitch / 60.0;
+                *pitch = f32::min(f32::max(*pitch, -PI / 2.0), PI / 2.0);
+                *yaw += dyaw / 60.0;
+                *yaw %= 2.0 * PI;
+                let (pitch, yaw) = (*pitch, *yaw);
+
                 // do physics tick
                 let entities = world.entities.get_mut().unwrap();
+                let lp_loc: &mut CLocation = entities.get_component_mut(local_player).unwrap();
                 // position
-                let mut mview: Matrix3<f32> = Matrix3::identity();
-                mview = Matrix3::from_angle_y(Deg(vctx.angles.1)) * mview;
-                mview = Matrix3::from_angle_x(Deg(vctx.angles.0)) * mview;
+                let qyaw = Quaternion::from_angle_y(Rad(yaw));
+                let qpitch = Quaternion::from_angle_x(Rad(pitch));
+                lp_loc.orientation = (qpitch * qyaw).normalize();
+
+                let mut mview = Matrix3::from(lp_loc.orientation);
                 mview.replace_col(1, -mview.y);
                 mview = mview.transpose();
-                let lp_loc: &mut CLocation = entities.get_component_mut(local_player).unwrap();
+
                 let wvel = vec3(input_state.walk.0, 0.0, input_state.walk.1);
                 lp_loc.position -= mview * wvel;
                 lp_loc.velocity = -(PHYSICS_FRAME_TIME as f32) * wvel;
@@ -266,11 +279,6 @@ pub fn client_main() {
             input_state.walk.1 *= 3.0;
         }
 
-        vctx.angles.1 += input_state.look.0; // yaw
-        vctx.angles.0 += input_state.look.1; // pitch
-        vctx.angles.0 = f32::min(90.0, f32::max(-90.0, vctx.angles.0));
-        vctx.angles.1 %= 360.0;
-
         // simple test gui
         let mut ui = rctx.gui.set_widgets();
         use conrod_core::*;
@@ -291,9 +299,9 @@ pub fn client_main() {
             player_pos = lp_loc.position;
             player_ang = lp_loc.orientation;
         }
-        let pos = format!("Position: {:.1}, {:.1}, {:.1}\nAngles: {:.1}, {:.1}\nLast FT (ms): {:.1}\nAvg FT (ms): {:.1}\nMax FT (ms): {:.1}\n Avg FPS: {:.1}",
+        let pos = format!("Position: {:.1}, {:.1}, {:.1}\nAngles: {:#?}\nLast FT (ms): {:.1}\nAvg FT (ms): {:.1}\nMax FT (ms): {:.1}\n Avg FPS: {:.1}",
                           player_pos.x, player_pos.y, player_pos.z,
-                          vctx.angles.0, vctx.angles.1,
+                          player_ang,
                           frame_delta_time * 1000.0,
                           avg_ft * 1000.0,
                           max_ft * 1000.0,
