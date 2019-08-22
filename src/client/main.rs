@@ -12,7 +12,7 @@ use crate::world::badgen::BadGenerator;
 
 use crate::client::config::Config;
 use crate::client::world::{ClientWorld, ClientWorldMethods};
-use crate::world::ecs::{CLocation, ECSHandler};
+use crate::world::ecs::{CLoadAnchor, CLocation, ECSHandler};
 use crate::world::TextureMapping;
 use conrod_core::widget_ids;
 use std::io::{Read, Write};
@@ -99,9 +99,14 @@ pub fn client_main() {
         .unwrap();
     let vxreg = Arc::new(vxreg);
     let mut world = world::generation::World::new("world".to_owned(), vxreg.clone());
-    world.load_anchor.chunk_radius = cfg.performance_load_distance as i32;
     world.change_generator(Arc::new(BadGenerator::default()));
     ClientWorld::create_and_attach(&mut world);
+    {
+        let lp = world.local_player();
+        let ents = world.entities.get_mut().unwrap();
+        let anchor: &mut CLoadAnchor = ents.get_component_mut(lp).unwrap();
+        anchor.radius = cfg.performance_load_distance;
+    }
     let world = Arc::new(RwLock::new(world));
 
     vctx.world = Some(world.clone());
@@ -151,8 +156,6 @@ pub fn client_main() {
                 let wvel = vec3(input_state.walk.0, 0.0, input_state.walk.1);
                 lp_loc.position -= mview * wvel;
                 lp_loc.velocity = -(PHYSICS_FRAME_TIME as f32) * wvel;
-                let ppos = lp_loc.position;
-                world.load_anchor.position = ppos;
                 //
                 world.physics_tick();
             }

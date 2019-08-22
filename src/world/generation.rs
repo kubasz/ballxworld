@@ -1,4 +1,4 @@
-use crate::world::ecs::ECS;
+use crate::world::ecs::{CLoadAnchor, CLocation, Component, ECSHandler, ECS};
 use crate::world::registry::VoxelRegistry;
 use crate::world::{ChunkPosition, VoxelChunk, VoxelChunkRef, VOXEL_CHUNK_DIM};
 use cgmath::prelude::*;
@@ -11,30 +11,12 @@ pub trait WorldGenerator {
     fn generate_chunk(&self, cref: VoxelChunkRef, registry: &VoxelRegistry);
 }
 
-#[derive(Debug, Clone)]
-pub struct LoadAnchor {
-    pub position: Vector3<f32>,
-    pub velocity: Vector3<f32>,
-    pub chunk_radius: i32,
-}
-
-impl Default for LoadAnchor {
-    fn default() -> Self {
-        LoadAnchor {
-            position: Vector3::zero(),
-            velocity: Vector3::zero(),
-            chunk_radius: 1,
-        }
-    }
-}
-
 type ClientWorld = crate::client::world::ClientWorld;
 
 pub struct World {
     pub name: String,
     pub loaded_chunks: HashMap<ChunkPosition, Arc<RwLock<VoxelChunk>>>,
     pub loading_queue: HashSet<ChunkPosition>,
-    pub load_anchor: LoadAnchor,
     pub worldgen: Option<Arc<dyn WorldGenerator>>,
     pub registry: Arc<VoxelRegistry>,
     pub entities: RwLock<ECS>,
@@ -59,7 +41,6 @@ impl World {
             name,
             loaded_chunks: HashMap::new(),
             loading_queue: HashSet::new(),
-            load_anchor: Default::default(),
             worldgen: None,
             registry,
             entities: RwLock::new(ECS::new()),
@@ -76,10 +57,16 @@ impl World {
         if self.worldgen.is_some() {
             let mut req_positions: HashSet<ChunkPosition> = HashSet::new();
 
-            {
-                let anchor = &self.load_anchor;
-                let r = anchor.chunk_radius;
-                let pos: Vector3<i32> = anchor
+            let ents = self.entities.get_mut().unwrap();
+            let it = ECSHandler::<CLoadAnchor>::iter(ents);
+            for anchor in it {
+                let loc: Option<&CLocation> = ents.get_component(anchor.entity_id());
+                if loc.is_none() {
+                    continue;
+                }
+                let loc = loc.unwrap();
+                let r = anchor.radius as i32;
+                let pos: Vector3<i32> = loc
                     .position
                     .div_element_wise(VOXEL_CHUNK_DIM as f32)
                     .map(|c| c as i32);

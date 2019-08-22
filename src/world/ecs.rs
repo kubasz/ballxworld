@@ -123,6 +123,28 @@ impl Component for CDebugInfo {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct CLoadAnchor {
+    id: ValidEntityID,
+    pub radius: u32,
+}
+
+impl CLoadAnchor {
+    pub fn new(id: ValidEntityID, radius: u32) -> Self {
+        Self { id, radius }
+    }
+}
+
+impl Component for CLoadAnchor {
+    fn name() -> &'static str {
+        "LoadAnchor"
+    }
+
+    fn entity_id(&self) -> ValidEntityID {
+        self.id
+    }
+}
+
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct ComponentId<T>(usize, PhantomData<T>);
 
@@ -141,6 +163,7 @@ pub struct Entity {
     pub id: ValidEntityID,
     pub location: Option<ComponentId<CLocation>>,
     pub debug_info: Option<ComponentId<CDebugInfo>>,
+    pub load_anchor: Option<ComponentId<CLoadAnchor>>,
 }
 
 impl Entity {
@@ -149,6 +172,7 @@ impl Entity {
             id,
             location: None,
             debug_info: None,
+            load_anchor: None,
         }
     }
 }
@@ -161,6 +185,7 @@ pub struct ECS {
     // components
     locations: Vec<CLocation>,
     debug_infos: Vec<CDebugInfo>,
+    load_anchors: Vec<CLoadAnchor>,
 }
 
 impl ECS {
@@ -212,7 +237,7 @@ impl ECS {
 pub trait ECSHandler<C: Component> {
     fn has_component(&self, e: ValidEntityID) -> bool;
     fn get_component(&self, e: ValidEntityID) -> Option<&C>;
-    fn get_mut_component(&mut self, e: ValidEntityID) -> Option<&mut C>;
+    fn get_component_mut(&mut self, e: ValidEntityID) -> Option<&mut C>;
     fn set_component(&mut self, e: ValidEntityID, c: C);
     fn iter(&self) -> std::slice::Iter<C>;
     fn iter_mut(&mut self) -> std::slice::IterMut<C>;
@@ -231,7 +256,7 @@ macro_rules! impl_ecs_fns {
                 cid.map(|i| &self.$plural_name[i.0])
             }
 
-            fn get_mut_component(&mut self, e: ValidEntityID) -> Option<&mut $t> {
+            fn get_component_mut(&mut self, e: ValidEntityID) -> Option<&mut $t> {
                 let cid = self.entities.get(&e).unwrap().$snake_name.clone();
                 cid.map(move |i| &mut self.$plural_name[i.0])
             }
@@ -267,3 +292,4 @@ macro_rules! impl_ecs_fns {
 
 impl_ecs_fns!(CLocation, location, locations);
 impl_ecs_fns!(CDebugInfo, debug_info, debug_infos);
+impl_ecs_fns!(CLoadAnchor, load_anchor, load_anchors);
