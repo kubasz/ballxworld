@@ -3,6 +3,7 @@ use std::sync::{RwLock, Weak};
 
 pub mod badgen;
 pub mod ecs;
+pub mod entities;
 pub mod generation;
 pub mod registry;
 

@@ -11,6 +11,7 @@ use std::sync::{Arc, RwLock};
 use crate::world::badgen::BadGenerator;
 
 use crate::client::config::Config;
+use crate::client::world::{ClientWorld, ClientWorldMethods};
 use crate::world::TextureMapping;
 use conrod_core::widget_ids;
 use std::io::{Read, Write};
@@ -99,6 +100,7 @@ pub fn client_main() {
     let mut world = world::generation::World::new("world".to_owned(), vxreg.clone());
     world.load_anchor.chunk_radius = cfg.performance_load_distance as i32;
     world.change_generator(Arc::new(BadGenerator::default()));
+    ClientWorld::create_and_attach(&mut world);
     let world = Arc::new(RwLock::new(world));
 
     vctx.world = Some(world.clone());

@@ -71,11 +71,11 @@ pub enum BoundingShape {
 #[derive(Clone, Debug)]
 pub struct CLocation {
     id: ValidEntityID,
-    position: Vector3<f32>,
-    velocity: Vector3<f32>,
-    orientation: Quaternion<f32>,
-    bounding_shape: BoundingShape,
-    bounding_offset: Vector3<f32>,
+    pub position: Vector3<f32>,
+    pub velocity: Vector3<f32>,
+    pub orientation: Quaternion<f32>,
+    pub bounding_shape: BoundingShape,
+    pub bounding_offset: Vector3<f32>,
 }
 
 impl CLocation {
@@ -104,7 +104,7 @@ impl Component for CLocation {
 #[derive(Clone, Debug)]
 pub struct CDebugInfo {
     id: ValidEntityID,
-    ent_name: String,
+    pub ent_name: String,
 }
 
 impl CDebugInfo {
