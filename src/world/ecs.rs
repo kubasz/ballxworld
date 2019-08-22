@@ -19,18 +19,28 @@ impl EntityDomain {
 }
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
-pub struct EntityID(u64);
+pub struct ValidEntityID(u64);
+
+pub type EntityID = Option<ValidEntityID>;
 
 const DOMAIN_MASK: u64 = 0b11_u64 << 62;
 
-impl EntityID {
-    const fn const_from_parts(domain: EntityDomain, sub_id: u64) -> Self {
-        EntityID(domain as u64 | sub_id)
+impl ValidEntityID {
+    pub fn from_raw(r: u64) -> EntityID {
+        if r & !DOMAIN_MASK == 0 {
+            None
+        } else {
+            Some(ValidEntityID(r))
+        }
     }
 
-    pub fn from_parts(domain: EntityDomain, sub_id: u64) -> Self {
+    pub fn from_parts(domain: EntityDomain, sub_id: u64) -> EntityID {
         assert_eq!(sub_id & DOMAIN_MASK, 0);
-        EntityID(domain as u64 | sub_id)
+        if sub_id == 0 {
+            None
+        } else {
+            Some(ValidEntityID(domain as u64 | sub_id))
+        }
     }
 
     pub fn u64(self) -> u64 {
@@ -46,17 +56,9 @@ impl EntityID {
     }
 }
 
-const NULL_EID: EntityID = EntityID::const_from_parts(EntityDomain::SharedOmnipresent, 0);
-
-impl Default for EntityID {
-    fn default() -> Self {
-        NULL_EID
-    }
-}
-
-pub trait Component: Default {
+pub trait Component {
     fn name() -> &'static str;
-    fn entity_id(&self) -> EntityID;
+    fn entity_id(&self) -> ValidEntityID;
 }
 
 #[derive(Clone, Debug)]
@@ -68,7 +70,7 @@ pub enum BoundingShape {
 
 #[derive(Clone, Debug)]
 pub struct CLocation {
-    id: EntityID,
+    id: ValidEntityID,
     position: Vector3<f32>,
     velocity: Vector3<f32>,
     orientation: Quaternion<f32>,
@@ -76,10 +78,10 @@ pub struct CLocation {
     bounding_offset: Vector3<f32>,
 }
 
-impl Default for CLocation {
-    fn default() -> Self {
+impl CLocation {
+    pub fn new(id: ValidEntityID) -> Self {
         Self {
-            id: NULL_EID,
+            id,
             position: vec3(0.0, 0.0, 0.0),
             velocity: vec3(0.0, 0.0, 0.0),
             orientation: Quaternion::one(),
@@ -89,31 +91,28 @@ impl Default for CLocation {
     }
 }
 
-impl CLocation {
-    pub fn new() -> Self {
-        Default::default()
-    }
-}
-
 impl Component for CLocation {
     fn name() -> &'static str {
         "Location"
     }
 
-    fn entity_id(&self) -> EntityID {
+    fn entity_id(&self) -> ValidEntityID {
         self.id
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct CDebugInfo {
-    id: EntityID,
+    id: ValidEntityID,
     ent_name: String,
 }
 
 impl CDebugInfo {
-    pub fn new() -> Self {
-        Default::default()
+    pub fn new(id: ValidEntityID, ent_name: String) -> Self {
+        Self {
+            id,
+            ent_name
+        }
     }
 }
 
@@ -122,7 +121,7 @@ impl Component for CDebugInfo {
         "DebugInfo"
     }
 
-    fn entity_id(&self) -> EntityID {
+    fn entity_id(&self) -> ValidEntityID {
         self.id
     }
 }
@@ -140,18 +139,19 @@ impl<T> ComponentId<T> {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Entity {
-    pub id: EntityID,
+    pub id: ValidEntityID,
     pub location: Option<ComponentId<CLocation>>,
     pub debug_info: Option<ComponentId<CDebugInfo>>,
 }
 
 impl Entity {
-    fn new(id: EntityID) -> Self {
+    fn new(id: ValidEntityID) -> Self {
         Self {
             id,
-            ..Default::default()
+            location: None,
+            debug_info: None,
         }
     }
 }
@@ -159,7 +159,7 @@ impl Entity {
 #[derive(Clone, Debug, Default)]
 pub struct ECS {
     // ECS variables
-    entities: HashMap<EntityID, Entity>,
+    entities: HashMap<ValidEntityID, Entity>,
     last_nonfree_ids: [u64; 4],
     // components
     locations: Vec<CLocation>,
@@ -171,33 +171,33 @@ impl ECS {
         Default::default()
     }
 
-    pub fn iter(&self) -> std::collections::hash_map::Values<'_, EntityID, Entity> {
+    pub fn iter(&self) -> std::collections::hash_map::Values<'_, ValidEntityID, Entity> {
         self.entities.values()
     }
 
-    pub fn iter_mut(&mut self) -> std::collections::hash_map::ValuesMut<'_, EntityID, Entity> {
+    pub fn iter_mut(&mut self) -> std::collections::hash_map::ValuesMut<'_, ValidEntityID, Entity> {
         self.entities.values_mut()
     }
 
-    pub fn add_new_entity(&mut self, domain: EntityDomain) -> EntityID {
+    pub fn add_new_entity(&mut self, domain: EntityDomain) -> ValidEntityID {
         let nfi = domain.number();
         let mut sub_id = self.last_nonfree_ids[nfi] + 1;
         while self
             .entities
-            .contains_key(&EntityID::from_parts(domain, sub_id))
+            .contains_key(&ValidEntityID::from_parts(domain, sub_id).unwrap())
         {
             sub_id += 1;
         }
         self.last_nonfree_ids[nfi] = sub_id;
-        let id = EntityID::from_parts(domain, sub_id);
+        let id = ValidEntityID::from_parts(domain, sub_id).unwrap();
         let iret = self.entities.insert(id, Entity::new(id));
         assert!(iret.is_none());
         id
     }
 
     #[allow(clippy::map_entry)]
-    pub fn add_entity_with_id(&mut self, raw_id: u64) -> Result<EntityID, ()> {
-        let id = EntityID(raw_id);
+    pub fn add_entity_with_id(&mut self, raw_id: u64) -> Result<ValidEntityID, ()> {
+        let id = ValidEntityID::from_raw(raw_id).ok_or(())?;
         let sub_id = id.sub_id();
         let nfi = id.domain().number();
         if self.last_nonfree_ids[nfi] < sub_id {
@@ -213,10 +213,10 @@ impl ECS {
 }
 
 pub trait ECSHandler<C: Component> {
-    fn has_component(&self, e: EntityID) -> bool;
-    fn get_component(&self, e: EntityID) -> Option<&C>;
-    fn get_mut_component(&mut self, e: EntityID) -> Option<&mut C>;
-    fn set_component(&mut self, e: EntityID, c: C);
+    fn has_component(&self, e: ValidEntityID) -> bool;
+    fn get_component(&self, e: ValidEntityID) -> Option<&C>;
+    fn get_mut_component(&mut self, e: ValidEntityID) -> Option<&mut C>;
+    fn set_component(&mut self, e: ValidEntityID, c: C);
     fn iter(&self) -> std::slice::Iter<C>;
     fn iter_mut(&mut self) -> std::slice::IterMut<C>;
 }
@@ -224,17 +224,17 @@ pub trait ECSHandler<C: Component> {
 macro_rules! impl_ecs_fns {
     ( $t:ty, $snake_name:ident, $plural_name:ident ) => {
         impl ECSHandler<$t> for ECS {
-            fn has_component(&self, e: EntityID) -> bool {
+            fn has_component(&self, e: ValidEntityID) -> bool {
                 let cid = self.entities.get(&e).unwrap().$snake_name.clone();
                 cid.map(|i| &self.$plural_name[i.0]).is_some()
             }
 
-            fn get_component(&self, e: EntityID) -> Option<&$t> {
+            fn get_component(&self, e: ValidEntityID) -> Option<&$t> {
                 let cid = self.entities.get(&e).unwrap().$snake_name.clone();
                 cid.map(|i| &self.$plural_name[i.0])
             }
 
-            fn get_mut_component(&mut self, e: EntityID) -> Option<&mut $t> {
+            fn get_mut_component(&mut self, e: ValidEntityID) -> Option<&mut $t> {
                 let cid = self.entities.get(&e).unwrap().$snake_name.clone();
                 cid.map(move |i| &mut self.$plural_name[i.0])
             }
@@ -247,7 +247,7 @@ macro_rules! impl_ecs_fns {
                 self.$plural_name.iter_mut()
             }
 
-            fn set_component(&mut self, e: EntityID, c: $t) {
+            fn set_component(&mut self, e: ValidEntityID, c: $t) {
                 let cid = self
                     .entities
                     .get(&e)
