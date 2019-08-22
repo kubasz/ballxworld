@@ -8,7 +8,7 @@ use cgmath::{vec3, Deg, Matrix4, PerspectiveFov, Rad, Vector3};
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, RwLock, Weak};
 use vulkano::buffer::{BufferUsage, CpuBufferPool, ImmutableBuffer, TypedBufferAccess};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::descriptor::DescriptorSet;
@@ -67,7 +67,7 @@ pub mod vox {
 }
 
 struct DrawnChunk {
-    pub chunk: Weak<Mutex<VoxelChunk>>,
+    pub chunk: Weak<RwLock<VoxelChunk>>,
     pub last_dirty: u64,
     pub vbuffer: Arc<ImmutableBuffer<[vox::VoxelVertex]>>,
     pub ibuffer: Arc<ImmutableBuffer<[u32]>>,
@@ -84,11 +84,11 @@ pub struct VoxelRenderer {
     texture_name_map: HashMap<String, u32>,
     _texture_sampler: Arc<Sampler>,
     texture_ds: Arc<dyn DescriptorSet + Send + Sync>,
-    pub world: Option<Arc<Mutex<World>>>,
+    pub world: Option<Arc<RwLock<World>>>,
     pub voxel_pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
     voxel_staging_v: CpuBufferPool<vox::VoxelVertex>,
     voxel_staging_i: CpuBufferPool<u32>,
-    drawn_chunks: HashMap<ChunkPosition, Arc<Mutex<DrawnChunk>>>,
+    drawn_chunks: HashMap<ChunkPosition, Arc<RwLock<DrawnChunk>>>,
     pub ubuffers: CpuBufferPool<vox::VoxelUBO>,
     pub position: Vector3<f32>,
     pub angles: (f32, f32),
@@ -255,7 +255,7 @@ impl VoxelRenderer {
         let cmd = fctx.replace_cmd();
 
         let world_some = self.world.as_ref().unwrap();
-        let world = world_some.lock().unwrap();
+        let world = world_some.read().unwrap();
 
         let mut chunks_to_remove: Vec<ChunkPosition> = Vec::new();
         self.drawn_chunks
@@ -272,10 +272,10 @@ impl VoxelRenderer {
                 .drawn_chunks
                 .get(&cpos)
                 .unwrap()
-                .lock()
+                .read()
                 .unwrap()
                 .last_dirty
-                != chunk.lock().unwrap().dirty
+                != chunk.read().unwrap().dirty
             {
                 chunks_to_add.push(*cpos);
             }
@@ -298,7 +298,7 @@ impl VoxelRenderer {
             let cpos = *cpos;
             self.drawn_chunks.remove(&cpos);
             let chunk_arc = world.loaded_chunks.get(&cpos).unwrap();
-            let chunk = chunk_arc.lock().unwrap();
+            let chunk = chunk_arc.read().unwrap();
             let mesh = mesh_from_chunk(&chunk, &world.registry);
 
             let vchunk = self
@@ -343,7 +343,8 @@ impl VoxelRenderer {
                     self.drawn_chunks.remove(&rpos);
                 }
             }
-            self.drawn_chunks.insert(cpos, Arc::new(Mutex::new(dchunk)));
+            self.drawn_chunks
+                .insert(cpos, Arc::new(RwLock::new(dchunk)));
         }
 
         fctx.cmd = Some(cmd);
@@ -390,7 +391,7 @@ impl VoxelRenderer {
             let pc = vox::VoxelPC {
                 chunk_offset: pos.map(|x| (x as f32) * (VOXEL_CHUNK_DIM as f32)).into(),
             };
-            let chunk = chunkmut.lock().unwrap();
+            let chunk = chunkmut.read().unwrap();
             cmdbufbuild = cmdbufbuild
                 .draw_indexed(
                     self.voxel_pipeline.clone(),

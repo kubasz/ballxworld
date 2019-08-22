@@ -109,10 +109,7 @@ pub struct CDebugInfo {
 
 impl CDebugInfo {
     pub fn new(id: ValidEntityID, ent_name: String) -> Self {
-        Self {
-            id,
-            ent_name
-        }
+        Self { id, ent_name }
     }
 }
 

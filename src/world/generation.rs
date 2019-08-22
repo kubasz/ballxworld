@@ -1,10 +1,11 @@
+use crate::world::ecs::ECS;
 use crate::world::registry::VoxelRegistry;
 use crate::world::{ChunkPosition, VoxelChunk, VoxelChunkRef, VOXEL_CHUNK_DIM};
 use cgmath::prelude::*;
 use cgmath::{vec3, Vector3};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 pub trait WorldGenerator {
     fn generate_chunk(&self, cref: VoxelChunkRef, registry: &VoxelRegistry);
@@ -27,13 +28,17 @@ impl Default for LoadAnchor {
     }
 }
 
+type ClientWorld = crate::client::world::ClientWorld;
+
 pub struct World {
     pub name: String,
-    pub loaded_chunks: HashMap<ChunkPosition, Arc<Mutex<VoxelChunk>>>,
+    pub loaded_chunks: HashMap<ChunkPosition, Arc<RwLock<VoxelChunk>>>,
     pub loading_queue: HashSet<ChunkPosition>,
     pub load_anchor: LoadAnchor,
     pub worldgen: Option<Arc<dyn WorldGenerator>>,
     pub registry: Arc<VoxelRegistry>,
+    pub entities: Arc<RwLock<ECS>>,
+    pub client_world: Option<ClientWorld>,
 }
 
 impl Debug for World {
@@ -57,6 +62,8 @@ impl World {
             load_anchor: Default::default(),
             worldgen: None,
             registry,
+            entities: Arc::new(RwLock::new(ECS::new())),
+            client_world: None,
         }
     }
 
@@ -115,13 +122,13 @@ impl World {
 
             let worldgen = self.worldgen.as_mut().unwrap();
             for p in pos_to_load {
-                let chunk = Arc::new(Mutex::new(VoxelChunk::new()));
+                let chunk = Arc::new(RwLock::new(VoxelChunk::new()));
                 let cref = VoxelChunkRef {
                     chunk: Arc::downgrade(&chunk),
                     position: p,
                 };
                 worldgen.generate_chunk(cref, &self.registry);
-                chunk.lock().unwrap().dirty += 1;
+                chunk.write().unwrap().dirty += 1;
                 self.loaded_chunks.insert(p, chunk);
             }
             for p in pos_to_unload {

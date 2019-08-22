@@ -1,5 +1,5 @@
 use cgmath::Vector3;
-use std::sync::{Mutex, Weak};
+use std::sync::{RwLock, Weak};
 
 pub mod badgen;
 pub mod ecs;
@@ -31,7 +31,7 @@ impl Default for VoxelChunk {
 pub type ChunkPosition = Vector3<i32>;
 
 pub struct VoxelChunkRef {
-    pub chunk: Weak<Mutex<VoxelChunk>>,
+    pub chunk: Weak<RwLock<VoxelChunk>>,
     pub position: ChunkPosition,
 }
 

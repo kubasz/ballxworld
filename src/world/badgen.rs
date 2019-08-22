@@ -31,7 +31,7 @@ impl WorldGenerator for BadGenerator {
             return;
         }
         let chunkarc = chunkarc.unwrap();
-        let mut chunk = chunkarc.lock().unwrap();
+        let mut chunk = chunkarc.write().unwrap();
 
         for (vidx, vox) in chunk.data.iter_mut().enumerate() {
             let vcd = VOXEL_CHUNK_DIM as i32;

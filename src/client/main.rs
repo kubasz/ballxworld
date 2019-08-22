@@ -6,7 +6,7 @@ use cgmath::prelude::*;
 use cgmath::{vec3, Deg, Matrix3};
 use sdl2::keyboard::Keycode;
 use std::collections::{HashSet, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use crate::world::badgen::BadGenerator;
 
@@ -99,7 +99,7 @@ pub fn client_main() {
     let mut world = world::generation::World::new("world".to_owned(), vxreg.clone());
     world.load_anchor.chunk_radius = cfg.performance_load_distance as i32;
     world.change_generator(Arc::new(BadGenerator::default()));
-    let world = Arc::new(Mutex::new(world));
+    let world = Arc::new(RwLock::new(world));
 
     vctx.world = Some(world.clone());
 
@@ -131,7 +131,7 @@ pub fn client_main() {
         let physics_frames = (physics_accum_time / PHYSICS_FRAME_TIME) as i32;
         if physics_frames > 0 {
             physics_accum_time -= f64::from(physics_frames) * PHYSICS_FRAME_TIME;
-            let mut world = world.lock().unwrap();
+            let mut world = world.write().unwrap();
             for _pfrm in 0..physics_frames {
                 // do physics tick
                 {
