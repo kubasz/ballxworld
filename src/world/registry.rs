@@ -101,7 +101,7 @@ impl VoxelRegistry {
             has_mesh: false,
             has_collisions: false,
             has_hitbox: false,
-            debug_color: [1.0, 0.0, 1.0],
+            debug_color: [1.0, 1.0, 1.0],
             texture_mapping: TextureMapping::TiledSingle(0),
         }
     }

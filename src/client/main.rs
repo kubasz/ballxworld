@@ -12,8 +12,8 @@ use crate::world::badgen::BadGenerator;
 
 use crate::client::config::Config;
 use crate::client::world::{CameraSettings, ClientWorld, ClientWorldMethods};
+use crate::world::blocks::register_standard_blocks;
 use crate::world::ecs::{CLoadAnchor, CLocation, ECSHandler};
-use crate::world::TextureMapping;
 use conrod_core::widget_ids;
 use std::f32::consts::PI;
 use std::io::{Read, Write};
@@ -67,37 +67,7 @@ pub fn client_main() {
     let frametime_count: usize = 100;
 
     let mut vxreg = world::registry::VoxelRegistry::new();
-    vxreg
-        .build_definition()
-        .name("core:grass")
-        .debug_color(1.0, 1.0, 1.0)
-        .texture_names(
-            &vctx,
-            TextureMapping::TiledTSB {
-                top: "grass_top",
-                side: "grass_side",
-                bottom: "grass_bottom",
-            },
-        )
-        .has_physical_properties()
-        .finish()
-        .unwrap();
-    vxreg
-        .build_definition()
-        .name("core:stone")
-        .debug_color(1.0, 1.0, 1.0)
-        .texture_names(&vctx, TextureMapping::TiledSingle("stone"))
-        .has_physical_properties()
-        .finish()
-        .unwrap();
-    vxreg
-        .build_definition()
-        .name("core:border")
-        .debug_color(1.0, 1.0, 1.0)
-        .texture_names(&vctx, TextureMapping::TiledSingle("unknown"))
-        .has_physical_properties()
-        .finish()
-        .unwrap();
+    register_standard_blocks(&mut vxreg, Some(&vctx));
     let vxreg = Arc::new(vxreg);
     let mut world = world::generation::World::new("world".to_owned(), vxreg.clone());
     world.change_generator(Arc::new(BadGenerator::default()));
@@ -144,16 +114,16 @@ pub fn client_main() {
             let mut world = world.write().unwrap();
             let local_player = world.local_player();
 
-            for _pfrm in 0..physics_frames {
-                let (dyaw, dpitch) = input_state.look;
-                let CameraSettings::FPS { pitch, yaw } =
-                    &mut world.client_world.as_mut().unwrap().camera_settings;
-                *pitch += dpitch / 60.0;
-                *pitch = f32::min(f32::max(*pitch, -PI / 2.0), PI / 2.0);
-                *yaw += dyaw / 60.0;
-                *yaw %= 2.0 * PI;
-                let (pitch, yaw) = (*pitch, *yaw);
+            let (dyaw, dpitch) = input_state.look;
+            let CameraSettings::FPS { pitch, yaw } =
+                &mut world.client_world.as_mut().unwrap().camera_settings;
+            *pitch += dpitch / 60.0;
+            *pitch = f32::min(f32::max(*pitch, -PI / 2.0), PI / 2.0);
+            *yaw += dyaw / 60.0;
+            *yaw %= 2.0 * PI;
+            let (pitch, yaw) = (*pitch, *yaw);
 
+            for _pfrm in 0..physics_frames {
                 // do physics tick
                 let entities = world.entities.get_mut().unwrap();
                 let lp_loc: &mut CLocation = entities.get_component_mut(local_player).unwrap();
@@ -166,7 +136,7 @@ pub fn client_main() {
                 mview.replace_col(1, -mview.y);
                 mview = mview.transpose();
 
-                let wvel = vec3(input_state.walk.0, 0.0, input_state.walk.1);
+                let wvel = vec3(input_state.walk.0, 0.0, input_state.walk.1) * 0.3;
                 lp_loc.position -= mview * wvel;
                 lp_loc.velocity = -(PHYSICS_FRAME_TIME as f32) * wvel;
                 //
