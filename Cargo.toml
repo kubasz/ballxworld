@@ -13,6 +13,10 @@ conrod_vulkano = "0.67"
 toml_edit = "0.1"
 image = "0.22"
 noise = "0.5"
+thread_local = "0.3"
+rand_xoshiro = "0.3"
+lru = "0.1"
+
 
 [dependencies.sdl2]
 version = "0.32"

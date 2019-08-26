@@ -7,6 +7,7 @@ pub mod ecs;
 pub mod entities;
 pub mod generation;
 pub mod registry;
+pub mod stdgen;
 
 pub const VOXEL_CHUNK_DIM: usize = 32;
 pub const VOXEL_CHUNK_CUBES: usize = VOXEL_CHUNK_DIM * VOXEL_CHUNK_DIM * VOXEL_CHUNK_DIM;

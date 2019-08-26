@@ -108,7 +108,7 @@ impl World {
                 });
 
             let worldgen = self.worldgen.as_mut().unwrap();
-            for p in pos_to_load {
+            for p in pos_to_load.into_iter().take(4) {
                 let chunk = Arc::new(RwLock::new(VoxelChunk::new()));
                 let cref = VoxelChunkRef {
                     chunk: Arc::downgrade(&chunk),

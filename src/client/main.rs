@@ -8,7 +8,7 @@ use sdl2::keyboard::Keycode;
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 
-use crate::world::badgen::BadGenerator;
+use crate::world::stdgen::StdGenerator;
 
 use crate::client::config::Config;
 use crate::client::world::{CameraSettings, ClientWorld, ClientWorldMethods};
@@ -70,7 +70,7 @@ pub fn client_main() {
     register_standard_blocks(&mut vxreg, Some(&vctx));
     let vxreg = Arc::new(vxreg);
     let mut world = world::generation::World::new("world".to_owned(), vxreg.clone());
-    world.change_generator(Arc::new(BadGenerator::default()));
+    world.change_generator(Arc::new(StdGenerator::new(0)));
     ClientWorld::create_and_attach(&mut world);
     {
         let lp = world.local_player();
