@@ -175,14 +175,14 @@ impl CellGen {
     }
 
     fn mountains_height_noise(&self, pos: Vector2<i32>) -> f64 {
-        let scale_factor = GLOBAL_SCALE_MOD * 60.0;
+        let scale_factor = GLOBAL_SCALE_MOD * 100.0;
         let p = pos.map(f64::from) / scale_factor;
 
         let h0 = 0.50 * self.h_rn(0, p);
         let h01 = 0.25 * self.h_rn(1, p * 2.0) + h0;
 
-        (h01 + (h01 / 0.75) * 0.15 * self.h_n(2, p * 8.0)
-            + (h01 / 0.75) * 0.05 * self.h_rn(3, p * 14.0))
+        (h01 + (h01 / 0.75) * 0.15 * self.h_n(2, p * 5.0)
+            + (h01 / 0.75) * 0.05 * self.h_rn(3, p * 9.0))
             * 100.0
             + 40.0
     }

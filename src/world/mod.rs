@@ -1,7 +1,6 @@
 use cgmath::Vector3;
 use std::sync::{RwLock, Weak};
 
-pub mod badgen;
 pub mod blocks;
 pub mod ecs;
 pub mod entities;
