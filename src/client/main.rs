@@ -81,7 +81,7 @@ pub fn client_main() {
     let world = Arc::new(RwLock::new(world));
     world::generation::World::init_worker_threads(&world);
 
-    vctx.world = Some(world.clone());
+    vctx.set_world(world.clone(), &rctx);
 
     let pf_mult = 1.0 / sdl_timer.performance_frequency() as f64;
     let mut previous_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;

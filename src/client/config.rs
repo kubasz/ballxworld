@@ -31,7 +31,7 @@ impl Config {
             performance_load_distance: 4,
             performance_draw_distance: 4,
 
-            debug_logging: cfg!(debug_assertions),
+            debug_logging: true, //cfg!(debug_assertions),
 
             toml_doc: None,
         }

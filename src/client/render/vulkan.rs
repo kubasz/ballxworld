@@ -27,22 +27,25 @@ pub enum Queues {
     /// Combined Graphics+Transfer+Compute queue
     Combined(Mutex<Arc<Queue>>),
     /// Two queues from the same G+T+C family
-    Dual{render:Mutex<Arc<Queue>>, gtransfer:Mutex<Arc<Queue>>},
+    Dual {
+        render: Mutex<Arc<Queue>>,
+        gtransfer: Mutex<Arc<Queue>>,
+    },
 }
 
 impl Queues {
     pub fn lock_primary_queue(&self) -> QueueGuard {
         match self {
-            Queues::Combined(q) => {q.lock().unwrap()}
-            Queues::Dual {render, ..} => {render.lock().unwrap()}
+            Queues::Combined(q) => q.lock().unwrap(),
+            Queues::Dual { render, .. } => render.lock().unwrap(),
         }
     }
 
     /// Warning: might lock main queue if gtransfer not present!
     pub fn lock_gtransfer_queue(&self) -> QueueGuard {
         match self {
-            Queues::Combined(q) => {q.lock().unwrap()}
-            Queues::Dual {gtransfer, ..} => {gtransfer.lock().unwrap()}
+            Queues::Combined(q) => q.lock().unwrap(),
+            Queues::Dual { gtransfer, .. } => gtransfer.lock().unwrap(),
         }
     }
 }
@@ -251,7 +254,10 @@ impl RenderingContext {
             }
             let rqueue = queues.next().expect("Couldn't create rendering queue");
             let tqueue = queues.next().expect("Couldn't create voxel-transfer queue");
-            Queues::Dual { render: Mutex::new(rqueue), gtransfer: Mutex::new(tqueue) }
+            Queues::Dual {
+                render: Mutex::new(rqueue),
+                gtransfer: Mutex::new(tqueue),
+            }
         } else {
             if cfg.debug_logging {
                 eprintln!("Creating 1 Vulkan queue - more are not supported");

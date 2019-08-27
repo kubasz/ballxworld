@@ -1,17 +1,22 @@
 use crate::client::config::Config;
 use crate::client::render::voxmesh::mesh_from_chunk;
+use crate::client::render::vulkan::Queues;
 use crate::client::render::*;
 use crate::client::world::{CameraSettings, ClientWorldMethods};
 use crate::world::ecs::{CLocation, ECSHandler};
 use crate::world::generation::World;
 use crate::world::{ChunkPosition, VoxelChunk, VOXEL_CHUNK_DIM};
 use cgmath::prelude::*;
-use cgmath::{Matrix4, PerspectiveFov, Rad, Vector3};
+use cgmath::{vec3, Matrix4, PerspectiveFov, Rad, Vector3};
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock, Weak};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::thread;
+use thread_local::CachedThreadLocal;
 use vulkano::buffer::{BufferUsage, CpuBufferPool, ImmutableBuffer, TypedBufferAccess};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBuffer};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::descriptor::DescriptorSet;
 use vulkano::framebuffer::Subpass;
@@ -81,17 +86,20 @@ impl Debug for DrawnChunk {
     }
 }
 
+type ChunkMsg = (ChunkPosition, Arc<RwLock<DrawnChunk>>);
+
 pub struct VoxelRenderer {
     _texture_array: Arc<ImmutableImage<vulkano::format::R8G8B8A8Srgb>>,
     texture_name_map: HashMap<String, u32>,
     _texture_sampler: Arc<Sampler>,
     texture_ds: Arc<dyn DescriptorSet + Send + Sync>,
-    pub world: Option<Arc<RwLock<World>>>,
+    world: Option<Arc<RwLock<World>>>,
     pub voxel_pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
-    voxel_staging_v: CpuBufferPool<vox::VoxelVertex>,
-    voxel_staging_i: CpuBufferPool<u32>,
     drawn_chunks: HashMap<ChunkPosition, Arc<RwLock<DrawnChunk>>>,
     pub ubuffers: CpuBufferPool<vox::VoxelUBO>,
+    draw_queue: Arc<Mutex<Vec<ChunkPosition>>>,
+    worker_threads: Vec<thread::JoinHandle<()>>,
+    work_receiver: CachedThreadLocal<mpsc::Receiver<ChunkMsg>>,
 }
 
 impl VoxelRenderer {
@@ -153,10 +161,11 @@ impl VoxelRenderer {
             texture_ds,
             world: None,
             voxel_pipeline,
-            voxel_staging_v: CpuBufferPool::upload(rctx.device.clone()),
-            voxel_staging_i: CpuBufferPool::upload(rctx.device.clone()),
             drawn_chunks: HashMap::new(),
             ubuffers,
+            draw_queue: Arc::new(Mutex::new(Vec::new())),
+            worker_threads: Vec::new(),
+            work_receiver: CachedThreadLocal::new(),
         }
     }
 
@@ -234,7 +243,7 @@ impl VoxelRenderer {
             rawdata.iter().copied(),
             vdim,
             vulkano::format::R8G8B8A8Srgb,
-            queue.clone()
+            queue.clone(),
         )
         .expect("Could not create voxel texture array");
         vfuture
@@ -245,10 +254,144 @@ impl VoxelRenderer {
         (vimg, names)
     }
 
+    pub fn set_world(&mut self, world: Arc<RwLock<World>>, rctx: &RenderingContext) {
+        // create worker threads
+        self.worker_threads.clear();
+        const NUM_WORKERS: usize = 2;
+        const STACK_SIZE: usize = 4 * 1024 * 1024;
+        let (tx, rx) = mpsc::channel();
+        self.worker_threads.reserve_exact(NUM_WORKERS);
+        self.work_receiver.clear();
+        self.work_receiver.get_or(move || Box::new(rx));
+        for _ in 0..NUM_WORKERS {
+            let tb = thread::Builder::new()
+                .name("bxw-voxrender".to_owned())
+                .stack_size(STACK_SIZE);
+            let tworld = Arc::downgrade(&world);
+            let ttx = tx.clone();
+            let qs = rctx.queues.clone();
+            let work_queue = self.draw_queue.clone();
+            let thr = tb
+                .spawn(move || Self::vox_worker(tworld, qs, work_queue, ttx))
+                .expect("Could not create voxrender worker thread");
+            self.worker_threads.push(thr);
+        }
+        self.world = Some(world);
+    }
+
+    fn vox_worker(
+        world_w: Weak<RwLock<World>>,
+        qs: Arc<Queues>,
+        work_queue: Arc<Mutex<Vec<ChunkPosition>>>,
+        submission: mpsc::Sender<ChunkMsg>,
+    ) {
+        let device;
+        let _q;
+        let qfamily;
+        {
+            let q = qs.lock_gtransfer_queue();
+            device = q.device().clone();
+            _q = q.clone();
+            qfamily = _q.family();
+        }
+        let voxel_staging_v = CpuBufferPool::upload(device.clone());
+        let voxel_staging_i = CpuBufferPool::upload(device.clone());
+
+        loop {
+            let world = world_w.upgrade();
+            if world.is_none() {
+                eprintln!("World changing - voxrender worker terminating");
+                return;
+            }
+            let world = world.unwrap();
+            let mut work_queue = work_queue.lock().unwrap();
+
+            if work_queue.is_empty() {
+                drop(work_queue);
+                thread::park();
+                continue;
+            }
+
+            let mut chunks_to_add = Vec::new();
+            let len = work_queue.len().min(10);
+            for p in work_queue.iter().rev().take(len) {
+                chunks_to_add.push(*p);
+            }
+            let tgtlen = work_queue.len() - len;
+            work_queue.resize(tgtlen, vec3(0, 0, 0));
+            drop(work_queue);
+
+            for cpos in chunks_to_add.into_iter() {
+                let world = world.read().unwrap();
+                let chunk_arc = world.loaded_chunks.get(&cpos);
+                if chunk_arc.is_none() {
+                    continue;
+                }
+                let chunk_arc = chunk_arc.unwrap().clone();
+                let chunk = chunk_arc.read().unwrap();
+                let mesh = mesh_from_chunk(&chunk, &world.registry);
+                drop(world);
+
+                let vchunk = voxel_staging_v.chunk(mesh.vertices.into_iter()).unwrap();
+                let ichunk = voxel_staging_i.chunk(mesh.indices.into_iter()).unwrap();
+
+                let mut cmd =
+                    AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), qfamily)
+                        .unwrap();
+
+                let dchunk = {
+                    let (vbuffer, vfill) = unsafe {
+                        ImmutableBuffer::<[vox::VoxelVertex]>::uninitialized_array(
+                            device.clone(),
+                            vchunk.len(),
+                            BufferUsage::vertex_buffer_transfer_destination(),
+                        )
+                        .unwrap()
+                    };
+                    cmd = cmd.copy_buffer(vchunk, vfill).unwrap();
+                    let (ibuffer, ifill) = unsafe {
+                        ImmutableBuffer::<[u32]>::uninitialized_array(
+                            device.clone(),
+                            ichunk.len(),
+                            BufferUsage::index_buffer_transfer_destination(),
+                        )
+                        .unwrap()
+                    };
+                    cmd = cmd.copy_buffer(ichunk, ifill).unwrap();
+
+                    DrawnChunk {
+                        chunk: Arc::downgrade(&chunk_arc),
+                        last_dirty: chunk.dirty,
+                        vbuffer,
+                        ibuffer,
+                    }
+                };
+                let cmd = cmd.build().unwrap();
+                let q = qs.lock_gtransfer_queue();
+                let f = cmd.execute(q.clone()).unwrap();
+                f.then_signal_fence().wait(None).unwrap();
+                drop(q);
+                if submission
+                    .send((cpos, Arc::new(RwLock::new(dchunk))))
+                    .is_err()
+                {
+                    eprintln!("World changing - voxrender worker terminating");
+                    return;
+                }
+            }
+        }
+    }
+
     pub fn prepass_draw(&mut self, fctx: &mut PrePassFrameContext) {
         if self.world.is_none() {
             self.drawn_chunks.clear();
             return;
+        }
+
+        if let Some(work_receiver) = self.work_receiver.get() {
+            for (p, dc) in work_receiver.try_iter() {
+                self.drawn_chunks.insert(p, dc);
+            }
         }
 
         let cmd = fctx.replace_cmd();
@@ -280,7 +423,6 @@ impl VoxelRenderer {
             }
         }
 
-        let mut cmd = cmd;
         let ref_pos; // TODO: Add velocity-based position prediction
         {
             let entities = world.entities.read().unwrap();
@@ -290,65 +432,30 @@ impl VoxelRenderer {
         let cposition = ref_pos.map(|c| (c as i32) / 16);
         let dist_key = |p: &Vector3<i32>| {
             let d = cposition - p;
-            d.x * d.x + d.y * d.y * 4 + d.z * d.z
+            -(d.x * d.x + d.y * d.y + d.z * d.z)
         };
-        // Load nearest chunks first
-        chunks_to_add.sort_by_cached_key(&dist_key);
-        // Unload farthest chunks first
-        chunks_to_remove.sort_by_cached_key(|p| -dist_key(p));
-
-        let mut remover_iter = chunks_to_remove.into_iter();
-        for cpos in chunks_to_add.iter().take(20) {
-            let cpos = *cpos;
-            self.drawn_chunks.remove(&cpos);
-            let chunk_arc = world.loaded_chunks.get(&cpos).unwrap();
-            let chunk = chunk_arc.read().unwrap();
-            let mesh = mesh_from_chunk(&chunk, &world.registry);
-
-            let vchunk = self
-                .voxel_staging_v
-                .chunk(mesh.vertices.into_iter())
-                .unwrap();
-            let ichunk = self
-                .voxel_staging_i
-                .chunk(mesh.indices.into_iter())
-                .unwrap();
-
-            let dchunk = {
-                let (vbuffer, vfill) = unsafe {
-                    ImmutableBuffer::<[vox::VoxelVertex]>::uninitialized_array(
-                        fctx.rctx.device.clone(),
-                        vchunk.len(),
-                        BufferUsage::vertex_buffer_transfer_destination(),
-                    )
-                    .unwrap()
-                };
-                cmd = cmd.copy_buffer(vchunk, vfill).unwrap();
-                let (ibuffer, ifill) = unsafe {
-                    ImmutableBuffer::<[u32]>::uninitialized_array(
-                        fctx.rctx.device.clone(),
-                        ichunk.len(),
-                        BufferUsage::index_buffer_transfer_destination(),
-                    )
-                    .unwrap()
-                };
-                cmd = cmd.copy_buffer(ichunk, ifill).unwrap();
-
-                DrawnChunk {
-                    chunk: Arc::downgrade(chunk_arc),
-                    last_dirty: chunk.dirty,
-                    vbuffer,
-                    ibuffer,
-                }
-            };
-            // For each loaded chunk unload 0..# chunks
-            for _ in 0..2 {
-                if let Some(rpos) = remover_iter.next() {
-                    self.drawn_chunks.remove(&rpos);
-                }
+        let mut draw_queue = self.draw_queue.lock().unwrap();
+        for c in chunks_to_add.iter() {
+            if !draw_queue.contains(c) {
+                draw_queue.push(*c);
             }
-            self.drawn_chunks
-                .insert(cpos, Arc::new(RwLock::new(dchunk)));
+        }
+        drop(chunks_to_add);
+        // Load nearest chunks first
+        draw_queue.sort_by_cached_key(&dist_key);
+        // Unload farthest chunks first
+        chunks_to_remove.sort_by_cached_key(&dist_key);
+
+        for cpos in chunks_to_remove.into_iter().take(32) {
+            self.drawn_chunks.remove(&cpos);
+        }
+
+        let new_cmds = !draw_queue.is_empty();
+        drop(draw_queue);
+        if new_cmds {
+            for t in self.worker_threads.iter() {
+                t.thread().unpark();
+            }
         }
 
         fctx.cmd = Some(cmd);

@@ -85,10 +85,7 @@ impl World {
         self.worldgen = Some(new_generator);
     }
 
-    fn worldgen_worker(
-        world: Arc<RwLock<World>>,
-        submission: mpsc::Sender<ChunkMsg>,
-    ) {
+    fn worldgen_worker(world: Arc<RwLock<World>>, submission: mpsc::Sender<ChunkMsg>) {
         loop {
             let world = world.read().unwrap();
             let mut load_queue = world.loading_queue.lock().unwrap();
@@ -111,7 +108,7 @@ impl World {
             drop(load_queue);
 
             let worldgen = world.worldgen.as_ref().unwrap();
-            for p in pos_to_load.into_iter().take(6) {
+            for p in pos_to_load.into_iter() {
                 let chunk = Arc::new(RwLock::new(VoxelChunk::new()));
                 let cref = VoxelChunkRef {
                     chunk: Arc::downgrade(&chunk),
