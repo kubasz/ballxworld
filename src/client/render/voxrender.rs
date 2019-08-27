@@ -229,11 +229,12 @@ impl VoxelRenderer {
             height: idim.1,
             array_layers: numimages,
         };
+        let queue = rctx.queues.lock_primary_queue();
         let (vimg, vfuture) = ImmutableImage::from_iter(
             rawdata.iter().copied(),
             vdim,
             vulkano::format::R8G8B8A8Srgb,
-            rctx.get_transfer_queue(),
+            queue.clone()
         )
         .expect("Could not create voxel texture array");
         vfuture
@@ -297,7 +298,7 @@ impl VoxelRenderer {
         chunks_to_remove.sort_by_cached_key(|p| -dist_key(p));
 
         let mut remover_iter = chunks_to_remove.into_iter();
-        for cpos in chunks_to_add.iter().take(5) {
+        for cpos in chunks_to_add.iter().take(20) {
             let cpos = *cpos;
             self.drawn_chunks.remove(&cpos);
             let chunk_arc = world.loaded_chunks.get(&cpos).unwrap();

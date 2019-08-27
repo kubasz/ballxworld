@@ -79,6 +79,7 @@ pub fn client_main() {
         anchor.radius = cfg.performance_load_distance;
     }
     let world = Arc::new(RwLock::new(world));
+    world::generation::World::init_worker_threads(&world);
 
     vctx.world = Some(world.clone());
 
@@ -262,20 +263,23 @@ pub fn client_main() {
             .set(ids.canvas, &mut ui);
         let player_pos;
         let player_ang;
+        let loaded_cnum;
         {
             let world = world.read().unwrap();
+            loaded_cnum = world.loaded_chunks.len();
             let entities = world.entities.read().unwrap();
             let lp_loc: &CLocation = entities.get_component(world.local_player()).unwrap();
             player_pos = lp_loc.position;
             player_ang = lp_loc.orientation;
         }
-        let pos = format!("Position: {:.1}, {:.1}, {:.1}\nAngles: {:#?}\nLast FT (ms): {:.1}\nAvg FT (ms): {:.1}\nMax FT (ms): {:.1}\n Avg FPS: {:.1}",
+        let pos = format!("Position: {:.1}, {:.1}, {:.1}\nAngles: {:#?}\nLast FT (ms): {:.1}\nAvg FT (ms): {:.1}\nMax FT (ms): {:.1}\n Avg FPS: {:.1}\nLoaded chunks: {}",
                           player_pos.x, player_pos.y, player_pos.z,
                           player_ang,
                           frame_delta_time * 1000.0,
                           avg_ft * 1000.0,
                           max_ft * 1000.0,
-                          1.0 / avg_ft
+                          1.0 / avg_ft,
+                          loaded_cnum,
         );
         widget::Text::new(&pos)
             .font_size(14)

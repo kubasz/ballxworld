@@ -17,6 +17,7 @@ thread_local = "0.3"
 rand_xoshiro = "0.3"
 lru = "0.1"
 smallvec = "0.6"
+jemallocator = "0.3"
 
 [dependencies.sdl2]
 version = "0.32"

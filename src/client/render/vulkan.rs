@@ -1,6 +1,6 @@
 use std::ffi::CString;
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use sdl2::video::Window;
 
@@ -21,9 +21,30 @@ use vulkano::swapchain::{
 use vulkano::sync::{Fence, FenceSignalFuture, FlushError, GpuFuture, NowFuture};
 use vulkano::{app_info_from_cargo_toml, single_pass_renderpass};
 
+pub type QueueGuard<'a> = MutexGuard<'a, Arc<Queue>>;
+
 pub enum Queues {
     /// Combined Graphics+Transfer+Compute queue
-    Combined(Arc<Queue>),
+    Combined(Mutex<Arc<Queue>>),
+    /// Two queues from the same G+T+C family
+    Dual{render:Mutex<Arc<Queue>>, gtransfer:Mutex<Arc<Queue>>},
+}
+
+impl Queues {
+    pub fn lock_primary_queue(&self) -> QueueGuard {
+        match self {
+            Queues::Combined(q) => {q.lock().unwrap()}
+            Queues::Dual {render, ..} => {render.lock().unwrap()}
+        }
+    }
+
+    /// Warning: might lock main queue if gtransfer not present!
+    pub fn lock_gtransfer_queue(&self) -> QueueGuard {
+        match self {
+            Queues::Combined(q) => {q.lock().unwrap()}
+            Queues::Dual {gtransfer, ..} => {gtransfer.lock().unwrap()}
+        }
+    }
 }
 
 pub trait WaitableFuture: GpuFuture {
@@ -52,7 +73,7 @@ pub struct RenderingContext {
     pub instance: Arc<Instance>,
     pub surface: Arc<Surface<()>>,
     pub device: Arc<Device>,
-    pub queues: Queues,
+    pub queues: Arc<Queues>,
     pub sync_transfer_fence: Fence,
     // swapchain
     pub swapchain: Arc<Swapchain<()>>,
@@ -90,7 +111,6 @@ pub struct FrameContext<'r, Stage: FrameStage> {
     pub delta_time: f64,
     pub dims: [u32; 2],
     pub image_num: usize,
-    pub queue: Arc<Queue>,
     acquire_future: SwapchainAcquireFuture<()>,
     _phantom: PhantomData<Stage>,
 }
@@ -203,20 +223,44 @@ impl RenderingContext {
                     && surface.is_supported(q).unwrap_or(false)
             })
             .expect("couldn't find a graphical queue family");
+        let queue_cnt;
         let (device, mut queues) = {
             let device_ext = vulkano::device::DeviceExtensions {
                 khr_swapchain: true,
                 ..vulkano::device::DeviceExtensions::none()
             };
+            let mut queue_families = Vec::new();
+            queue_families.push((queue_family, 0.75)); // graphics queue
+            if queue_family.queues_count() > 1 {
+                queue_families.push((queue_family, 0.25)); // voxel transfer queue
+                queue_cnt = 2;
+            } else {
+                queue_cnt = 1;
+            }
             Device::new(
                 physical,
                 physical.supported_features(),
                 &device_ext,
-                [(queue_family, 0.5)].iter().cloned(),
+                queue_families,
             )
             .expect("failed to create device")
         };
-        let queue = queues.next().expect("Couldn't create rendering queue");
+        let queues = if queue_cnt > 1 {
+            if cfg.debug_logging {
+                eprintln!("Creating 2 Vulkan queues for asynchronous operations");
+            }
+            let rqueue = queues.next().expect("Couldn't create rendering queue");
+            let tqueue = queues.next().expect("Couldn't create voxel-transfer queue");
+            Queues::Dual { render: Mutex::new(rqueue), gtransfer: Mutex::new(tqueue) }
+        } else {
+            if cfg.debug_logging {
+                eprintln!("Creating 1 Vulkan queue - more are not supported");
+            }
+            let queue = queues.next().expect("Couldn't create rendering queue");
+            Queues::Combined(Mutex::new(queue))
+        };
+
+        let queue = queues.lock_primary_queue();
 
         let (swapchain, swapimages) = {
             let caps = surface
@@ -233,7 +277,7 @@ impl RenderingContext {
                 dimensions,
                 1,
                 caps.supported_usage_flags,
-                &queue,
+                &queue.clone(),
                 SurfaceTransform::Identity,
                 alpha,
                 if caps.present_modes.mailbox && !cfg.render_wait_for_vsync {
@@ -304,13 +348,15 @@ impl RenderingContext {
         let sync_transfer_fence = Fence::alloc_signaled(device.clone())
             .expect("Could not create synchronous transfer GPU fence");
 
+        drop(queue);
+
         RenderingContext {
             window,
             instance_extensions,
             instance,
             device: device.clone(),
             surface,
-            queues: Queues::Combined(queue),
+            queues: Arc::new(queues),
             sync_transfer_fence,
             swapchain,
             swapimages,
@@ -323,11 +369,6 @@ impl RenderingContext {
             gui,
             gui_image_map,
         }
-    }
-
-    pub fn get_transfer_queue(&self) -> Arc<Queue> {
-        let Queues::Combined(ref q) = self.queues;
-        q.clone()
     }
 
     /// Returns None if e.g. swapchain is in the process of being recreated
@@ -360,8 +401,7 @@ impl RenderingContext {
         self.gui.win_w = f64::from(dims[0]);
         self.gui.win_h = f64::from(dims[1]);
 
-        let Queues::Combined(ref queue) = self.queues;
-        let queue = queue.clone();
+        let queue = self.queues.lock_primary_queue();
         let (image_num, acquire_future) =
             match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
                 Ok(r) => r,
@@ -397,6 +437,7 @@ impl RenderingContext {
                 .copy_buffer_to_image(buffer, cmd.glyph_cache_texture)
                 .expect("Failed to submit glyph cache update");
         }
+        drop(queue);
 
         Some(PrePassFrameContext {
             rctx: self,
@@ -405,7 +446,6 @@ impl RenderingContext {
             dims,
             image_num,
             acquire_future,
-            queue,
             _phantom: PhantomData,
         })
     }
@@ -418,7 +458,6 @@ impl RenderingContext {
             dims,
             image_num,
             acquire_future,
-            queue,
             _phantom,
         } = fctx;
         let mut cmdbufbuild = cmd.unwrap();
@@ -436,7 +475,6 @@ impl RenderingContext {
             delta_time,
             dims,
             image_num,
-            queue,
             acquire_future,
             _phantom: PhantomData,
         }
@@ -444,12 +482,13 @@ impl RenderingContext {
 
     pub fn inpass_draw_gui(fctx: &mut InPassFrameContext) {
         let mut cmdbufbuild = fctx.replace_cmd();
+        let queue = fctx.rctx.queues.lock_primary_queue();
 
         let gui_viewport = [0.0, 0.0, fctx.dims[0] as f32, fctx.dims[1] as f32];
         let gui_draw_cmds = fctx
             .rctx
             .gui_renderer
-            .draw(fctx.queue.clone(), &fctx.rctx.gui_image_map, gui_viewport)
+            .draw(queue.clone(), &fctx.rctx.gui_image_map, gui_viewport)
             .unwrap();
         for cmd in gui_draw_cmds {
             let conrod_vulkano::DrawCommand {
@@ -482,7 +521,6 @@ impl RenderingContext {
             dims: fctx.dims,
             image_num: fctx.image_num,
             acquire_future: fctx.acquire_future,
-            queue: fctx.queue,
             _phantom: PhantomData,
         }
     }
@@ -493,9 +531,10 @@ impl RenderingContext {
             cmd,
             image_num,
             acquire_future,
-            queue,
             ..
         } = fctx;
+
+        let queue = me.queues.lock_primary_queue();
 
         let cmdbuf = cmd
             .unwrap()
