@@ -297,7 +297,7 @@ impl VoxelRenderer {
         chunks_to_remove.sort_by_cached_key(|p| -dist_key(p));
 
         let mut remover_iter = chunks_to_remove.into_iter();
-        for cpos in chunks_to_add.iter().take(3) {
+        for cpos in chunks_to_add.iter().take(5) {
             let cpos = *cpos;
             self.drawn_chunks.remove(&cpos);
             let chunk_arc = world.loaded_chunks.get(&cpos).unwrap();

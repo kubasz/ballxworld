@@ -19,6 +19,20 @@ pub fn register_standard_blocks(vxreg: &mut VoxelRegistry, vctx: Option<&VoxelRe
         .unwrap();
     vxreg
         .build_definition()
+        .name("core:snow_grass")
+        .opt_texture_names(
+            vctx,
+            TextureMapping::TiledTSB {
+                top: "snow",
+                side: "dirt_snow",
+                bottom: "dirt",
+            },
+        )
+        .has_physical_properties()
+        .finish()
+        .unwrap();
+    vxreg
+        .build_definition()
         .name("core:dirt")
         .opt_texture_names(vctx, TextureMapping::TiledSingle("dirt"))
         .has_physical_properties()

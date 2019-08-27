@@ -136,7 +136,7 @@ pub fn client_main() {
                 mview.replace_col(1, -mview.y);
                 mview = mview.transpose();
 
-                let wvel = vec3(input_state.walk.0, 0.0, input_state.walk.1) * 0.3;
+                let wvel = vec3(input_state.walk.0, 0.0, input_state.walk.1) * 1.0;
                 lp_loc.position -= mview * wvel;
                 lp_loc.velocity = -(PHYSICS_FRAME_TIME as f32) * wvel;
                 //
