@@ -14,6 +14,7 @@ use crate::client::config::Config;
 use crate::client::world::{CameraSettings, ClientWorld, ClientWorldMethods};
 use crate::world::blocks::register_standard_blocks;
 use crate::world::ecs::{CLoadAnchor, CLocation, ECSHandler};
+use crate::world::generation::World;
 use conrod_core::widget_ids;
 use std::f32::consts::PI;
 use std::io::{Read, Write};
@@ -69,7 +70,7 @@ pub fn client_main() {
     let mut vxreg = world::registry::VoxelRegistry::new();
     register_standard_blocks(&mut vxreg, Some(&vctx));
     let vxreg = Arc::new(vxreg);
-    let mut world = world::generation::World::new("world".to_owned(), vxreg.clone());
+    let mut world = World::new("world".to_owned(), vxreg.clone());
     world.change_generator(Arc::new(StdGenerator::new(0)));
     ClientWorld::create_and_attach(&mut world);
     {
@@ -79,7 +80,7 @@ pub fn client_main() {
         anchor.radius = cfg.performance_load_distance;
     }
     let world = Arc::new(RwLock::new(world));
-    world::generation::World::init_worker_threads(&world);
+    World::init_worker_threads(&world);
 
     vctx.set_world(world.clone(), &rctx);
 
@@ -112,7 +113,7 @@ pub fn client_main() {
         if physics_frames > 0 {
             physics_accum_time -= f64::from(physics_frames) * PHYSICS_FRAME_TIME;
 
-            let mut world = world.write().unwrap();
+            let mut world = World::request_write(&world);
             let local_player = world.local_player();
 
             let (dyaw, dpitch) = input_state.look;

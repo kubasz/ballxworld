@@ -5,7 +5,8 @@ use cgmath::prelude::*;
 use cgmath::{vec3, Vector3};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, RwLockWriteGuard};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use thread_local::CachedThreadLocal;
@@ -25,6 +26,7 @@ pub struct World {
     pub registry: Arc<VoxelRegistry>,
     pub entities: RwLock<ECS>,
     pub client_world: Option<ClientWorld>,
+    requesting_write: Arc<AtomicBool>,
     worker_threads: Vec<thread::JoinHandle<()>>,
     work_receiver: CachedThreadLocal<mpsc::Receiver<ChunkMsg>>,
 }
@@ -51,9 +53,24 @@ impl World {
             registry,
             entities: RwLock::new(ECS::new()),
             client_world: None,
+            requesting_write: Arc::new(AtomicBool::new(false)),
             worker_threads: Vec::new(),
             work_receiver: CachedThreadLocal::default(),
         }
+    }
+
+    pub fn request_write(w: &Arc<RwLock<Self>>) -> RwLockWriteGuard<Self> {
+        let rd = w.read().unwrap();
+        rd.requesting_write.store(true, Ordering::SeqCst);
+        drop(rd);
+        // now we wait...
+        let wr = w.write().unwrap();
+        wr.requesting_write.store(false, Ordering::SeqCst);
+        wr
+    }
+
+    pub fn get_write_request(&self) -> Arc<AtomicBool> {
+        self.requesting_write.clone()
     }
 
     pub fn init_worker_threads(w: &Arc<RwLock<Self>>) {
@@ -85,9 +102,13 @@ impl World {
         self.worldgen = Some(new_generator);
     }
 
-    fn worldgen_worker(world: Arc<RwLock<World>>, submission: mpsc::Sender<ChunkMsg>) {
+    fn worldgen_worker(world_arc: Arc<RwLock<World>>, submission: mpsc::Sender<ChunkMsg>) {
+        let mut wr_rq = None;
         loop {
-            let world = world.read().unwrap();
+            let world = world_arc.read().unwrap();
+            if wr_rq.is_none() {
+                wr_rq = Some(world.get_write_request());
+            }
             let mut load_queue = world.loading_queue.lock().unwrap();
 
             if load_queue.is_empty() {
@@ -107,16 +128,24 @@ impl World {
             }
             drop(load_queue);
 
-            let worldgen = world.worldgen.as_ref().unwrap();
+            let mut world = Some(world);
             for p in pos_to_load.into_iter() {
+                if world.is_none() {
+                    world = Some(world_arc.read().unwrap());
+                }
+                let worldgen = world.as_ref().unwrap().worldgen.as_ref().unwrap();
                 let chunk = Arc::new(RwLock::new(VoxelChunk::new()));
                 let cref = VoxelChunkRef {
                     chunk: Arc::downgrade(&chunk),
                     position: p,
                 };
-                worldgen.generate_chunk(cref, &world.registry);
+                worldgen.generate_chunk(cref, &world.as_ref().unwrap().registry);
                 chunk.write().unwrap().dirty += 1;
                 submission.send((p, chunk)).unwrap();
+                while wr_rq.as_ref().unwrap().load(Ordering::SeqCst) {
+                    world = None;
+                    thread::yield_now();
+                }
             }
         }
     }

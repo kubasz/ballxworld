@@ -11,6 +11,7 @@ use cgmath::{vec3, Matrix4, PerspectiveFov, Rad, Vector3};
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::thread;
@@ -299,6 +300,8 @@ impl VoxelRenderer {
         let voxel_staging_v = CpuBufferPool::upload(device.clone());
         let voxel_staging_i = CpuBufferPool::upload(device.clone());
 
+        let mut wr_rq = None;
+
         loop {
             let world = world_w.upgrade();
             if world.is_none() {
@@ -325,6 +328,9 @@ impl VoxelRenderer {
 
             for cpos in chunks_to_add.into_iter() {
                 let world = world.read().unwrap();
+                if wr_rq.is_none() {
+                    wr_rq = Some(world.get_write_request());
+                }
                 let chunk_arc = world.loaded_chunks.get(&cpos);
                 if chunk_arc.is_none() {
                     continue;
@@ -332,6 +338,7 @@ impl VoxelRenderer {
                 let chunk_arc = chunk_arc.unwrap().clone();
                 let chunk = chunk_arc.read().unwrap();
                 let mesh = mesh_from_chunk(&chunk, &world.registry);
+
                 drop(world);
 
                 let vchunk = voxel_staging_v.chunk(mesh.vertices.into_iter()).unwrap();
@@ -379,6 +386,10 @@ impl VoxelRenderer {
                 {
                     eprintln!("World changing - voxrender worker terminating");
                     return;
+                }
+
+                while wr_rq.as_ref().unwrap().load(Ordering::SeqCst) {
+                    thread::yield_now();
                 }
             }
         }
