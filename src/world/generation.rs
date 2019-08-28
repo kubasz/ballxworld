@@ -21,7 +21,7 @@ type ChunkMsg = (ChunkPosition, Arc<RwLock<VoxelChunk>>);
 pub struct World {
     pub name: String,
     pub loaded_chunks: HashMap<ChunkPosition, Arc<RwLock<VoxelChunk>>>,
-    pub loading_queue: Mutex<HashSet<ChunkPosition>>,
+    pub loading_queue: Mutex<Vec<(i32, ChunkPosition)>>,
     pub worldgen: Option<Arc<dyn WorldGenerator + Send + Sync>>,
     pub registry: Arc<VoxelRegistry>,
     pub entities: RwLock<ECS>,
@@ -48,7 +48,7 @@ impl World {
         Self {
             name,
             loaded_chunks: HashMap::new(),
-            loading_queue: Mutex::new(HashSet::new()),
+            loading_queue: Mutex::new(Vec::new()),
             worldgen: None,
             registry,
             entities: RwLock::new(ECS::new()),
@@ -120,12 +120,11 @@ impl World {
 
             let mut pos_to_load = Vec::new();
             let len = load_queue.len().min(10);
-            for p in load_queue.iter().take(len) {
-                pos_to_load.push(*p);
+            for p in load_queue.iter().rev().take(len) {
+                pos_to_load.push(p.1);
             }
-            for p in pos_to_load.iter() {
-                load_queue.remove(p);
-            }
+            let newlen = load_queue.len() - len;
+            load_queue.resize(newlen, (0, vec3(0, 0, 0)));
             drop(load_queue);
 
             let mut world = Some(world);
@@ -158,7 +157,7 @@ impl World {
                     self.loaded_chunks.insert(vc.0, vc.1);
                 }
             }
-            let mut req_positions: HashSet<ChunkPosition> = HashSet::new();
+            let mut req_positions: HashSet<(i32, ChunkPosition)> = HashSet::new();
 
             let ents = self.entities.get_mut().unwrap();
             let it = ECSHandler::<CLoadAnchor>::iter(ents);
@@ -176,18 +175,19 @@ impl World {
                 for xoff in 0..r {
                     for yoff in 0..r {
                         for zoff in 0..r {
-                            if xoff * xoff + yoff * yoff + zoff * zoff <= r * r {
-                                req_positions.insert(pos + vec3(xoff, yoff, zoff));
+                            let rr = xoff * xoff + yoff * yoff + zoff * zoff;
+                            if rr <= r * r {
+                                req_positions.insert((rr, pos + vec3(xoff, yoff, zoff)));
 
-                                req_positions.insert(pos + vec3(-xoff, yoff, zoff));
-                                req_positions.insert(pos + vec3(xoff, -yoff, zoff));
-                                req_positions.insert(pos + vec3(xoff, yoff, -zoff));
+                                req_positions.insert((rr, pos + vec3(-xoff, yoff, zoff)));
+                                req_positions.insert((rr, pos + vec3(xoff, -yoff, zoff)));
+                                req_positions.insert((rr, pos + vec3(xoff, yoff, -zoff)));
 
-                                req_positions.insert(pos + vec3(-xoff, -yoff, zoff));
-                                req_positions.insert(pos + vec3(xoff, -yoff, -zoff));
-                                req_positions.insert(pos + vec3(-xoff, yoff, -zoff));
+                                req_positions.insert((rr, pos + vec3(-xoff, -yoff, zoff)));
+                                req_positions.insert((rr, pos + vec3(xoff, -yoff, -zoff)));
+                                req_positions.insert((rr, pos + vec3(-xoff, yoff, -zoff)));
 
-                                req_positions.insert(pos + vec3(-xoff, -yoff, -zoff));
+                                req_positions.insert((rr, pos + vec3(-xoff, -yoff, -zoff)));
                             }
                         }
                     }
@@ -195,26 +195,29 @@ impl World {
             }
 
             let mut load_queue = self.loading_queue.lock().unwrap();
+            load_queue.clear();
 
-            let mut pos_to_load: HashSet<ChunkPosition> = HashSet::new();
+            let mut pos_to_load: Vec<(i32, ChunkPosition)> = Vec::new();
             req_positions
                 .iter()
-                .filter(|p| !self.loaded_chunks.contains_key(p) && !load_queue.contains(p))
+                .filter(|p| !self.loaded_chunks.contains_key(&p.1) && !load_queue.contains(p))
                 .for_each(|p| {
-                    pos_to_load.insert(*p);
+                    pos_to_load.push(*p);
                 });
 
             let mut pos_to_unload: HashSet<ChunkPosition> = HashSet::new();
             self.loaded_chunks
                 .keys()
-                .filter(|p| !req_positions.contains(p))
+                .filter(|p| !req_positions.iter().any(|u| u.1 == **p))
                 .for_each(|p| {
                     pos_to_unload.insert(*p);
                 });
 
             for p in pos_to_load.into_iter() {
-                load_queue.insert(p);
+                load_queue.push(p);
             }
+            // load nearest chunks first
+            load_queue.sort_by_key(|p| -p.0);
 
             for p in pos_to_unload.into_iter() {
                 self.loaded_chunks.remove(&p);

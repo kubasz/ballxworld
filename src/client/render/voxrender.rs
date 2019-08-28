@@ -448,6 +448,7 @@ impl VoxelRenderer {
             -(d.x * d.x + d.y * d.y + d.z * d.z)
         };
         let mut draw_queue = self.draw_queue.lock().unwrap();
+        draw_queue.clear();
         for c in chunks_to_add.iter() {
             if !draw_queue.contains(c) {
                 draw_queue.push(*c);
