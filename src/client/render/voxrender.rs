@@ -95,6 +95,7 @@ pub struct VoxelRenderer {
     texture_ds: Arc<dyn DescriptorSet + Send + Sync>,
     world: Option<Arc<RwLock<World>>>,
     pub voxel_pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
+    atmosphere_renderer: AtmosphereRenderer,
     drawn_chunks: HashMap<ChunkPosition, Arc<RwLock<DrawnChunk>>>,
     pub ubuffers: CpuBufferPool<vox::VoxelUBO>,
     draw_queue: Arc<Mutex<Vec<ChunkPosition>>>,
@@ -161,6 +162,7 @@ impl VoxelRenderer {
             texture_ds,
             world: None,
             voxel_pipeline,
+            atmosphere_renderer: AtmosphereRenderer::new(cfg, rctx),
             drawn_chunks: HashMap::new(),
             ubuffers,
             draw_queue: Arc::new(Mutex::new(Vec::new())),
@@ -486,6 +488,8 @@ impl VoxelRenderer {
 
         let mut cmdbufbuild = fctx.replace_cmd();
 
+        let mproj: Matrix4<f32>;
+
         let ubo = {
             let mut ubo = vox::VoxelUBO::default();
             let mmdl: Matrix4<f32> = One::one();
@@ -493,7 +497,7 @@ impl VoxelRenderer {
             ubo.view = mview.into();
             let swdim = fctx.dims;
             let sfdim = [swdim[0] as f32, swdim[1] as f32];
-            let mproj: Matrix4<f32> = PerspectiveFov {
+            mproj = PerspectiveFov {
                 fovy: Rad(75.0 * std::f32::consts::PI / 180.0),
                 aspect: sfdim[0] / sfdim[1],
                 near: 0.1,
@@ -517,18 +521,21 @@ impl VoxelRenderer {
                 chunk_offset: pos.map(|x| (x as f32) * (VOXEL_CHUNK_DIM as f32)).into(),
             };
             let chunk = chunkmut.read().unwrap();
-            cmdbufbuild = cmdbufbuild
-                .draw_indexed(
-                    self.voxel_pipeline.clone(),
-                    &fctx.rctx.dynamic_state,
-                    vec![chunk.vbuffer.clone()],
-                    chunk.ibuffer.clone(),
-                    (udset.clone(), self.texture_ds.clone()),
-                    pc,
-                )
-                .expect("Failed to submit voxel chunk draw");
+            if chunk.ibuffer.len() > 0 {
+                cmdbufbuild = cmdbufbuild
+                    .draw_indexed(
+                        self.voxel_pipeline.clone(),
+                        &fctx.rctx.dynamic_state,
+                        vec![chunk.vbuffer.clone()],
+                        chunk.ibuffer.clone(),
+                        (udset.clone(), self.texture_ds.clone()),
+                        pc,
+                    )
+                    .expect("Failed to submit voxel chunk draw");
+            }
         }
-
         fctx.cmd = Some(cmdbufbuild);
+
+        self.atmosphere_renderer.inpass_draw(fctx, mview, mproj);
     }
 }
