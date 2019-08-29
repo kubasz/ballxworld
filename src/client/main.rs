@@ -70,8 +70,8 @@ pub fn client_main() {
     let mut vxreg = world::registry::VoxelRegistry::new();
     register_standard_blocks(&mut vxreg, Some(&vctx));
     let vxreg = Arc::new(vxreg);
-    let mut world = World::new("world".to_owned(), vxreg.clone());
-    world.change_generator(Arc::new(StdGenerator::new(0)));
+    let wgen = Arc::new(StdGenerator::new(0));
+    let mut world = World::new("world".to_owned(), vxreg.clone(), wgen);
     ClientWorld::create_and_attach(&mut world);
     {
         let lp = world.local_player();
