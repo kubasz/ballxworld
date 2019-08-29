@@ -112,6 +112,15 @@ pub fn client_main() {
         let physics_frames = (physics_accum_time / PHYSICS_FRAME_TIME) as i32;
         if physics_frames > 0 {
             physics_accum_time -= f64::from(physics_frames) * PHYSICS_FRAME_TIME;
+            let physics_frames = if physics_frames > 10 {
+                eprintln!(
+                    "Physics lagging behind, skipping {} ticks",
+                    physics_frames - 1
+                );
+                1
+            } else {
+                physics_frames
+            };
 
             let mut world = World::request_write(&world);
             let local_player = world.local_player();
@@ -144,6 +153,7 @@ pub fn client_main() {
                 //
                 world.physics_tick();
             }
+            world.load_tick();
         }
 
         if let Some(mut fc) = rctx.frame_begin_prepass(frame_delta_time) {

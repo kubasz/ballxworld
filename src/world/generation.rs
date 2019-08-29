@@ -143,6 +143,10 @@ impl World {
     }
 
     pub fn physics_tick(&mut self) {
+        //
+    }
+
+    pub fn load_tick(&mut self) {
         // Chunk loading
         if let Some(rx) = self.work_receiver.get() {
             for vc in rx.try_iter() {
