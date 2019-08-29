@@ -1,11 +1,17 @@
 use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
 use crate::world::registry::VoxelRegistry;
-use crate::world::{VoxelChunk, VOXEL_CHUNK_DIM};
+use crate::world::{Direction, VoxelChunk, VOXEL_CHUNK_DIM};
 use cgmath::{vec3, Vector3};
 
-pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuffers {
+pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> Option<ChunkBuffers> {
     let mut vbuf: Vec<VoxelVertex> = Vec::new();
     let mut ibuf: Vec<u32> = Vec::new();
+    let neighbors: Vec<_> = chunk.neighbor.iter().map(|n| n.upgrade()).collect();
+    if !neighbors.iter().all(|n| n.is_some()) {
+        return None;
+    }
+    let neighbors_locks: Vec<_> = neighbors.into_iter().map(|o| o.unwrap()).collect();
+    let neighbors: Vec<_> = neighbors_locks.iter().map(|l| l.read().unwrap()).collect();
 
     struct CubeSide {
         // counter-clockwise coords of the face
@@ -84,14 +90,25 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuf
         }
 
         for side in &SIDES {
-            let touchpos: [i32; 3] = (ipos + side.ioffset).into();
-            if !touchpos
+            let touchpos = ipos + side.ioffset;
+            let tdef;
+            if ![touchpos.x, touchpos.y, touchpos.z]
                 .iter()
                 .any(|c| (*c) < 0 || (*c) >= VOXEL_CHUNK_DIM as i32)
             {
                 let a = VOXEL_CHUNK_DIM as i32;
                 let tidx = (touchpos[0] + touchpos[1] * a + touchpos[2] * a * a) as usize;
-                let tdef = registry.get_definition_from_id(&chunk.data[tidx]);
+                tdef = registry.get_definition_from_id(&chunk.data[tidx]);
+                if tdef.has_mesh {
+                    continue;
+                }
+            } else {
+                let tdir = Direction::try_from_vec(side.ioffset).unwrap();
+                let tchunk = &neighbors[tdir as usize];
+                let touchpos = touchpos - 32 * side.ioffset;
+                let a = VOXEL_CHUNK_DIM as i32;
+                let tidx = (touchpos[0] + touchpos[1] * a + touchpos[2] * a * a) as usize;
+                tdef = registry.get_definition_from_id(&tchunk.data[tidx]);
                 if tdef.has_mesh {
                     continue;
                 }
@@ -139,8 +156,8 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> ChunkBuf
         }
     }
 
-    ChunkBuffers {
+    Some(ChunkBuffers {
         vertices: vbuf,
         indices: ibuf,
-    }
+    })
 }

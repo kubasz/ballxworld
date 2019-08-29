@@ -275,6 +275,7 @@ pub fn client_main() {
         let player_pos;
         let player_ang;
         let loaded_cnum;
+        let drawn_cnum = vctx.drawn_chunks_number();
         {
             let world = world.read().unwrap();
             loaded_cnum = world.loaded_chunks.len();
@@ -283,7 +284,7 @@ pub fn client_main() {
             player_pos = lp_loc.position;
             player_ang = lp_loc.orientation;
         }
-        let pos = format!("Position: {:.1}, {:.1}, {:.1}\nAngles: {:#?}\nLast FT (ms): {:.1}\nAvg FT (ms): {:.1}\nMax FT (ms): {:.1}\n Avg FPS: {:.1}\nLoaded chunks: {}",
+        let pos = format!("Position: {:.1}, {:.1}, {:.1}\nAngles: {:#?}\nLast FT (ms): {:.1}\nAvg FT (ms): {:.1}\nMax FT (ms): {:.1}\n Avg FPS: {:.1}\nLoaded chunks: {}\nDrawn chunks: {}",
                           player_pos.x, player_pos.y, player_pos.z,
                           player_ang,
                           frame_delta_time * 1000.0,
@@ -291,6 +292,7 @@ pub fn client_main() {
                           max_ft * 1000.0,
                           1.0 / avg_ft,
                           loaded_cnum,
+                          drawn_cnum,
         );
         widget::Text::new(&pos)
             .font_size(14)

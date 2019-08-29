@@ -353,6 +353,10 @@ impl VoxelRenderer {
             for (cpos, chunk_arc) in chunk_objs_to_add.into_iter() {
                 let chunk = chunk_arc.read().unwrap();
                 let mesh = mesh_from_chunk(&chunk, &registry);
+                if mesh.is_none() {
+                    continue;
+                }
+                let mesh = mesh.unwrap();
 
                 let vchunk = voxel_staging_v.chunk(mesh.vertices.into_iter()).unwrap();
                 let ichunk = voxel_staging_i.chunk(mesh.indices.into_iter()).unwrap();
@@ -404,6 +408,10 @@ impl VoxelRenderer {
         }
     }
 
+    pub fn drawn_chunks_number(&self) -> usize {
+        self.drawn_chunks.len()
+    }
+
     pub fn prepass_draw(&mut self, fctx: &mut PrePassFrameContext) {
         if self.world.is_none() {
             self.drawn_chunks.clear();
@@ -428,6 +436,11 @@ impl VoxelRenderer {
             .for_each(|p| chunks_to_remove.push(*p));
         let mut chunks_to_add: Vec<ChunkPosition> = Vec::new();
         for (cpos, chunk) in world.loaded_chunks.iter() {
+            let cr = chunk.read().unwrap();
+            let has_all_neighbors = cr.neighbor.iter().all(|n| n.upgrade().is_some());
+            if !has_all_neighbors {
+                continue;
+            }
             if !self.drawn_chunks.contains_key(&cpos) {
                 chunks_to_add.push(*cpos);
                 continue;
@@ -439,7 +452,7 @@ impl VoxelRenderer {
                 .read()
                 .unwrap()
                 .last_dirty
-                != chunk.read().unwrap().dirty
+                != cr.dirty
             {
                 chunks_to_add.push(*cpos);
             }

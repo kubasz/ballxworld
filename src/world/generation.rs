@@ -1,8 +1,9 @@
 use crate::world::ecs::{CLoadAnchor, CLocation, Component, ECSHandler, ECS};
 use crate::world::registry::VoxelRegistry;
-use crate::world::{ChunkPosition, VoxelChunk, VoxelChunkRef, VOXEL_CHUNK_DIM};
+use crate::world::{ChunkPosition, Direction, VoxelChunk, VoxelChunkRef, VOXEL_CHUNK_DIM};
 use cgmath::prelude::*;
 use cgmath::{vec3, Vector3};
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -150,7 +151,21 @@ impl World {
         // Chunk loading
         if let Some(rx) = self.work_receiver.get() {
             for vc in rx.try_iter() {
-                self.loaded_chunks.insert(vc.0, vc.1);
+                let cpos = vc.0;
+                let ch_arc = vc.1;
+                // set neighbor relations
+                let mut ch = ch_arc.write().unwrap();
+                for ndir in Direction::all() {
+                    let opos = cpos + ndir.to_vec();
+                    if let Some(och_arc) = self.loaded_chunks.get(&opos) {
+                        let mut och = och_arc.write().unwrap();
+                        let odir = ndir.opposite();
+                        ch.neighbor[*ndir as usize] = Arc::downgrade(och_arc);
+                        och.neighbor[odir as usize] = Arc::downgrade(&ch_arc);
+                    }
+                }
+                drop(ch);
+                self.loaded_chunks.insert(cpos, ch_arc);
             }
         }
         let mut req_positions: HashSet<(i32, ChunkPosition)> = HashSet::new();
@@ -171,7 +186,7 @@ impl World {
             for xoff in 0..r {
                 for yoff in 0..r {
                     for zoff in 0..r {
-                        let rr = xoff * xoff + yoff * yoff + zoff * zoff;
+                        let rr = xoff * xoff + yoff * yoff * 4 + zoff * zoff;
                         if rr <= r * r {
                             req_positions.insert((rr, pos + vec3(xoff, yoff, zoff)));
 
@@ -213,7 +228,7 @@ impl World {
             load_queue.push(p);
         }
         // load nearest chunks first
-        load_queue.sort_by_key(|p| -p.0);
+        load_queue.par_sort_by_key(|p| -p.0);
 
         for p in pos_to_unload.into_iter() {
             self.loaded_chunks.remove(&p);
