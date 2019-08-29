@@ -168,9 +168,8 @@ pub fn mesh_from_chunk(chunk: &VoxelChunk, registry: &VoxelRegistry) -> Option<C
 
             let voff = vbuf.len() as u32;
             let mut corner_ao = [0i32; 4];
-            for t in 0..4 {
+            for (t, corner) in side.corners.iter().enumerate() {
                 // AO calculation
-                let corner = side.corners[t];
                 let (ao_s1, ao_s2, ao_c): (bool, bool, bool);
                 {
                     let p_c = ipos + corner;

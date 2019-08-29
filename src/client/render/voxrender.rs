@@ -8,7 +8,7 @@ use crate::world::generation::World;
 use crate::world::{ChunkPosition, VoxelChunk, VOXEL_CHUNK_DIM};
 use cgmath::prelude::*;
 use cgmath::{vec3, Matrix4, PerspectiveFov, Rad, Vector3};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -100,6 +100,7 @@ pub struct VoxelRenderer {
     drawn_chunks: HashMap<ChunkPosition, Arc<RwLock<DrawnChunk>>>,
     pub ubuffers: CpuBufferPool<vox::VoxelUBO>,
     draw_queue: Arc<Mutex<Vec<ChunkPosition>>>,
+    progress_set: Arc<Mutex<HashSet<ChunkPosition>>>,
     worker_threads: Vec<thread::JoinHandle<()>>,
     work_receiver: CachedThreadLocal<mpsc::Receiver<ChunkMsg>>,
 }
@@ -167,6 +168,7 @@ impl VoxelRenderer {
             drawn_chunks: HashMap::new(),
             ubuffers,
             draw_queue: Arc::new(Mutex::new(Vec::new())),
+            progress_set: Arc::new(Mutex::new(HashSet::new())),
             worker_threads: Vec::new(),
             work_receiver: CachedThreadLocal::new(),
         }
@@ -274,8 +276,9 @@ impl VoxelRenderer {
             let ttx = tx.clone();
             let qs = rctx.queues.clone();
             let work_queue = self.draw_queue.clone();
+            let progress_set = self.progress_set.clone();
             let thr = tb
-                .spawn(move || Self::vox_worker(tworld, qs, work_queue, ttx))
+                .spawn(move || Self::vox_worker(tworld, qs, work_queue, progress_set, ttx))
                 .expect("Could not create voxrender worker thread");
             self.worker_threads.push(thr);
         }
@@ -286,6 +289,7 @@ impl VoxelRenderer {
         world_w: Weak<RwLock<World>>,
         qs: Arc<Queues>,
         work_queue: Arc<Mutex<Vec<ChunkPosition>>>,
+        progress_set: Arc<Mutex<HashSet<ChunkPosition>>>,
         submission: mpsc::Sender<ChunkMsg>,
     ) {
         let device;
@@ -310,6 +314,7 @@ impl VoxelRenderer {
             registry = world.registry.clone();
         }
 
+        let mut done_chunks: Vec<Vector3<i32>> = Vec::new();
         loop {
             let world = world_w.upgrade();
             if world.is_none() {
@@ -318,9 +323,16 @@ impl VoxelRenderer {
             }
             let world = world.unwrap();
             let mut work_queue = work_queue.lock().unwrap();
+            let mut progress_set = progress_set.lock().unwrap();
+
+            for p in done_chunks.iter() {
+                progress_set.remove(p);
+            }
+            done_chunks.clear();
 
             if work_queue.is_empty() {
                 drop(work_queue);
+                drop(progress_set);
                 thread::park();
                 continue;
             }
@@ -329,9 +341,11 @@ impl VoxelRenderer {
             let len = work_queue.len().min(10);
             for p in work_queue.iter().rev().take(len) {
                 chunks_to_add.push(*p);
+                progress_set.insert(*p);
             }
             let tgtlen = work_queue.len() - len;
             work_queue.resize(tgtlen, vec3(0, 0, 0));
+            drop(progress_set);
             drop(work_queue);
 
             let mut chunk_objs_to_add = Vec::new();
@@ -354,6 +368,7 @@ impl VoxelRenderer {
                 let chunk = chunk_arc.read().unwrap();
                 let mesh = mesh_from_chunk(&chunk, &registry);
                 if mesh.is_none() {
+                    done_chunks.push(cpos);
                     continue;
                 }
                 let mesh = mesh.unwrap();
@@ -404,6 +419,7 @@ impl VoxelRenderer {
                     eprintln!("World changing - voxrender worker terminating");
                     return;
                 }
+                done_chunks.push(cpos);
             }
         }
     }
@@ -470,24 +486,26 @@ impl VoxelRenderer {
             -(d.x * d.x + d.y * d.y + d.z * d.z)
         };
         let mut draw_queue = self.draw_queue.lock().unwrap();
+        let progress_set = self.progress_set.lock().unwrap();
         draw_queue.clear();
         for c in chunks_to_add.iter() {
-            if !draw_queue.contains(c) {
+            if !(draw_queue.contains(c) || progress_set.contains(c)) {
                 draw_queue.push(*c);
             }
         }
+        drop(progress_set);
         drop(chunks_to_add);
         // Load nearest chunks first
         draw_queue.sort_by_cached_key(&dist_key);
         // Unload farthest chunks first
         chunks_to_remove.sort_by_cached_key(&dist_key);
+        let new_cmds = !draw_queue.is_empty();
+        drop(draw_queue);
 
         for cpos in chunks_to_remove.into_iter().take(32) {
             self.drawn_chunks.remove(&cpos);
         }
 
-        let new_cmds = !draw_queue.is_empty();
-        drop(draw_queue);
         if new_cmds {
             for t in self.worker_threads.iter() {
                 t.thread().unpark();
