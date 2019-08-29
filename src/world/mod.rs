@@ -80,8 +80,8 @@ pub struct VoxelChunk {
     pub data: [VoxelDatum; VOXEL_CHUNK_CUBES],
     /// A number increased after each change to this chunk while it's loaded
     pub dirty: u64,
-    /// References to neighboring chunks, indexed by the Direction enum
-    pub neighbor: [Weak<RwLock<Self>>; 6],
+    /// References to neighboring chunks, indexed 9*z+3*y+x, (0,0,0) points to itself
+    pub neighbor: [Weak<RwLock<Self>>; 27],
 }
 
 impl Default for VoxelChunk {

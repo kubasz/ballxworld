@@ -1,6 +1,6 @@
 use crate::world::ecs::{CLoadAnchor, CLocation, Component, ECSHandler, ECS};
 use crate::world::registry::VoxelRegistry;
-use crate::world::{ChunkPosition, Direction, VoxelChunk, VoxelChunkRef, VOXEL_CHUNK_DIM};
+use crate::world::{ChunkPosition, VoxelChunk, VoxelChunkRef, VOXEL_CHUNK_DIM};
 use cgmath::prelude::*;
 use cgmath::{vec3, Vector3};
 use rayon::prelude::*;
@@ -155,13 +155,24 @@ impl World {
                 let ch_arc = vc.1;
                 // set neighbor relations
                 let mut ch = ch_arc.write().unwrap();
-                for ndir in Direction::all() {
-                    let opos = cpos + ndir.to_vec();
-                    if let Some(och_arc) = self.loaded_chunks.get(&opos) {
-                        let mut och = och_arc.write().unwrap();
-                        let odir = ndir.opposite();
-                        ch.neighbor[*ndir as usize] = Arc::downgrade(och_arc);
-                        och.neighbor[odir as usize] = Arc::downgrade(&ch_arc);
+                ch.neighbor[9 + 3 + 1] = Arc::downgrade(&ch_arc);
+                for nz in -1..=1 {
+                    for ny in -1..=1 {
+                        for nx in -1..=1 {
+                            let ndir = vec3(nx, ny, nz);
+                            if ndir == vec3(0, 0, 0) {
+                                continue;
+                            }
+                            let nidx = (nx + 1) + 3 * (ny + 1) + 9 * (nz + 1);
+                            let opos = cpos + ndir;
+                            if let Some(och_arc) = self.loaded_chunks.get(&opos) {
+                                let mut och = och_arc.write().unwrap();
+                                let odir = -ndir;
+                                let oidx = (odir.x + 1) + 3 * (odir.y + 1) + 9 * (odir.z + 1);
+                                ch.neighbor[nidx as usize] = Arc::downgrade(och_arc);
+                                och.neighbor[oidx as usize] = Arc::downgrade(&ch_arc);
+                            }
+                        }
                     }
                 }
                 drop(ch);
