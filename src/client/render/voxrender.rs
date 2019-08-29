@@ -300,7 +300,15 @@ impl VoxelRenderer {
         let voxel_staging_v = CpuBufferPool::upload(device.clone());
         let voxel_staging_i = CpuBufferPool::upload(device.clone());
 
-        let mut wr_rq = None;
+        let wr_rq;
+        let registry;
+
+        {
+            let world = world_w.upgrade().unwrap();
+            let world = world.read().unwrap();
+            wr_rq = world.get_write_request();
+            registry = world.registry.clone();
+        }
 
         loop {
             let world = world_w.upgrade();
@@ -326,20 +334,25 @@ impl VoxelRenderer {
             work_queue.resize(tgtlen, vec3(0, 0, 0));
             drop(work_queue);
 
-            for cpos in chunks_to_add.into_iter() {
+            let mut chunk_objs_to_add = Vec::new();
+            {
+                while wr_rq.load(Ordering::SeqCst) {
+                    thread::yield_now();
+                }
                 let world = world.read().unwrap();
-                if wr_rq.is_none() {
-                    wr_rq = Some(world.get_write_request());
+                for cpos in chunks_to_add.into_iter() {
+                    let chunk_opt = world.loaded_chunks.get(&cpos);
+                    if chunk_opt.is_none() {
+                        continue;
+                    }
+                    let chunk = chunk_opt.unwrap().clone();
+                    chunk_objs_to_add.push((cpos, chunk));
                 }
-                let chunk_arc = world.loaded_chunks.get(&cpos);
-                if chunk_arc.is_none() {
-                    continue;
-                }
-                let chunk_arc = chunk_arc.unwrap().clone();
-                let chunk = chunk_arc.read().unwrap();
-                let mesh = mesh_from_chunk(&chunk, &world.registry);
+            }
 
-                drop(world);
+            for (cpos, chunk_arc) in chunk_objs_to_add.into_iter() {
+                let chunk = chunk_arc.read().unwrap();
+                let mesh = mesh_from_chunk(&chunk, &registry);
 
                 let vchunk = voxel_staging_v.chunk(mesh.vertices.into_iter()).unwrap();
                 let ichunk = voxel_staging_i.chunk(mesh.indices.into_iter()).unwrap();
@@ -386,10 +399,6 @@ impl VoxelRenderer {
                 {
                     eprintln!("World changing - voxrender worker terminating");
                     return;
-                }
-
-                while wr_rq.as_ref().unwrap().load(Ordering::SeqCst) {
-                    thread::yield_now();
                 }
             }
         }
