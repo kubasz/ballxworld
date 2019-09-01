@@ -54,8 +54,8 @@ pub fn register_standard_blocks(vxreg: &mut VoxelRegistry, vctx: Option<&VoxelRe
         .unwrap();
     vxreg
         .build_definition()
-        .name("core:border")
-        .opt_texture_names(vctx, TextureMapping::TiledSingle("table"))
+        .name("core:water")
+        .opt_texture_names(vctx, TextureMapping::TiledSingle("water"))
         .has_physical_properties()
         .finish()
         .unwrap();

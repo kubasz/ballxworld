@@ -4,16 +4,16 @@ use crate::world::{VoxelChunkRef, VOXEL_CHUNK_DIM};
 use cgmath::prelude::*;
 use cgmath::{vec2, Vector2};
 use lru::LruCache;
-use noise::{NoiseFn, OpenSimplex, Seedable};
+use noise::{NoiseFn, Seedable, SuperSimplex};
 use rand::prelude::*;
 use rand_xoshiro::Xoshiro256StarStar;
 use std::cell::RefCell;
 use std::mem::MaybeUninit;
 use thread_local::ThreadLocal;
 
-const GLOBAL_SCALE_MOD: f64 = 1.0;
-const GLOBAL_BIOME_SCALE: f64 = 200.0;
-const SUPERGRID_SIZE: i32 = VOXEL_CHUNK_DIM as i32;
+const GLOBAL_SCALE_MOD: f64 = 10.0;
+const GLOBAL_BIOME_SCALE: f64 = 1000.0;
+const SUPERGRID_SIZE: i32 = 4 * VOXEL_CHUNK_DIM as i32;
 type InCellRng = Xoshiro256StarStar;
 type CellPointsT = [CellPoint; 4];
 
@@ -43,19 +43,20 @@ impl Default for CellPoint {
     }
 }
 
-struct CellGen {
-    seed: u64,
-    height_map_gen: [OpenSimplex; 5],
-    elevation_map_gen: OpenSimplex,
-    density_gen: noise::Value,
-    cell_points: LruCache<Vector2<i32>, CellPointsT>,
-}
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum VPElevation {
+pub enum VPElevation {
     LowLand,
     Hill,
     Mountain,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum VPMoisture {
+    Deadland,
+    Desert,
+    LowMoist,
+    MedMoist,
+    HiMoist,
 }
 
 impl Default for VPElevation {
@@ -64,19 +65,34 @@ impl Default for VPElevation {
     }
 }
 
+impl Default for VPMoisture {
+    fn default() -> Self {
+        VPMoisture::MedMoist
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default)]
 struct VoxelParams {
     height: i32,
     elevation: VPElevation,
+    moisture: VPMoisture,
+}
+
+struct CellGen {
+    seed: u64,
+    height_map_gen: [SuperSimplex; 5],
+    elevation_map_gen: SuperSimplex,
+    moisture_map_gen: SuperSimplex,
+    cell_points: LruCache<Vector2<i32>, CellPointsT>,
 }
 
 impl CellGen {
     fn new(seed: u64) -> Self {
         let mut s = Self {
             seed: 0,
-            height_map_gen: [OpenSimplex::new(); 5],
-            elevation_map_gen: OpenSimplex::new(),
-            density_gen: noise::Value::new(),
+            height_map_gen: [SuperSimplex::new(); 5],
+            elevation_map_gen: SuperSimplex::new(),
+            moisture_map_gen: SuperSimplex::new(),
             cell_points: LruCache::new(64),
         };
         s.set_seed(seed);
@@ -84,13 +100,15 @@ impl CellGen {
     }
 
     fn set_seed(&mut self, seed: u64) {
-        let sd32: u32 = (seed ^ (seed >> 32)) as u32;
+        use rand::prelude::*;
+        use rand_xoshiro::SplitMix64;
+        let mut sdgen = SplitMix64::seed_from_u64(seed);
         self.seed = seed;
-        for (i, hmg) in self.height_map_gen.iter_mut().enumerate() {
-            *hmg = hmg.set_seed(sd32 + (i as u32).wrapping_mul(0xCAFE_BABE));
+        for hmg in self.height_map_gen.iter_mut() {
+            *hmg = hmg.set_seed(sdgen.next_u32());
         }
-        self.elevation_map_gen = self.elevation_map_gen.set_seed(sd32 ^ 0xDEAD_BEEF);
-        self.density_gen = self.density_gen.set_seed(sd32 ^ 0x1407_C0FE);
+        self.elevation_map_gen = self.elevation_map_gen.set_seed(sdgen.next_u32());
+        self.moisture_map_gen = self.moisture_map_gen.set_seed(sdgen.next_u32());
         self.cell_points.clear();
     }
 
@@ -144,14 +162,14 @@ impl CellGen {
     }
 
     fn elevation_noise(&self, pos: Vector2<i32>) -> f64 {
-        let nf = |p: Vector2<f64>| (self.elevation_map_gen.get([p.x, p.y]) + 0.5);
+        let nf = |p: Vector2<f64>| (self.elevation_map_gen.get([p.x, p.y]) + 1.0)/2.0;
         let scale_factor = GLOBAL_BIOME_SCALE * GLOBAL_SCALE_MOD;
         nf(pos.map(f64::from) / scale_factor)
     }
 
     /// 0..=1 height noise
     fn h_n(&self, i: usize, p: Vector2<f64>) -> f64 {
-        (self.height_map_gen[i].get([p.x, p.y]) + 0.5)
+        (self.height_map_gen[i].get([p.x, p.y]) + 1.0)/2.0
     }
 
     /// 0..=1 ridge noise
@@ -160,14 +178,14 @@ impl CellGen {
     }
 
     fn plains_height_noise(&self, pos: Vector2<i32>) -> f64 {
-        let scale_factor = GLOBAL_SCALE_MOD * 60.0;
+        let scale_factor = GLOBAL_SCALE_MOD * 120.0;
         let p = pos.map(f64::from) / scale_factor;
 
         (0.75 * self.h_n(0, p) + 0.25 * self.h_n(1, p * 2.0)) * 5.0 + 10.0
     }
 
     fn hills_height_noise(&self, pos: Vector2<i32>) -> f64 {
-        let scale_factor = GLOBAL_SCALE_MOD * 80.0;
+        let scale_factor = GLOBAL_SCALE_MOD * 160.0;
         let p = pos.map(f64::from) / scale_factor;
 
         (0.60 * self.h_n(0, p) + 0.25 * self.h_n(1, p * 1.5) + 0.15 * self.h_n(2, p * 3.0)) * 30.0
@@ -175,7 +193,7 @@ impl CellGen {
     }
 
     fn mountains_height_noise(&self, pos: Vector2<i32>) -> f64 {
-        let scale_factor = GLOBAL_SCALE_MOD * 100.0;
+        let scale_factor = GLOBAL_SCALE_MOD * 200.0;
         let p = pos.map(f64::from) / scale_factor;
 
         let h0 = 0.50 * self.h_rn(0, p);
@@ -183,7 +201,7 @@ impl CellGen {
 
         (h01 + (h01 / 0.75) * 0.15 * self.h_n(2, p * 5.0)
             + (h01 / 0.75) * 0.05 * self.h_rn(3, p * 9.0))
-            * 100.0
+            * 1000.0
             + 40.0
     }
 
@@ -193,20 +211,20 @@ impl CellGen {
         let ec = self.elevation_noise(pos);
 
         let height: f64;
-        if ec < 0.5 {
+        if ec < 0.4 {
             let ph = self.plains_height_noise(pos);
             height = ph;
-        } else if ec < 0.6 {
-            let nlin = (ec - 0.5) / 0.1;
+        } else if ec < 0.5 {
+            let nlin = (ec - 0.4) / 0.1;
             let olin = 1.0 - nlin;
             let ph = self.plains_height_noise(pos);
             let hh = self.hills_height_noise(pos);
             height = olin * ph + nlin * hh;
-        } else if ec < 0.8 {
+        } else if ec < 0.7 {
             let hh = self.hills_height_noise(pos);
             height = hh;
-        } else if ec < 0.9 {
-            let nlin = (ec - 0.8) / 0.1;
+        } else if ec < 0.8 {
+            let nlin = (ec - 0.7) / 0.1;
             let olin = 1.0 - nlin;
             let hh = self.hills_height_noise(pos);
             let mh = self.mountains_height_noise(pos);
@@ -216,9 +234,9 @@ impl CellGen {
             height = mh;
         }
         let elevation: VPElevation;
-        if cec < 0.5 {
+        if cec < 0.4 {
             elevation = VPElevation::LowLand;
-        } else if cec < 0.6 {
+        } else if cec < 0.5 {
             let p = pos.map(f64::from);
             let bnoise = self.height_map_gen.last().unwrap().get([p.x, p.y]);
             if bnoise < 0.0 {
@@ -226,9 +244,9 @@ impl CellGen {
             } else {
                 elevation = VPElevation::Hill;
             }
-        } else if cec < 0.8 {
+        } else if cec < 0.7 {
             elevation = VPElevation::Hill;
-        } else if cec < 0.9 {
+        } else if cec < 0.8 {
             let p = pos.map(f64::from);
             let bnoise = self.height_map_gen.last().unwrap().get([p.x, p.y]);
             if bnoise < 0.0 {
@@ -240,9 +258,12 @@ impl CellGen {
             elevation = VPElevation::Mountain;
         }
 
+        let moisture = VPMoisture::MedMoist;
+
         VoxelParams {
             height: height.round() as i32,
             elevation,
+            moisture,
         }
     }
 }
