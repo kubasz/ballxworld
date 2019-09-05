@@ -1,6 +1,5 @@
-use crate::world::generation::WorldGenerator;
 use crate::world::registry::VoxelRegistry;
-use crate::world::{VoxelChunkRef, VOXEL_CHUNK_DIM};
+use crate::world::{UncompressedChunk, CHUNK_DIM};
 use cgmath::prelude::*;
 use cgmath::{vec2, Vector2};
 use lru::LruCache;
@@ -13,7 +12,7 @@ use thread_local::ThreadLocal;
 
 const GLOBAL_SCALE_MOD: f64 = 10.0;
 const GLOBAL_BIOME_SCALE: f64 = 1000.0;
-const SUPERGRID_SIZE: i32 = 4 * VOXEL_CHUNK_DIM as i32;
+const SUPERGRID_SIZE: i32 = 4 * CHUNK_DIM as i32;
 type InCellRng = Xoshiro256StarStar;
 type CellPointsT = [CellPoint; 4];
 
@@ -162,14 +161,14 @@ impl CellGen {
     }
 
     fn elevation_noise(&self, pos: Vector2<i32>) -> f64 {
-        let nf = |p: Vector2<f64>| (self.elevation_map_gen.get([p.x, p.y]) + 1.0)/2.0;
+        let nf = |p: Vector2<f64>| (self.elevation_map_gen.get([p.x, p.y]) + 1.0) / 2.0;
         let scale_factor = GLOBAL_BIOME_SCALE * GLOBAL_SCALE_MOD;
         nf(pos.map(f64::from) / scale_factor)
     }
 
     /// 0..=1 height noise
     fn h_n(&self, i: usize, p: Vector2<f64>) -> f64 {
-        (self.height_map_gen[i].get([p.x, p.y]) + 1.0)/2.0
+        (self.height_map_gen[i].get([p.x, p.y]) + 1.0) / 2.0
     }
 
     /// 0..=1 ridge noise
@@ -279,6 +278,12 @@ pub struct StdGenerator {
     cell_gen: ThreadLocal<RefCell<CellGen>>,
 }
 
+impl Default for StdGenerator {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
 impl StdGenerator {
     pub fn new(seed: u64) -> Self {
         Self {
@@ -286,16 +291,8 @@ impl StdGenerator {
             cell_gen: ThreadLocal::default(),
         }
     }
-}
 
-impl Default for StdGenerator {
-    fn default() -> Self {
-        Self::new(0)
-    }
-}
-
-impl WorldGenerator for StdGenerator {
-    fn generate_chunk(&self, cref: VoxelChunkRef, registry: &VoxelRegistry) {
+    pub fn generate_chunk(&self, chunk: &mut UncompressedChunk, registry: &VoxelRegistry) {
         let i_air = registry
             .get_definition_from_name("core:void")
             .expect("No standard air block definition found")
@@ -317,26 +314,19 @@ impl WorldGenerator for StdGenerator {
             .expect("No standard snow grass block definition found")
             .id;
 
-        let chunkarc = cref.chunk.upgrade();
-        if chunkarc.is_none() {
-            return;
-        }
-        let chunkarc = chunkarc.unwrap();
-        let mut chunk = chunkarc.write().unwrap();
-
         let mut cellgen = self
             .cell_gen
             .get_or(|| Box::new(RefCell::new(CellGen::new(self.seed))))
             .borrow_mut();
 
-        const VCD: i32 = VOXEL_CHUNK_DIM as i32;
+        const VCD: i32 = CHUNK_DIM as i32;
 
-        let vparams: [VoxelParams; VOXEL_CHUNK_DIM * VOXEL_CHUNK_DIM] = {
-            let mut vparams: [MaybeUninit<VoxelParams>; VOXEL_CHUNK_DIM * VOXEL_CHUNK_DIM] =
+        let vparams: [VoxelParams; CHUNK_DIM * CHUNK_DIM] = {
+            let mut vparams: [MaybeUninit<VoxelParams>; CHUNK_DIM * CHUNK_DIM] =
                 unsafe { std::mem::MaybeUninit::uninit().assume_init() };
             for (i, v) in vparams[..].iter_mut().enumerate() {
-                let x = (i % VOXEL_CHUNK_DIM) as i32 + (cref.position.x * VCD);
-                let z = ((i / VOXEL_CHUNK_DIM) % VOXEL_CHUNK_DIM) as i32 + (cref.position.z * VCD);
+                let x = (i % CHUNK_DIM) as i32 + (chunk.position.x * VCD);
+                let z = ((i / CHUNK_DIM) % CHUNK_DIM) as i32 + (chunk.position.z * VCD);
                 let p = cellgen.calc_voxel_params(vec2(x, z));
                 unsafe {
                     std::ptr::write(v.as_mut_ptr(), p);
@@ -345,14 +335,14 @@ impl WorldGenerator for StdGenerator {
             unsafe { std::mem::transmute(vparams) }
         };
 
-        for (vidx, vox) in chunk.data.iter_mut().enumerate() {
-            let xc = (vidx % VOXEL_CHUNK_DIM) as i32;
-            let yc = ((vidx / VOXEL_CHUNK_DIM) % VOXEL_CHUNK_DIM) as i32;
-            let zc = ((vidx / VOXEL_CHUNK_DIM / VOXEL_CHUNK_DIM) % VOXEL_CHUNK_DIM) as i32;
-            //let x = (cref.position.x * VCD) as i32 + xc;
-            let y = (cref.position.y * VCD) as i32 + yc;
-            //let z = (cref.position.z * VCD) as i32 + zc;
-            let vp = vparams[(xc + zc * (VOXEL_CHUNK_DIM as i32)) as usize];
+        for (vidx, vox) in chunk.blocks_yzx.iter_mut().enumerate() {
+            let xc = (vidx % CHUNK_DIM) as i32;
+            let zc = ((vidx / CHUNK_DIM) % CHUNK_DIM) as i32;
+            let yc = ((vidx / CHUNK_DIM / CHUNK_DIM) % CHUNK_DIM) as i32;
+            //let x = (chunk.position.x * VCD) as i32 + xc;
+            let y = (chunk.position.y * VCD) as i32 + yc;
+            //let z = (chunk.position.z * VCD) as i32 + zc;
+            let vp = vparams[(xc + zc * (CHUNK_DIM as i32)) as usize];
 
             let h = vp.height;
             //

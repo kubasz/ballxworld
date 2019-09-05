@@ -19,6 +19,8 @@ lru = "0.1"
 smallvec = "0.6"
 jemallocator = "0.3"
 rayon = "1.1"
+parking_lot = "0.9"
+divrem = "0.1"
 
 [dependencies.sdl2]
 version = "0.32"
@@ -29,4 +31,4 @@ version = "0.17"
 features = ["swizzle"]
 
 [profile.dev]
-opt-level = 2
+opt-level = 3

@@ -106,7 +106,7 @@ impl VoxelRegistry {
         }
     }
 
-    pub fn get_definition_from_id(&self, datum: &VoxelDatum) -> &VoxelDefinition {
+    pub fn get_definition_from_id(&self, datum: VoxelDatum) -> &VoxelDefinition {
         &self.definitions[&datum.id]
     }
 

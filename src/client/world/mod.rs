@@ -1,5 +1,7 @@
 use crate::world::ecs::ValidEntityID;
-use crate::world::generation::World;
+use crate::world::{VoxelRegistry, World};
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub enum CameraSettings {
@@ -13,57 +15,36 @@ pub struct ClientWorld {
 }
 
 impl ClientWorld {
-    pub fn create_and_attach(world: &mut World) {
-        if world.client_world.is_some() {
-            return;
-        }
-        let mut entities = world.entities.write().unwrap();
+    pub fn new_world(name: String, registry: Arc<VoxelRegistry>) -> World {
+        let mut world = World::new(name, registry, None);
+        let entities = world.entities.get_mut();
         let local_player = crate::world::entities::player::create_player(
-            &mut entities,
+            &mut entities.ecs,
             true,
             String::from("@local_player"),
         );
-        world.client_world = Some(ClientWorld {
+        let cw = ClientWorld {
             local_player,
             camera_settings: CameraSettings::FPS {
                 pitch: 0.0,
                 yaw: 0.0,
             },
-        });
-    }
-}
-
-pub trait ClientWorldMethods {
-    fn local_player(&self) -> ValidEntityID;
-    fn camera_settings(&self) -> &CameraSettings;
-    fn camera_settings_mut(&mut self) -> &mut CameraSettings;
-}
-
-fn get_client_world(w: &World) -> &ClientWorld {
-    &w.client_world
-        .as_ref()
-        .expect("Trying to access client world from server-side")
-}
-
-fn get_client_world_mut(w: &mut World) -> &mut ClientWorld {
-    w.client_world
-        .as_mut()
-        .expect("Trying to access client world from server-side")
-}
-
-impl ClientWorldMethods for World {
-    fn local_player(&self) -> ValidEntityID {
-        let cw = get_client_world(self);
-        cw.local_player
+        };
+        world.client_world = Some(RwLock::new(cw));
+        world
     }
 
-    fn camera_settings(&self) -> &CameraSettings {
-        let cw = get_client_world(self);
-        &cw.camera_settings
+    pub fn read(w: &World) -> RwLockReadGuard<ClientWorld> {
+        w.client_world
+            .as_ref()
+            .expect("Trying to access client world from server-side")
+            .read()
     }
 
-    fn camera_settings_mut(&mut self) -> &mut CameraSettings {
-        let cw = get_client_world_mut(self);
-        &mut cw.camera_settings
+    pub fn write(w: &World) -> RwLockWriteGuard<ClientWorld> {
+        w.client_world
+            .as_ref()
+            .expect("Trying to access client world from server-side")
+            .write()
     }
 }

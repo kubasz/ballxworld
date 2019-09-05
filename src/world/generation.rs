@@ -1,124 +1,85 @@
-use crate::world::ecs::{CLoadAnchor, CLocation, Component, ECSHandler, ECS};
-use crate::world::registry::VoxelRegistry;
-use crate::world::{ChunkPosition, VoxelChunk, VoxelChunkRef, VOXEL_CHUNK_DIM};
+use crate::world::ecs::{CLoadAnchor, CLocation, Component, ECSHandler};
+use crate::world::stdgen::StdGenerator;
+use crate::world::{ChunkPosition, UncompressedChunk, VChunk, World, CHUNK_DIM};
 use cgmath::prelude::*;
 use cgmath::{vec3, Vector3};
+use parking_lot::Mutex;
 use rayon::prelude::*;
-use std::collections::{HashMap, HashSet};
-use std::fmt::{Debug, Formatter};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, RwLockWriteGuard};
-use std::sync::{Arc, Mutex, RwLock};
+use std::collections::HashSet;
+use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use thread_local::CachedThreadLocal;
 
-pub trait WorldGenerator {
-    fn generate_chunk(&self, cref: VoxelChunkRef, registry: &VoxelRegistry);
+struct ChunkMsg {
+    chunk: VChunk,
 }
 
-type ClientWorld = crate::client::world::ClientWorld;
-type ChunkMsg = (ChunkPosition, Arc<RwLock<VoxelChunk>>);
-
-pub struct World {
-    pub name: String,
-    pub loaded_chunks: HashMap<ChunkPosition, Arc<RwLock<VoxelChunk>>>,
+pub struct WorldLoadGen {
+    pub world: Arc<World>,
     pub loading_queue: Arc<Mutex<Vec<(i32, ChunkPosition)>>>,
     pub progress_set: Arc<Mutex<HashSet<ChunkPosition>>>,
-    pub worldgen: Arc<dyn WorldGenerator + Send + Sync>,
-    pub registry: Arc<VoxelRegistry>,
-    pub entities: RwLock<ECS>,
-    pub client_world: Option<ClientWorld>,
-    requesting_write: Arc<AtomicBool>,
+    pub generator: Arc<StdGenerator>,
     worker_threads: Vec<thread::JoinHandle<()>>,
     work_receiver: CachedThreadLocal<mpsc::Receiver<ChunkMsg>>,
 }
 
-impl Debug for World {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "World {{ name: {}, loaded_chunks: {:?}, loading_queue: {:?} }}",
-            &self.name,
-            self.loaded_chunks.keys(),
-            self.loading_queue
-        )
-    }
-}
-
-impl World {
-    pub fn new(
-        name: String,
-        registry: Arc<VoxelRegistry>,
-        worldgen: Arc<dyn WorldGenerator + Send + Sync>,
-    ) -> World {
-        Self {
-            name,
-            loaded_chunks: HashMap::new(),
+impl WorldLoadGen {
+    pub fn new(world: Arc<World>, seed: u64) -> Self {
+        let mut wlg = Self {
+            world,
             loading_queue: Arc::new(Mutex::new(Vec::new())),
             progress_set: Arc::new(Mutex::new(HashSet::new())),
-            worldgen,
-            registry,
-            entities: RwLock::new(ECS::new()),
-            client_world: None,
-            requesting_write: Arc::new(AtomicBool::new(false)),
+            generator: Arc::new(StdGenerator::new(seed)),
             worker_threads: Vec::new(),
-            work_receiver: CachedThreadLocal::default(),
-        }
+            work_receiver: CachedThreadLocal::new(),
+        };
+        wlg.init_worker_threads();
+        wlg
     }
 
-    pub fn request_write(w: &Arc<RwLock<Self>>) -> RwLockWriteGuard<Self> {
-        let rd = w.read().unwrap();
-        rd.requesting_write.store(true, Ordering::SeqCst);
-        drop(rd);
-        // now we wait...
-        let wr = w.write().unwrap();
-        wr.requesting_write.store(false, Ordering::SeqCst);
-        wr
-    }
-
-    pub fn get_write_request(&self) -> Arc<AtomicBool> {
-        self.requesting_write.clone()
-    }
-
-    pub fn init_worker_threads(w: &Arc<RwLock<Self>>) {
-        let wref = w.clone();
+    fn init_worker_threads(&mut self) {
         const NUM_WORKERS: usize = 2;
         const STACK_SIZE: usize = 4 * 1024 * 1024;
-        let mut w = w.write().unwrap();
-        if !w.worker_threads.is_empty() {
+        if !self.worker_threads.is_empty() {
             return;
         }
-        w.worker_threads.reserve_exact(NUM_WORKERS);
+        self.worker_threads.reserve_exact(NUM_WORKERS);
         let (tx, rx) = mpsc::channel();
-        w.work_receiver.clear();
-        w.work_receiver.get_or(move || Box::new(rx));
+        self.work_receiver.clear();
+        self.work_receiver.get_or(move || Box::new(rx));
         for _ in 0..NUM_WORKERS {
             let tb = thread::Builder::new()
                 .name("bxw-worldgen".to_owned())
                 .stack_size(STACK_SIZE);
-            let tworld = wref.clone();
+            let tworld = self.world.clone();
             let ttx = tx.clone();
+            let tgen = self.generator.clone();
+            let tlq = self.loading_queue.clone();
+            let tps = self.progress_set.clone();
             let thr = tb
-                .spawn(move || Self::worldgen_worker(tworld, ttx))
+                .spawn(move || Self::worldgen_worker(tworld, tgen, tlq, tps, ttx))
                 .expect("Could not create worldgen worker thread");
-            w.worker_threads.push(thr);
+            self.worker_threads.push(thr);
         }
     }
 
-    fn worldgen_worker(world_arc: Arc<RwLock<World>>, submission: mpsc::Sender<ChunkMsg>) {
-        let (_wr_rq, worldgen_arc, registry_arc, load_queue_arc, progress_set_arc);
+    fn worldgen_worker(
+        world_arc: Arc<World>,
+        worldgen_arc: Arc<StdGenerator>,
+        load_queue_arc: Arc<Mutex<Vec<(i32, ChunkPosition)>>>,
+        progress_set_arc: Arc<Mutex<HashSet<ChunkPosition>>>,
+        submission: mpsc::Sender<ChunkMsg>,
+    ) {
+        let registry_arc;
         {
-            let world = world_arc.read().unwrap();
-            worldgen_arc = world.worldgen.clone();
+            let world = world_arc.voxels.read();
             registry_arc = world.registry.clone();
-            load_queue_arc = world.loading_queue.clone();
-            progress_set_arc = world.progress_set.clone();
-            _wr_rq = world.requesting_write.clone();
         }
         let mut done_chunks: Vec<Vector3<i32>> = Vec::new();
         loop {
-            let mut load_queue = load_queue_arc.lock().unwrap();
-            let mut progress_set = progress_set_arc.lock().unwrap();
+            let mut load_queue = load_queue_arc.lock();
+            let mut progress_set = progress_set_arc.lock();
 
             for p in done_chunks.iter() {
                 progress_set.remove(p);
@@ -144,58 +105,31 @@ impl World {
             drop(load_queue);
 
             for p in pos_to_load.into_iter() {
-                let chunk = Arc::new(RwLock::new(VoxelChunk::new()));
-                let cref = VoxelChunkRef {
-                    chunk: Arc::downgrade(&chunk),
-                    position: p,
-                };
-                worldgen_arc.generate_chunk(cref, &registry_arc);
-                chunk.write().unwrap().dirty += 1;
-                submission.send((p, chunk)).unwrap();
+                let mut chunk = VChunk::new();
+                chunk.position = p;
+                let mut ucchunk = UncompressedChunk::new();
+                ucchunk.position = p;
+                worldgen_arc.generate_chunk(&mut ucchunk, &registry_arc);
+                chunk.compress(&ucchunk);
+                submission.send(ChunkMsg { chunk }).unwrap();
                 done_chunks.push(p);
             }
         }
     }
 
-    pub fn physics_tick(&mut self) {
-        //
-    }
-
     pub fn load_tick(&mut self) {
+        let mut voxels = self.world.voxels.write();
         // Chunk loading
         if let Some(rx) = self.work_receiver.get() {
             for vc in rx.try_iter() {
-                let cpos = vc.0;
-                let ch_arc = vc.1;
-                // set neighbor relations
-                let mut ch = ch_arc.write().unwrap();
-                ch.neighbor[9 + 3 + 1] = Arc::downgrade(&ch_arc);
-                for nz in -1..=1 {
-                    for ny in -1..=1 {
-                        for nx in -1..=1 {
-                            let ndir = vec3(nx, ny, nz);
-                            if ndir == vec3(0, 0, 0) {
-                                continue;
-                            }
-                            let nidx = (nx + 1) + 3 * (ny + 1) + 9 * (nz + 1);
-                            let opos = cpos + ndir;
-                            if let Some(och_arc) = self.loaded_chunks.get(&opos) {
-                                let mut och = och_arc.write().unwrap();
-                                let odir = -ndir;
-                                let oidx = (odir.x + 1) + 3 * (odir.y + 1) + 9 * (odir.z + 1);
-                                ch.neighbor[nidx as usize] = Arc::downgrade(och_arc);
-                                och.neighbor[oidx as usize] = Arc::downgrade(&ch_arc);
-                            }
-                        }
-                    }
-                }
-                drop(ch);
-                self.loaded_chunks.insert(cpos, ch_arc);
+                let cpos = vc.chunk.position;
+                voxels.chunks.insert(cpos, vc.chunk);
             }
         }
         let mut req_positions: HashSet<(i32, ChunkPosition)> = HashSet::new();
 
-        let ents = self.entities.get_mut().unwrap();
+        let ents_o = self.world.entities.read();
+        let ents = &ents_o.ecs;
         let it = ECSHandler::<CLoadAnchor>::iter(ents);
         for anchor in it {
             let loc: Option<&CLocation> = ents.get_component(anchor.entity_id());
@@ -206,7 +140,7 @@ impl World {
             let r = anchor.radius as i32;
             let pos: Vector3<i32> = loc
                 .position
-                .div_element_wise(VOXEL_CHUNK_DIM as f32)
+                .div_element_wise(CHUNK_DIM as f32)
                 .map(|c| c as i32);
             for xoff in 0..r {
                 for yoff in 0..r {
@@ -230,24 +164,21 @@ impl World {
             }
         }
 
-        let mut load_queue = self.loading_queue.lock().unwrap();
-        let progress_set = self.progress_set.lock().unwrap();
+        let mut load_queue = self.loading_queue.lock();
+        let progress_set = self.progress_set.lock();
         load_queue.clear();
 
         let mut pos_to_load: Vec<(i32, ChunkPosition)> = Vec::new();
         req_positions
             .iter()
-            .filter(|p| {
-                !(self.loaded_chunks.contains_key(&p.1)
-                    || load_queue.contains(p)
-                    || progress_set.contains(&p.1))
-            })
+            .filter(|p| !(voxels.chunks.contains_key(&p.1) || progress_set.contains(&p.1)))
             .for_each(|p| {
                 pos_to_load.push(*p);
             });
 
         let mut pos_to_unload: HashSet<ChunkPosition> = HashSet::new();
-        self.loaded_chunks
+        voxels
+            .chunks
             .keys()
             .filter(|p| !req_positions.iter().any(|u| u.1 == **p))
             .for_each(|p| {
@@ -261,7 +192,7 @@ impl World {
         load_queue.par_sort_by_key(|p| -p.0);
 
         for p in pos_to_unload.into_iter() {
-            self.loaded_chunks.remove(&p);
+            voxels.chunks.remove(&p);
         }
 
         let has_loads = !load_queue.is_empty();

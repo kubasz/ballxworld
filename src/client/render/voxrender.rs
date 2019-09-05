@@ -2,18 +2,18 @@ use crate::client::config::Config;
 use crate::client::render::voxmesh::mesh_from_chunk;
 use crate::client::render::vulkan::Queues;
 use crate::client::render::*;
-use crate::client::world::{CameraSettings, ClientWorldMethods};
+use crate::client::world::{CameraSettings, ClientWorld};
 use crate::world::ecs::{CLocation, ECSHandler};
-use crate::world::generation::World;
-use crate::world::{ChunkPosition, VoxelChunk, VOXEL_CHUNK_DIM};
+use crate::world::World;
+use crate::world::{ChunkPosition, CHUNK_DIM};
 use cgmath::prelude::*;
 use cgmath::{vec3, Matrix4, PerspectiveFov, Rad, Vector3};
+use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::Arc;
+use std::sync::{mpsc, Weak};
 use std::thread;
 use thread_local::CachedThreadLocal;
 use vulkano::buffer::{BufferUsage, CpuBufferPool, ImmutableBuffer, TypedBufferAccess};
@@ -75,7 +75,7 @@ pub mod vox {
 }
 
 struct DrawnChunk {
-    pub chunk: Weak<RwLock<VoxelChunk>>,
+    pub cpos: ChunkPosition,
     pub last_dirty: u64,
     pub vbuffer: Arc<ImmutableBuffer<[vox::VoxelVertex]>>,
     pub ibuffer: Arc<ImmutableBuffer<[u32]>>,
@@ -94,7 +94,7 @@ pub struct VoxelRenderer {
     texture_name_map: HashMap<String, u32>,
     _texture_sampler: Arc<Sampler>,
     texture_ds: Arc<dyn DescriptorSet + Send + Sync>,
-    world: Option<Arc<RwLock<World>>>,
+    world: Option<Arc<World>>,
     pub voxel_pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
     atmosphere_renderer: AtmosphereRenderer,
     drawn_chunks: HashMap<ChunkPosition, Arc<RwLock<DrawnChunk>>>,
@@ -259,7 +259,7 @@ impl VoxelRenderer {
         (vimg, names)
     }
 
-    pub fn set_world(&mut self, world: Arc<RwLock<World>>, rctx: &RenderingContext) {
+    pub fn set_world(&mut self, world: Arc<World>, rctx: &RenderingContext) {
         // create worker threads
         self.worker_threads.clear();
         const NUM_WORKERS: usize = 2;
@@ -286,7 +286,7 @@ impl VoxelRenderer {
     }
 
     fn vox_worker(
-        world_w: Weak<RwLock<World>>,
+        world_w: Weak<World>,
         qs: Arc<Queues>,
         work_queue: Arc<Mutex<Vec<ChunkPosition>>>,
         progress_set: Arc<Mutex<HashSet<ChunkPosition>>>,
@@ -304,14 +304,12 @@ impl VoxelRenderer {
         let voxel_staging_v = CpuBufferPool::upload(device.clone());
         let voxel_staging_i = CpuBufferPool::upload(device.clone());
 
-        let wr_rq;
         let registry;
 
         {
             let world = world_w.upgrade().unwrap();
-            let world = world.read().unwrap();
-            wr_rq = world.get_write_request();
-            registry = world.registry.clone();
+            let voxels = world.voxels.read();
+            registry = voxels.registry.clone();
         }
 
         let mut done_chunks: Vec<Vector3<i32>> = Vec::new();
@@ -322,8 +320,8 @@ impl VoxelRenderer {
                 return;
             }
             let world = world.unwrap();
-            let mut work_queue = work_queue.lock().unwrap();
-            let mut progress_set = progress_set.lock().unwrap();
+            let mut work_queue = work_queue.lock();
+            let mut progress_set = progress_set.lock();
 
             for p in done_chunks.iter() {
                 progress_set.remove(p);
@@ -350,23 +348,20 @@ impl VoxelRenderer {
 
             let mut chunk_objs_to_add = Vec::new();
             {
-                while wr_rq.load(Ordering::SeqCst) {
-                    thread::yield_now();
-                }
-                let world = world.read().unwrap();
+                let voxels = world.voxels.read();
                 for cpos in chunks_to_add.into_iter() {
-                    let chunk_opt = world.loaded_chunks.get(&cpos);
+                    let chunk_opt = voxels.chunks.get(&cpos);
                     if chunk_opt.is_none() {
                         continue;
                     }
-                    let chunk = chunk_opt.unwrap().clone();
-                    chunk_objs_to_add.push((cpos, chunk));
+                    chunk_objs_to_add.push(cpos);
                 }
             }
 
-            for (cpos, chunk_arc) in chunk_objs_to_add.into_iter() {
-                let chunk = chunk_arc.read().unwrap();
-                let mesh = mesh_from_chunk(&chunk, &registry);
+            for cpos in chunk_objs_to_add.into_iter() {
+                // give a chance to release the lock to a writer on each iteration
+                let voxels = world.voxels.read();
+                let mesh = mesh_from_chunk(&voxels, cpos, &registry);
                 if mesh.is_none() {
                     done_chunks.push(cpos);
                     continue;
@@ -401,8 +396,8 @@ impl VoxelRenderer {
                     cmd = cmd.copy_buffer(ichunk, ifill).unwrap();
 
                     DrawnChunk {
-                        chunk: Arc::downgrade(&chunk_arc),
-                        last_dirty: chunk.dirty,
+                        cpos,
+                        last_dirty: voxels.chunks.get(&cpos).unwrap().dirty,
                         vbuffer,
                         ibuffer,
                     }
@@ -433,6 +428,7 @@ impl VoxelRenderer {
             self.drawn_chunks.clear();
             return;
         }
+        let world = self.world.as_ref().unwrap();
 
         if let Some(work_receiver) = self.work_receiver.get() {
             for (p, dc) in work_receiver.try_iter() {
@@ -442,42 +438,42 @@ impl VoxelRenderer {
 
         let cmd = fctx.replace_cmd();
 
-        let world_some = self.world.as_ref().unwrap();
-        let world = world_some.read().unwrap();
+        let voxels = world.voxels.read();
 
         let mut chunks_to_remove: Vec<ChunkPosition> = Vec::new();
         self.drawn_chunks
             .keys()
-            .filter(|p| !world.loaded_chunks.contains_key(p))
+            .filter(|p| !voxels.chunks.contains_key(p))
             .for_each(|p| chunks_to_remove.push(*p));
         let mut chunks_to_add: Vec<ChunkPosition> = Vec::new();
-        for (cpos, chunk) in world.loaded_chunks.iter() {
-            let cr = chunk.read().unwrap();
-            let has_all_neighbors = cr.neighbor.iter().all(|n| n.upgrade().is_some());
-            if !has_all_neighbors {
-                continue;
+        for (cpos, chunk) in voxels.chunks.iter() {
+            let cpos = *cpos;
+            // check for all neighbors
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        let npos = cpos + vec3(dx, dy, dz);
+                        if !voxels.chunks.contains_key(&npos) {
+                            continue;
+                        }
+                    }
+                }
             }
+
             if !self.drawn_chunks.contains_key(&cpos) {
-                chunks_to_add.push(*cpos);
+                chunks_to_add.push(cpos);
                 continue;
             }
-            if self
-                .drawn_chunks
-                .get(&cpos)
-                .unwrap()
-                .read()
-                .unwrap()
-                .last_dirty
-                != cr.dirty
-            {
-                chunks_to_add.push(*cpos);
+            if self.drawn_chunks.get(&cpos).unwrap().read().last_dirty != chunk.dirty {
+                chunks_to_add.push(cpos);
             }
         }
 
         let ref_pos; // TODO: Add velocity-based position prediction
         {
-            let entities = world.entities.read().unwrap();
-            let lp_loc: &CLocation = entities.get_component(world.local_player()).unwrap();
+            let client = ClientWorld::read(world);
+            let entities = world.entities.read();
+            let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
             ref_pos = lp_loc.position;
         }
         let cposition = ref_pos.map(|c| (c as i32) / 16);
@@ -485,8 +481,8 @@ impl VoxelRenderer {
             let d = cposition - p;
             -(d.x * d.x + d.y * d.y + d.z * d.z)
         };
-        let mut draw_queue = self.draw_queue.lock().unwrap();
-        let progress_set = self.progress_set.lock().unwrap();
+        let mut draw_queue = self.draw_queue.lock();
+        let progress_set = self.progress_set.lock();
         draw_queue.clear();
         for c in chunks_to_add.iter() {
             if !(draw_queue.contains(c) || progress_set.contains(c)) {
@@ -517,12 +513,12 @@ impl VoxelRenderer {
 
     pub fn inpass_draw(&mut self, fctx: &mut InPassFrameContext) {
         let mview = if let Some(world) = &self.world {
-            let world = world.read().unwrap();
-            let entities = world.entities.read().unwrap();
-            let lp_loc: &CLocation = entities.get_component(world.local_player()).unwrap();
+            let client = ClientWorld::read(world);
+            let entities = world.entities.read();
+            let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
             let player_pos = lp_loc.position;
             let player_ang = lp_loc.orientation;
-            match world.camera_settings() {
+            match client.camera_settings {
                 CameraSettings::FPS { .. } => {
                     let mut mview = Matrix4::from_translation(-{
                         let mut p = player_pos;
@@ -570,9 +566,9 @@ impl VoxelRenderer {
 
         for (pos, chunkmut) in self.drawn_chunks.iter() {
             let pc = vox::VoxelPC {
-                chunk_offset: pos.map(|x| (x as f32) * (VOXEL_CHUNK_DIM as f32)).into(),
+                chunk_offset: pos.map(|x| (x as f32) * (CHUNK_DIM as f32)).into(),
             };
-            let chunk = chunkmut.read().unwrap();
+            let chunk = chunkmut.read();
             if chunk.ibuffer.len() > 0 {
                 cmdbufbuild = cmdbufbuild
                     .draw_indexed(

@@ -1,23 +1,19 @@
-use sdl2::event::{Event, WindowEvent};
-
-use crate::client::render::{RenderingContext, VoxelRenderer};
-use crate::world;
-use cgmath::prelude::*;
-use cgmath::{vec3, Matrix3, Quaternion, Rad};
-use sdl2::keyboard::Keycode;
-use std::collections::{HashSet, VecDeque};
-use std::sync::{Arc, RwLock};
-
-use crate::world::stdgen::StdGenerator;
-
 use crate::client::config::Config;
-use crate::client::world::{CameraSettings, ClientWorld, ClientWorldMethods};
+use crate::client::render::{RenderingContext, VoxelRenderer};
+use crate::client::world::{CameraSettings, ClientWorld};
+use crate::world;
 use crate::world::blocks::register_standard_blocks;
 use crate::world::ecs::{CLoadAnchor, CLocation, ECSHandler};
-use crate::world::generation::World;
+use crate::world::generation::WorldLoadGen;
+use cgmath::prelude::*;
+use cgmath::{vec3, Matrix3, Quaternion, Rad};
 use conrod_core::widget_ids;
+use sdl2::event::{Event, WindowEvent};
+use sdl2::keyboard::Keycode;
+use std::collections::{HashSet, VecDeque};
 use std::f32::consts::PI;
 use std::io::{Read, Write};
+use std::sync::Arc;
 
 const PHYSICS_FRAME_TIME: f64 = 1.0 / 60.0;
 
@@ -70,19 +66,17 @@ pub fn client_main() {
     let mut vxreg = world::registry::VoxelRegistry::new();
     register_standard_blocks(&mut vxreg, Some(&vctx));
     let vxreg = Arc::new(vxreg);
-    let wgen = Arc::new(StdGenerator::new(0));
-    let mut world = World::new("world".to_owned(), vxreg.clone(), wgen);
-    ClientWorld::create_and_attach(&mut world);
+    let world = ClientWorld::new_world("world".to_owned(), vxreg.clone());
+    let world = Arc::new(world);
     {
-        let lp = world.local_player();
-        let ents = world.entities.get_mut().unwrap();
-        let anchor: &mut CLoadAnchor = ents.get_component_mut(lp).unwrap();
+        let client = ClientWorld::read(&world);
+        let lp = client.local_player;
+        let mut ents = world.entities.write();
+        let anchor: &mut CLoadAnchor = ents.ecs.get_component_mut(lp).unwrap();
         anchor.radius = cfg.performance_load_distance;
     }
-    let world = Arc::new(RwLock::new(world));
-    World::init_worker_threads(&world);
-
     vctx.set_world(world.clone(), &rctx);
+    let mut wgen = WorldLoadGen::new(world.clone(), 0);
 
     let pf_mult = 1.0 / sdl_timer.performance_frequency() as f64;
     let mut previous_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
@@ -90,12 +84,12 @@ pub fn client_main() {
     //
 
     let mut input_state = InputState::default();
-    input_state.capture_mouse = true;
+    input_state.capture_mouse = false;
     let mut pressed_keys: HashSet<Keycode> = HashSet::new();
 
     let ids = Ids::new(rctx.gui.widget_id_generator());
 
-    sdl_ctx.mouse().set_relative_mouse_mode(true);
+    sdl_ctx.mouse().set_relative_mouse_mode(input_state.capture_mouse);
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     'running: loop {
         let current_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
@@ -122,12 +116,11 @@ pub fn client_main() {
                 physics_frames
             };
 
-            let mut world = World::request_write(&world);
-            let local_player = world.local_player();
+            let mut client = ClientWorld::write(&world);
+            let local_player = client.local_player;
 
             let (dyaw, dpitch) = input_state.look;
-            let CameraSettings::FPS { pitch, yaw } =
-                &mut world.client_world.as_mut().unwrap().camera_settings;
+            let CameraSettings::FPS { pitch, yaw } = &mut client.camera_settings;
             *pitch += dpitch / 60.0;
             *pitch = f32::min(f32::max(*pitch, -PI / 2.0), PI / 2.0);
             *yaw += dyaw / 60.0;
@@ -136,8 +129,8 @@ pub fn client_main() {
 
             for _pfrm in 0..physics_frames {
                 // do physics tick
-                let entities = world.entities.get_mut().unwrap();
-                let lp_loc: &mut CLocation = entities.get_component_mut(local_player).unwrap();
+                let mut entities = world.entities.write();
+                let lp_loc: &mut CLocation = entities.ecs.get_component_mut(local_player).unwrap();
                 // position
                 let qyaw = Quaternion::from_angle_y(Rad(yaw));
                 let qpitch = Quaternion::from_angle_x(Rad(pitch));
@@ -150,10 +143,11 @@ pub fn client_main() {
                 let wvel = vec3(input_state.walk.0, 0.0, input_state.walk.1) * 1.0;
                 lp_loc.position -= mview * wvel;
                 lp_loc.velocity = -(PHYSICS_FRAME_TIME as f32) * wvel;
+                drop(entities);
                 //
                 world.physics_tick();
             }
-            world.load_tick();
+            wgen.load_tick();
         }
 
         if let Some(mut fc) = rctx.frame_begin_prepass(frame_delta_time) {
@@ -277,10 +271,11 @@ pub fn client_main() {
         let loaded_cnum;
         let drawn_cnum = vctx.drawn_chunks_number();
         {
-            let world = world.read().unwrap();
-            loaded_cnum = world.loaded_chunks.len();
-            let entities = world.entities.read().unwrap();
-            let lp_loc: &CLocation = entities.get_component(world.local_player()).unwrap();
+            let voxels = world.voxels.read();
+            loaded_cnum = voxels.chunks.len();
+            let client = ClientWorld::read(&world);
+            let entities = world.entities.read();
+            let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
             player_pos = lp_loc.position;
             player_ang = lp_loc.orientation;
         }
