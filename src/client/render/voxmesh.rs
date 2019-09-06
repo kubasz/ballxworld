@@ -1,7 +1,9 @@
 use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
 use crate::world::registry::VoxelRegistry;
-use crate::world::{ChunkPosition, WVoxels, CHUNK_DIM, CHUNK_DIM2, blockidx_from_blockpos, chunkpos_from_blockpos, UncompressedChunk};
-use cgmath::{vec3, Vector3, ElementWise};
+use crate::world::{
+    blockidx_from_blockpos, ChunkPosition, UncompressedChunk, WVoxels, CHUNK_DIM, CHUNK_DIM2,
+};
+use cgmath::{vec3, Vector3};
 use smallvec::SmallVec;
 use std::sync::Arc;
 
@@ -25,15 +27,15 @@ pub fn mesh_from_chunk(
     for y in -1..=1 {
         for z in -1..=1 {
             for x in -1..=1 {
-                chunks.push(voxels.get_uncompressed_chunk(cpos + vec3(x,y,z))?);
+                chunks.push(voxels.get_uncompressed_chunk(cpos + vec3(x, y, z))?);
             }
         }
     }
     let chunk = &chunks[13];
     // pos relative to Chunk@cpos
     let get_block = |pos: Vector3<i32>| {
-        let cp = pos.map(|c| (c+32)/32);
-        let ch: &UncompressedChunk = &chunks[(cp.x + cp.z*3 + cp.y*9) as usize];
+        let cp = pos.map(|c| (c + 32) / 32);
+        let ch: &UncompressedChunk = &chunks[(cp.x + cp.z * 3 + cp.y * 9) as usize];
         ch.blocks_yzx[blockidx_from_blockpos(pos)]
     };
 
@@ -160,9 +162,7 @@ pub fn mesh_from_chunk(
                 let (ao_s1, ao_s2, ao_c): (bool, bool, bool);
                 {
                     let p_c = ipos + corner;
-                    ao_c = registry
-                        .get_definition_from_id(get_block(p_c))
-                        .has_mesh;
+                    ao_c = registry.get_definition_from_id(get_block(p_c)).has_mesh;
                     let (p_s1, p_s2);
                     if side.ioffset.x != 0 {
                         // y,z sides
@@ -177,12 +177,8 @@ pub fn mesh_from_chunk(
                         p_s1 = ipos + vec3(corner.x, 0, corner.z);
                         p_s2 = ipos + vec3(0, corner.y, corner.z);
                     }
-                    ao_s1 = registry
-                        .get_definition_from_id(get_block(p_s1))
-                        .has_mesh;
-                    ao_s2 = registry
-                        .get_definition_from_id(get_block(p_s2))
-                        .has_mesh;
+                    ao_s1 = registry.get_definition_from_id(get_block(p_s1)).has_mesh;
+                    ao_s2 = registry.get_definition_from_id(get_block(p_s2)).has_mesh;
                 }
                 let ao = if ao_s1 && ao_s2 {
                     3

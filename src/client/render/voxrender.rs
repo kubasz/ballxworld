@@ -4,7 +4,7 @@ use crate::client::render::vulkan::Queues;
 use crate::client::render::*;
 use crate::client::world::{CameraSettings, ClientWorld};
 use crate::world::ecs::{CLocation, ECSHandler};
-use crate::world::{World, chunkpos_from_blockpos};
+use crate::world::{chunkpos_from_blockpos, World};
 use crate::world::{ChunkPosition, CHUNK_DIM};
 use cgmath::prelude::*;
 use cgmath::{vec3, Matrix4, PerspectiveFov, Rad, Vector3};

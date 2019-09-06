@@ -5,13 +5,13 @@ use cgmath::prelude::*;
 use cgmath::{vec3, Vector3};
 use parking_lot::Mutex;
 use rayon::prelude::*;
+use smallvec::SmallVec;
 use std::collections::HashSet;
+use std::iter::FromIterator;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
-use std::iter::FromIterator;
 use thread_local::CachedThreadLocal;
-use smallvec::SmallVec;
 
 struct ChunkMsg {
     chunk: VChunk,
@@ -180,11 +180,12 @@ impl WorldLoadGen {
         load_queue.par_sort_by_key(|p| -p.0);
 
         let to_remove: SmallVec<[ChunkPosition; 10]> = SmallVec::from_iter(
-        voxels
-            .chunks
-            .keys()
-            .filter(|p| !req_positions.iter().any(|u| u.1 == **p))
-            .copied());
+            voxels
+                .chunks
+                .keys()
+                .filter(|p| !req_positions.iter().any(|u| u.1 == **p))
+                .copied(),
+        );
         for cp in to_remove {
             voxels.chunks.remove(&cp);
         }

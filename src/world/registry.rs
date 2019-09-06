@@ -66,7 +66,7 @@ impl<'a> VoxelDefinitionBuilder<'a> {
         });
         let idx = def.id as usize;
         if self.registry.definitions.len() <= idx {
-            self.registry.definitions.resize(idx*2+1, None);
+            self.registry.definitions.resize(idx * 2 + 1, None);
         } else if self.registry.definitions[idx].is_some() {
             return Err(());
         }

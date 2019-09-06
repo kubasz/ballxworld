@@ -89,7 +89,9 @@ pub fn client_main() {
 
     let ids = Ids::new(rctx.gui.widget_id_generator());
 
-    sdl_ctx.mouse().set_relative_mouse_mode(input_state.capture_mouse);
+    sdl_ctx
+        .mouse()
+        .set_relative_mouse_mode(input_state.capture_mouse);
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     'running: loop {
         let current_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;

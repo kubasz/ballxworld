@@ -8,6 +8,7 @@ pub mod stdgen;
 use crate::world::ecs::ECS;
 use cgmath::prelude::*;
 use cgmath::{vec3, Vector3};
+use divrem::{DivFloor, RemFloor};
 use lru::LruCache;
 use parking_lot::RwLock;
 pub use registry::VoxelRegistry;
@@ -15,7 +16,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use thread_local::ThreadLocal;
-use divrem::{DivFloor, RemFloor};
 
 pub const CHUNK_DIM: usize = 32;
 pub const CHUNK_DIM2: usize = CHUNK_DIM * CHUNK_DIM;
@@ -84,12 +84,12 @@ pub type BlockPosition = Vector3<i32>;
 
 pub fn chunkpos_from_blockpos(bpos: BlockPosition) -> ChunkPosition {
     let cd = CHUNK_DIM as i32;
-    bpos.map(|p|  p.div_floor(cd))
+    bpos.map(|p| p.div_floor(cd))
 }
 
 pub fn blockidx_from_blockpos(bpos: BlockPosition) -> usize {
     let cd = CHUNK_DIM as i32;
-    let innerpos = bpos.map(|p| p.rem_floor(cd) as usize );
+    let innerpos = bpos.map(|p| p.rem_floor(cd) as usize);
     innerpos.x + CHUNK_DIM * innerpos.z + CHUNK_DIM2 * innerpos.y
 }
 
@@ -432,7 +432,9 @@ impl WVoxels {
         self.ensure_newest_cached(cpos)?;
         let cache = self.cache.get_default();
         let mut mcache = cache.borrow_mut();
-        Some(mcache.uncompressed_chunks.get(&cpos)?.clone().blocks_yzx[blockidx_from_blockpos(bpos)])
+        Some(
+            mcache.uncompressed_chunks.get(&cpos)?.clone().blocks_yzx[blockidx_from_blockpos(bpos)],
+        )
     }
 }
 
