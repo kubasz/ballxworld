@@ -1,7 +1,9 @@
 use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
 use crate::world::registry::VoxelRegistry;
-use crate::world::{ChunkPosition, WVoxels, CHUNK_DIM, CHUNK_DIM2, blockidx_from_blockpos, chunkpos_from_blockpos};
+use crate::world::{ChunkPosition, WVoxels, CHUNK_DIM, CHUNK_DIM2, blockidx_from_blockpos, chunkpos_from_blockpos, UncompressedChunk};
 use cgmath::{vec3, Vector3, ElementWise};
+use smallvec::SmallVec;
+use std::sync::Arc;
 
 struct CubeSide {
     // counter-clockwise coords of the face
@@ -19,7 +21,21 @@ pub fn mesh_from_chunk(
     cpos: ChunkPosition,
     registry: &VoxelRegistry,
 ) -> Option<ChunkBuffers> {
-    let chunk = voxels.get_uncompressed_chunk(cpos)?;
+    let mut chunks: SmallVec<[Arc<UncompressedChunk>; 32]> = SmallVec::new();
+    for y in -1..=1 {
+        for z in -1..=1 {
+            for x in -1..=1 {
+                chunks.push(voxels.get_uncompressed_chunk(cpos + vec3(x,y,z))?);
+            }
+        }
+    }
+    let chunk = &chunks[13];
+    // pos relative to Chunk@cpos
+    let get_block = |pos: Vector3<i32>| {
+        let cp = pos.map(|c| (c+32)/32);
+        let ch: &UncompressedChunk = &chunks[(cp.x + cp.z*3 + cp.y*9) as usize];
+        ch.blocks_yzx[blockidx_from_blockpos(pos)]
+    };
 
     let mut vbuf: Vec<VoxelVertex> = Vec::new();
     let mut ibuf: Vec<u32> = Vec::new();
@@ -111,8 +127,6 @@ pub fn mesh_from_chunk(
         },
     ];
 
-    let cgpos = cpos.mul_element_wise(CHUNK_DIM as i32);
-
     for side in &SIDES {
         for (vidx, vox) in chunk.blocks_yzx.iter().enumerate() {
             let vox = *vox;
@@ -127,14 +141,13 @@ pub fn mesh_from_chunk(
                 ((vidx / CHUNK_DIM2) % CHUNK_DIM) as i32,
                 ((vidx / CHUNK_DIM) % CHUNK_DIM) as i32,
             );
-            let gpos = ipos + cgpos;
             let x = ipos.x as f32;
             let y = ipos.y as f32;
             let z = ipos.z as f32;
 
             // hidden face removal
-            let touchpos = gpos + side.ioffset;
-            let tid = voxels.get_block(touchpos)?;
+            let touchpos = ipos + side.ioffset;
+            let tid = get_block(touchpos);
             let tdef = registry.get_definition_from_id(tid);
             if tdef.has_mesh {
                 continue;
@@ -146,29 +159,29 @@ pub fn mesh_from_chunk(
                 // AO calculation
                 let (ao_s1, ao_s2, ao_c): (bool, bool, bool);
                 {
-                    let p_c = gpos + corner;
+                    let p_c = ipos + corner;
                     ao_c = registry
-                        .get_definition_from_id(voxels.get_block(p_c)?)
+                        .get_definition_from_id(get_block(p_c))
                         .has_mesh;
                     let (p_s1, p_s2);
                     if side.ioffset.x != 0 {
                         // y,z sides
-                        p_s1 = gpos + vec3(corner.x, corner.y, 0);
-                        p_s2 = gpos + vec3(corner.x, 0, corner.z);
+                        p_s1 = ipos + vec3(corner.x, corner.y, 0);
+                        p_s2 = ipos + vec3(corner.x, 0, corner.z);
                     } else if side.ioffset.y != 0 {
                         // x,z sides
-                        p_s1 = gpos + vec3(0, corner.y, corner.z);
-                        p_s2 = gpos + vec3(corner.x, corner.y, 0);
+                        p_s1 = ipos + vec3(0, corner.y, corner.z);
+                        p_s2 = ipos + vec3(corner.x, corner.y, 0);
                     } else {
                         // x,y sides
-                        p_s1 = gpos + vec3(corner.x, 0, corner.z);
-                        p_s2 = gpos + vec3(0, corner.y, corner.z);
+                        p_s1 = ipos + vec3(corner.x, 0, corner.z);
+                        p_s2 = ipos + vec3(0, corner.y, corner.z);
                     }
                     ao_s1 = registry
-                        .get_definition_from_id(voxels.get_block(p_s1)?)
+                        .get_definition_from_id(get_block(p_s1))
                         .has_mesh;
                     ao_s2 = registry
-                        .get_definition_from_id(voxels.get_block(p_s2)?)
+                        .get_definition_from_id(get_block(p_s2))
                         .has_mesh;
                 }
                 let ao = if ao_s1 && ao_s2 {

@@ -16,7 +16,7 @@ pub struct VoxelDefinitionBuilder<'a> {
 
 #[derive(Default)]
 pub struct VoxelRegistry {
-    definitions: HashMap<VoxelId, Arc<VoxelDefinition>>,
+    definitions: Vec<Option<Arc<VoxelDefinition>>>,
     name_lut: HashMap<String, Arc<VoxelDefinition>>,
     last_free_id: VoxelId,
 }
@@ -64,10 +64,13 @@ impl<'a> VoxelDefinitionBuilder<'a> {
             debug_color: self.debug_color,
             texture_mapping: self.texture_mapping,
         });
-        if self.registry.definitions.contains_key(&def.id) {
+        let idx = def.id as usize;
+        if self.registry.definitions.len() <= idx {
+            self.registry.definitions.resize(idx*2+1, None);
+        } else if self.registry.definitions[idx].is_some() {
             return Err(());
         }
-        self.registry.definitions.insert(def.id, def.clone());
+        self.registry.definitions[idx] = Some(def.clone());
         self.registry.name_lut.insert(def.name.clone(), def.clone());
         Ok(())
     }
@@ -107,7 +110,7 @@ impl VoxelRegistry {
     }
 
     pub fn get_definition_from_id(&self, datum: VoxelDatum) -> &VoxelDefinition {
-        &self.definitions[&datum.id]
+        self.definitions[datum.id as usize].as_ref().unwrap()
     }
 
     pub fn get_definition_from_name(&self, name: &str) -> Option<&VoxelDefinition> {

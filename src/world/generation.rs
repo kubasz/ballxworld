@@ -9,7 +9,9 @@ use std::collections::HashSet;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
+use std::iter::FromIterator;
 use thread_local::CachedThreadLocal;
+use smallvec::SmallVec;
 
 struct ChunkMsg {
     chunk: VChunk,
@@ -168,31 +170,23 @@ impl WorldLoadGen {
         let progress_set = self.progress_set.lock();
         load_queue.clear();
 
-        let mut pos_to_load: Vec<(i32, ChunkPosition)> = Vec::new();
         req_positions
             .iter()
             .filter(|p| !(voxels.chunks.contains_key(&p.1) || progress_set.contains(&p.1)))
-            .for_each(|p| {
-                pos_to_load.push(*p);
-            });
+            .copied()
+            .for_each(|p| load_queue.push(p));
 
-        let mut pos_to_unload: HashSet<ChunkPosition> = HashSet::new();
+        // load nearest chunks first
+        load_queue.par_sort_by_key(|p| -p.0);
+
+        let to_remove: SmallVec<[ChunkPosition; 10]> = SmallVec::from_iter(
         voxels
             .chunks
             .keys()
             .filter(|p| !req_positions.iter().any(|u| u.1 == **p))
-            .for_each(|p| {
-                pos_to_unload.insert(*p);
-            });
-
-        for p in pos_to_load.into_iter() {
-            load_queue.push(p);
-        }
-        // load nearest chunks first
-        load_queue.par_sort_by_key(|p| -p.0);
-
-        for p in pos_to_unload.into_iter() {
-            voxels.chunks.remove(&p);
+            .copied());
+        for cp in to_remove {
+            voxels.chunks.remove(&cp);
         }
 
         let has_loads = !load_queue.is_empty();

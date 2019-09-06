@@ -4,7 +4,7 @@ use crate::client::render::vulkan::Queues;
 use crate::client::render::*;
 use crate::client::world::{CameraSettings, ClientWorld};
 use crate::world::ecs::{CLocation, ECSHandler};
-use crate::world::World;
+use crate::world::{World, chunkpos_from_blockpos};
 use crate::world::{ChunkPosition, CHUNK_DIM};
 use cgmath::prelude::*;
 use cgmath::{vec3, Matrix4, PerspectiveFov, Rad, Vector3};
@@ -352,6 +352,7 @@ impl VoxelRenderer {
                 for cpos in chunks_to_add.into_iter() {
                     let chunk_opt = voxels.chunks.get(&cpos);
                     if chunk_opt.is_none() {
+                        done_chunks.push(cpos);
                         continue;
                     }
                     chunk_objs_to_add.push(cpos);
@@ -423,6 +424,10 @@ impl VoxelRenderer {
         self.drawn_chunks.len()
     }
 
+    pub fn progress_set_len(&self) -> usize {
+        self.progress_set.lock().len()
+    }
+
     pub fn prepass_draw(&mut self, fctx: &mut PrePassFrameContext) {
         if self.world.is_none() {
             self.drawn_chunks.clear();
@@ -476,7 +481,7 @@ impl VoxelRenderer {
             let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
             ref_pos = lp_loc.position;
         }
-        let cposition = ref_pos.map(|c| (c as i32) / 16);
+        let cposition = chunkpos_from_blockpos(ref_pos.map(|x| x as i32));
         let dist_key = |p: &Vector3<i32>| {
             let d = cposition - p;
             -(d.x * d.x + d.y * d.y + d.z * d.z)
@@ -485,7 +490,7 @@ impl VoxelRenderer {
         let progress_set = self.progress_set.lock();
         draw_queue.clear();
         for c in chunks_to_add.iter() {
-            if !(draw_queue.contains(c) || progress_set.contains(c)) {
+            if !progress_set.contains(c) {
                 draw_queue.push(*c);
             }
         }
