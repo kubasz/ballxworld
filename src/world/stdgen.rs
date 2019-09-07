@@ -11,7 +11,7 @@ use std::mem::MaybeUninit;
 use thread_local::ThreadLocal;
 
 const GLOBAL_SCALE_MOD: f64 = 10.0;
-const GLOBAL_BIOME_SCALE: f64 = 1000.0;
+const GLOBAL_BIOME_SCALE: f64 = 256.0;
 const SUPERGRID_SIZE: i32 = 4 * CHUNK_DIM as i32;
 type InCellRng = Xoshiro256StarStar;
 type CellPointsT = [CellPoint; 4];
@@ -146,6 +146,7 @@ impl CellGen {
 
     fn find_nearest_cell_points(&mut self, pos: Vector2<i32>, num: usize) -> Vec<(i32, CellPoint)> {
         let cell = pos / SUPERGRID_SIZE;
+
         let mut pts = Vec::with_capacity(6);
         for cdx in -1..=1 {
             for cdy in -1..=1 {
@@ -200,7 +201,7 @@ impl CellGen {
 
         (h01 + (h01 / 0.75) * 0.15 * self.h_n(2, p * 5.0)
             + (h01 / 0.75) * 0.05 * self.h_rn(3, p * 9.0))
-            * 1000.0
+            * 750.0
             + 40.0
     }
 

@@ -2,6 +2,7 @@ pub mod blocks;
 pub mod ecs;
 pub mod entities;
 pub mod generation;
+pub mod raycast;
 pub mod registry;
 pub mod stdgen;
 
