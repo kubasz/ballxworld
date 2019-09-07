@@ -1,4 +1,8 @@
+extern crate nalgebra as na;
+extern crate nalgebra_glm as glm;
+
 pub mod client;
+pub mod math;
 pub mod world;
 
 use jemallocator;

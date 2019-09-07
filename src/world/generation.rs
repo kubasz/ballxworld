@@ -1,8 +1,7 @@
+use crate::math::*;
 use crate::world::ecs::{CLoadAnchor, CLocation, Component, ECSHandler};
 use crate::world::stdgen::StdGenerator;
-use crate::world::{ChunkPosition, UncompressedChunk, VChunk, World, CHUNK_DIM};
-use cgmath::prelude::*;
-use cgmath::{vec3, Vector3};
+use crate::world::{chunkpos_from_blockpos, ChunkPosition, UncompressedChunk, VChunk, World};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use smallvec::SmallVec;
@@ -140,10 +139,7 @@ impl WorldLoadGen {
             }
             let loc = loc.unwrap();
             let r = anchor.radius as i32;
-            let pos: Vector3<i32> = loc
-                .position
-                .div_element_wise(CHUNK_DIM as f32)
-                .map(|c| c as i32);
+            let pos: Vector3<i32> = chunkpos_from_blockpos(loc.position.map(|c| c as i32));
             for xoff in 0..r {
                 for yoff in 0..r {
                     for zoff in 0..r {

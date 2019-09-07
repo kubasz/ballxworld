@@ -1,9 +1,9 @@
 use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
+use crate::math::*;
 use crate::world::registry::VoxelRegistry;
 use crate::world::{
     blockidx_from_blockpos, ChunkPosition, UncompressedChunk, WVoxels, CHUNK_DIM, CHUNK_DIM2,
 };
-use cgmath::{vec3, Vector3};
 use smallvec::SmallVec;
 use std::sync::Arc;
 
@@ -11,9 +11,9 @@ struct CubeSide {
     // counter-clockwise coords of the face
     pub verts: [f32; 3 * 4],
     // corners of the side, matching up with `verts` above
-    pub corners: [Vector3<i32>; 4],
+    pub corners: [[i32; 3]; 4],
     // what to add to position to find neighbor
-    pub ioffset: Vector3<i32>,
+    pub ioffset: [i32; 3],
     // texture coordinates (u,v) matched with vertex coordinates
     pub texcs: [f32; 2 * 4],
 }
@@ -48,13 +48,8 @@ pub fn mesh_from_chunk(
             verts: [
                 0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5,
             ],
-            corners: [
-                vec3(1, -1, -1),
-                vec3(1, 1, -1),
-                vec3(1, 1, 1),
-                vec3(1, -1, 1),
-            ],
-            ioffset: vec3(1, 0, 0),
+            corners: [[1, -1, -1], [1, 1, -1], [1, 1, 1], [1, -1, 1]],
+            ioffset: [1, 0, 0],
             texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
         },
         // x- -> "left"
@@ -62,13 +57,8 @@ pub fn mesh_from_chunk(
             verts: [
                 -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5, -0.5, -0.5,
             ],
-            corners: [
-                vec3(-1, -1, 1),
-                vec3(-1, 1, 1),
-                vec3(-1, 1, -1),
-                vec3(-1, -1, -1),
-            ],
-            ioffset: vec3(-1, 0, 0),
+            corners: [[-1, -1, 1], [-1, 1, 1], [-1, 1, -1], [-1, -1, -1]],
+            ioffset: [-1, 0, 0],
             texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
         },
         // y+ -> "bottom"
@@ -76,13 +66,8 @@ pub fn mesh_from_chunk(
             verts: [
                 -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5,
             ],
-            corners: [
-                vec3(-1, 1, -1),
-                vec3(-1, 1, 1),
-                vec3(1, 1, 1),
-                vec3(1, 1, -1),
-            ],
-            ioffset: vec3(0, 1, 0),
+            corners: [[-1, 1, -1], [-1, 1, 1], [1, 1, 1], [1, 1, -1]],
+            ioffset: [0, 1, 0],
             texcs: [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0],
         },
         // y- -> "top"
@@ -90,13 +75,8 @@ pub fn mesh_from_chunk(
             verts: [
                 0.5, -0.5, -0.5, 0.5, -0.5, 0.5, -0.5, -0.5, 0.5, -0.5, -0.5, -0.5,
             ],
-            corners: [
-                vec3(1, -1, 0),
-                vec3(1, -1, 1),
-                vec3(-1, -1, 1),
-                vec3(-1, -1, -1),
-            ],
-            ioffset: vec3(0, -1, 0),
+            corners: [[1, -1, 0], [1, -1, 1], [-1, -1, 1], [-1, -1, -1]],
+            ioffset: [0, -1, 0],
             texcs: [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0],
         },
         // z+ -> "back"
@@ -104,13 +84,8 @@ pub fn mesh_from_chunk(
             verts: [
                 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5,
             ],
-            corners: [
-                vec3(1, -1, 1),
-                vec3(1, 1, 1),
-                vec3(-1, 1, 1),
-                vec3(-1, -1, 1),
-            ],
-            ioffset: vec3(0, 0, 1),
+            corners: [[1, -1, 1], [1, 1, 1], [-1, 1, 1], [-1, -1, 1]],
+            ioffset: [0, 0, 1],
             texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
         },
         // z- -> "front"
@@ -118,18 +93,14 @@ pub fn mesh_from_chunk(
             verts: [
                 -0.5, -0.5, -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5,
             ],
-            corners: [
-                vec3(-1, -1, -1),
-                vec3(-1, 1, -1),
-                vec3(1, 1, -1),
-                vec3(1, -1, -1),
-            ],
-            ioffset: vec3(0, 0, -1),
+            corners: [[-1, -1, -1], [-1, 1, -1], [1, 1, -1], [1, -1, -1]],
+            ioffset: [0, 0, -1],
             texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
         },
     ];
 
     for side in &SIDES {
+        let ioffset = Vector3::from_row_slice(&side.ioffset);
         for (vidx, vox) in chunk.blocks_yzx.iter().enumerate() {
             let vox = *vox;
             let vdef = registry.get_definition_from_id(vox);
@@ -148,7 +119,7 @@ pub fn mesh_from_chunk(
             let z = ipos.z as f32;
 
             // hidden face removal
-            let touchpos = ipos + side.ioffset;
+            let touchpos = ipos + ioffset;
             let tid = get_block(touchpos);
             let tdef = registry.get_definition_from_id(tid);
             if tdef.has_mesh {
@@ -158,17 +129,18 @@ pub fn mesh_from_chunk(
             let voff = vbuf.len() as u32;
             let mut corner_ao = [0i32; 4];
             for (t, corner) in side.corners.iter().enumerate() {
+                let corner = Vector3::from_row_slice(corner);
                 // AO calculation
                 let (ao_s1, ao_s2, ao_c): (bool, bool, bool);
                 {
                     let p_c = ipos + corner;
                     ao_c = registry.get_definition_from_id(get_block(p_c)).has_mesh;
                     let (p_s1, p_s2);
-                    if side.ioffset.x != 0 {
+                    if ioffset.x != 0 {
                         // y,z sides
                         p_s1 = ipos + vec3(corner.x, corner.y, 0);
                         p_s2 = ipos + vec3(corner.x, 0, corner.z);
-                    } else if side.ioffset.y != 0 {
+                    } else if ioffset.y != 0 {
                         // x,z sides
                         p_s1 = ipos + vec3(0, corner.y, corner.z);
                         p_s2 = ipos + vec3(corner.x, corner.y, 0);
@@ -210,9 +182,9 @@ pub fn mesh_from_chunk(
                         side: tside,
                         bottom,
                     } => {
-                        if side.ioffset.y == 1 {
+                        if ioffset.y == 1 {
                             texid = *top;
-                        } else if side.ioffset.y == -1 {
+                        } else if ioffset.y == -1 {
                             texid = *bottom;
                         } else {
                             texid = *tside;

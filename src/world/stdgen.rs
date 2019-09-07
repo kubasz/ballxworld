@@ -1,7 +1,6 @@
+use crate::math::*;
 use crate::world::registry::VoxelRegistry;
 use crate::world::{UncompressedChunk, CHUNK_DIM};
-use cgmath::prelude::*;
-use cgmath::{vec2, Vector2};
 use lru::LruCache;
 use noise::{NoiseFn, Seedable, SuperSimplex};
 use rand::prelude::*;
@@ -17,7 +16,7 @@ type InCellRng = Xoshiro256StarStar;
 type CellPointsT = [CellPoint; 4];
 
 fn distance2(a: Vector2<i32>, b: Vector2<i32>) -> i32 {
-    (a - b).map(|x| x * x).sum()
+    (a - b).iter().map(|c| c * c).sum()
 }
 
 #[derive(Clone, Copy, Debug)]

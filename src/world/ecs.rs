@@ -1,5 +1,4 @@
-use cgmath::prelude::*;
-use cgmath::{vec3, Quaternion, Vector3};
+use crate::math::*;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
@@ -84,7 +83,7 @@ impl CLocation {
             id,
             position: vec3(0.0, 0.0, 0.0),
             velocity: vec3(0.0, 0.0, 0.0),
-            orientation: Quaternion::one(),
+            orientation: one(),
             bounding_shape: BoundingShape::Point,
             bounding_offset: vec3(0.0, 0.0, 0.0),
         }

@@ -1,12 +1,11 @@
 use crate::client::config::Config;
 use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::client::world::{CameraSettings, ClientWorld};
+use crate::math::*;
 use crate::world;
 use crate::world::blocks::register_standard_blocks;
 use crate::world::ecs::{CLoadAnchor, CLocation, ECSHandler};
 use crate::world::generation::WorldLoadGen;
-use cgmath::prelude::*;
-use cgmath::{vec3, Matrix3, Quaternion, Rad};
 use conrod_core::widget_ids;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
@@ -134,15 +133,15 @@ pub fn client_main() {
                 let mut entities = world.entities.write();
                 let lp_loc: &mut CLocation = entities.ecs.get_component_mut(local_player).unwrap();
                 // position
-                let qyaw = Quaternion::from_angle_y(Rad(yaw));
-                let qpitch = Quaternion::from_angle_x(Rad(pitch));
+                let qyaw = Quaternion::from_polar_decomposition(1.0, yaw, Vector3::y_axis());
+                let qpitch = Quaternion::from_polar_decomposition(1.0, pitch, Vector3::x_axis());
                 lp_loc.orientation = (qpitch * qyaw).normalize();
 
-                let mut mview = Matrix3::from(lp_loc.orientation);
-                mview.replace_col(1, -mview.y);
+                let mut mview = glm::quat_to_mat3(&lp_loc.orientation);
+                mview.set_column(1, &-mview.column(1));
                 mview = mview.transpose();
 
-                let wvel = vec3(input_state.walk.0, 0.0, input_state.walk.1) * 1.0;
+                let wvel = Vector3::new(input_state.walk.0, 0.0, input_state.walk.1) * 1.0;
                 lp_loc.position -= mview * wvel;
                 lp_loc.velocity = -(PHYSICS_FRAME_TIME as f32) * wvel;
                 drop(entities);

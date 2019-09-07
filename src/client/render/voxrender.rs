@@ -3,11 +3,10 @@ use crate::client::render::voxmesh::mesh_from_chunk;
 use crate::client::render::vulkan::Queues;
 use crate::client::render::*;
 use crate::client::world::{CameraSettings, ClientWorld};
+use crate::math::*;
 use crate::world::ecs::{CLocation, ECSHandler};
 use crate::world::{chunkpos_from_blockpos, World};
 use crate::world::{ChunkPosition, CHUNK_DIM};
-use cgmath::prelude::*;
-use cgmath::{vec3, Matrix4, PerspectiveFov, Rad, Vector3};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
@@ -525,13 +524,13 @@ impl VoxelRenderer {
             let player_ang = lp_loc.orientation;
             match client.camera_settings {
                 CameraSettings::FPS { .. } => {
-                    let mut mview = Matrix4::from_translation(-{
+                    let mut mview: Matrix4<f32> = glm::translation(&-{
                         let mut p = player_pos;
                         p.y = -p.y;
                         p
                     });
-                    mview = Matrix4::from(player_ang) * mview;
-                    mview.replace_col(1, -mview.y);
+                    mview = glm::quat_to_mat4(&player_ang) * mview;
+                    mview.set_column(1, &-mview.column(1));
                     mview
                 }
             }
@@ -545,18 +544,18 @@ impl VoxelRenderer {
 
         let ubo = {
             let mut ubo = vox::VoxelUBO::default();
-            let mmdl: Matrix4<f32> = One::one();
+            let mmdl: Matrix4<f32> = glm::identity();
             ubo.model = mmdl.into();
             ubo.view = mview.into();
             let swdim = fctx.dims;
             let sfdim = [swdim[0] as f32, swdim[1] as f32];
-            mproj = PerspectiveFov {
-                fovy: Rad(75.0 * std::f32::consts::PI / 180.0),
-                aspect: sfdim[0] / sfdim[1],
-                near: 0.1,
-                far: 1000.0,
-            }
-            .into();
+            mproj = glm::perspective_fov_rh_zo(
+                75.0 * std::f32::consts::PI / 180.0,
+                sfdim[0],
+                sfdim[1],
+                0.1,
+                1000.0,
+            );
             ubo.proj = mproj.into();
             self.ubuffers.next(ubo).unwrap()
         };

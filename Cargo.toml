@@ -14,21 +14,22 @@ toml_edit = "0.1"
 image = "0.22"
 noise = "0.5"
 thread_local = "0.3"
-rand_xoshiro = "0.3"
+rand_xoshiro = "0.4"
 lru = "0.1"
 smallvec = "0.6"
 jemallocator = "0.3"
 rayon = "1.1"
 parking_lot = "0.9"
 divrem = "0.1"
+nalgebra-glm = "0.4"
+num-traits = "0.2"
 
 [dependencies.sdl2]
 version = "0.32"
 features = ["image", "mixer"]
 
-[dependencies.cgmath]
-version = "0.17"
-features = ["swizzle"]
+[dependencies.nalgebra]
+version = "0.18"
 
 [profile.dev]
 opt-level = 3

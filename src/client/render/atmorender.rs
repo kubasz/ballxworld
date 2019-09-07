@@ -1,6 +1,6 @@
 use crate::client::config::Config;
 use crate::client::render::{InPassFrameContext, RenderingContext};
-use cgmath::Matrix4;
+use crate::math::*;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuBufferPool};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
