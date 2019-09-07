@@ -85,7 +85,7 @@ pub type BlockPosition = Vector3<i32>;
 
 pub fn chunkpos_from_blockpos(bpos: BlockPosition) -> ChunkPosition {
     let cd = CHUNK_DIM as i32;
-    bpos.map(|p| p.div_floor(cd))
+    bpos.map(|p| p.div_floor(&cd))
 }
 
 pub fn blockidx_from_blockpos(bpos: BlockPosition) -> usize {
@@ -436,6 +436,52 @@ impl WVoxels {
         Some(
             mcache.uncompressed_chunks.get(&cpos)?.clone().blocks_yzx[blockidx_from_blockpos(bpos)],
         )
+    }
+
+    pub fn dirtify(&mut self, bpos: BlockPosition) {
+        let cpos = chunkpos_from_blockpos(bpos);
+        let ipos = bpos - (CHUNK_DIM as i32) * cpos;
+        let maxdim = CHUNK_DIM as i32 - 1;
+        self.chunks
+            .get_mut(&cpos)
+            .into_iter()
+            .for_each(|c| c.dirty += 1);
+        if ipos.x == 0 {
+            self.chunks
+                .get_mut(&(cpos + vec3(-1, 0, 0)))
+                .into_iter()
+                .for_each(|c| c.dirty += 1);
+        }
+        if ipos.x == maxdim {
+            self.chunks
+                .get_mut(&(cpos + vec3(1, 0, 0)))
+                .into_iter()
+                .for_each(|c| c.dirty += 1);
+        }
+        if ipos.y == 0 {
+            self.chunks
+                .get_mut(&(cpos + vec3(0, -1, 0)))
+                .into_iter()
+                .for_each(|c| c.dirty += 1);
+        }
+        if ipos.y == maxdim {
+            self.chunks
+                .get_mut(&(cpos + vec3(0, 1, 0)))
+                .into_iter()
+                .for_each(|c| c.dirty += 1);
+        }
+        if ipos.z == 0 {
+            self.chunks
+                .get_mut(&(cpos + vec3(0, 0, -1)))
+                .into_iter()
+                .for_each(|c| c.dirty += 1);
+        }
+        if ipos.z == maxdim {
+            self.chunks
+                .get_mut(&(cpos + vec3(0, 0, 1)))
+                .into_iter()
+                .for_each(|c| c.dirty += 1);
+        }
     }
 }
 

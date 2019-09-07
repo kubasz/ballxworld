@@ -58,7 +58,7 @@ impl AtmosphereRenderer {
             ds.depth_compare = Compare::LessOrEqual;
             Arc::new(
                 GraphicsPipeline::start()
-                    .cull_mode_back()
+                    .cull_mode_front()
                     .vertex_shader(vs.main_entry_point(), ())
                     .vertex_input(BufferlessDefinition {})
                     .viewports_dynamic_scissors_irrelevant(1)

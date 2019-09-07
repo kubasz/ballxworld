@@ -5,7 +5,7 @@ use crate::client::render::*;
 use crate::client::world::{CameraSettings, ClientWorld};
 use crate::math::*;
 use crate::world::ecs::{CLocation, ECSHandler};
-use crate::world::{chunkpos_from_blockpos, World};
+use crate::world::{blockidx_from_blockpos, chunkpos_from_blockpos, World};
 use crate::world::{ChunkPosition, CHUNK_DIM};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
@@ -40,9 +40,10 @@ pub mod vox {
         pub position: [f32; 4],
         pub color: [f32; 4],
         pub texcoord: [f32; 3],
+        pub index: i32,
     }
 
-    impl_vertex!(VoxelVertex, position, color, texcoord);
+    impl_vertex!(VoxelVertex, position, color, texcoord, index);
 
     #[derive(Copy, Clone, Default)]
     #[repr(C)]
@@ -56,6 +57,7 @@ pub mod vox {
     #[repr(C)]
     pub struct VoxelPC {
         pub chunk_offset: [f32; 3],
+        pub highlight_index: i32,
     }
 
     pub mod vs {
@@ -133,7 +135,7 @@ impl VoxelRenderer {
                 vox::fs::Shader::load(rctx.device.clone()).expect("Failed to create FS module");
             Arc::new(
                 GraphicsPipeline::start()
-                    .cull_mode_back()
+                    .cull_mode_front()
                     .vertex_input_single_buffer::<vox::VoxelVertex>()
                     .vertex_shader(vs.main_entry_point(), ())
                     .viewports_dynamic_scissors_irrelevant(1)
@@ -516,24 +518,33 @@ impl VoxelRenderer {
     }
 
     pub fn inpass_draw(&mut self, fctx: &mut InPassFrameContext) {
+        let (mut hichunk, mut hiidx) = (vec3(0, 0, 0), -1);
         let mview = if let Some(world) = &self.world {
             let client = ClientWorld::read(world);
             let entities = world.entities.read();
             let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
             let player_pos = lp_loc.position;
             let player_ang = lp_loc.orientation;
+            let mview: Matrix4<f32>;
+            let mrot: Matrix3<f32>;
             match client.camera_settings {
                 CameraSettings::FPS { .. } => {
-                    let mut mview: Matrix4<f32> = glm::translation(&-{
-                        let mut p = player_pos;
-                        p.y = -p.y;
-                        p
-                    });
-                    mview = glm::quat_to_mat4(&player_ang) * mview;
-                    mview.set_column(1, &-mview.column(1));
-                    mview
+                    mrot = glm::quat_to_mat3(&-player_ang);
+                    mview = mrot.to_homogeneous() * glm::translation(&-player_pos);
                 }
             }
+
+            let voxels = world.voxels.read();
+            use crate::world::raycast;
+            let fwd = mrot.transpose() * vec3(0.0, 0.0, 1.0);
+            let rc =
+                raycast::RaycastQuery::new_directed(player_pos, fwd, 32.0, Some(&voxels), None)
+                    .execute();
+            if let raycast::Hit::Voxel { position, .. } = rc.hit {
+                hichunk = chunkpos_from_blockpos(position);
+                hiidx = blockidx_from_blockpos(position) as i32;
+            }
+            mview
         } else {
             Matrix4::identity()
         };
@@ -541,7 +552,6 @@ impl VoxelRenderer {
         let mut cmdbufbuild = fctx.replace_cmd();
 
         let mproj: Matrix4<f32>;
-
         let ubo = {
             let mut ubo = vox::VoxelUBO::default();
             let mmdl: Matrix4<f32> = glm::identity();
@@ -549,13 +559,19 @@ impl VoxelRenderer {
             ubo.view = mview.into();
             let swdim = fctx.dims;
             let sfdim = [swdim[0] as f32, swdim[1] as f32];
-            mproj = glm::perspective_fov_rh_zo(
-                75.0 * std::f32::consts::PI / 180.0,
-                sfdim[0],
-                sfdim[1],
-                0.1,
-                1000.0,
-            );
+            mproj = {
+                let fov = 75.0 * std::f32::consts::PI / 180.0;
+                let aspect = sfdim[0] / sfdim[1];
+                let (near, far) = (0.1, 1000.0);
+                let f = 1.0 / (0.5 * fov).tan();
+                let mut mproj: Matrix4<f32> = zero();
+                mproj[(0, 0)] = f / aspect;
+                mproj[(1, 1)] = -f;
+                mproj[(2, 2)] = -far / (near - far);
+                mproj[(3, 2)] = 1.0;
+                mproj[(2, 3)] = (near * far) / (near - far);
+                mproj
+            };
             ubo.proj = mproj.into();
             self.ubuffers.next(ubo).unwrap()
         };
@@ -569,10 +585,11 @@ impl VoxelRenderer {
         );
 
         for (pos, chunkmut) in self.drawn_chunks.iter() {
+            let chunk = chunkmut.read();
             let pc = vox::VoxelPC {
                 chunk_offset: pos.map(|x| (x as f32) * (CHUNK_DIM as f32)).into(),
+                highlight_index: if chunk.cpos == hichunk { hiidx } else { -1 },
             };
-            let chunk = chunkmut.read();
             if chunk.ibuffer.len() > 0 {
                 cmdbufbuild = cmdbufbuild
                     .draw_indexed(

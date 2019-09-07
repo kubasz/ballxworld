@@ -200,6 +200,7 @@ pub fn mesh_from_chunk(
                         1.0,
                     ],
                     texcoord: [side.texcs[t * 2], side.texcs[t * 2 + 1], texid as f32],
+                    index: vidx as i32,
                 });
             }
             if corner_ao[1] + corner_ao[3] > corner_ao[0] + corner_ao[2] {

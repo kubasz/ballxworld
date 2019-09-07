@@ -6,6 +6,9 @@ use crate::world;
 use crate::world::blocks::register_standard_blocks;
 use crate::world::ecs::{CLoadAnchor, CLocation, ECSHandler};
 use crate::world::generation::WorldLoadGen;
+use crate::world::{
+    blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition, UncompressedChunk,
+};
 use conrod_core::widget_ids;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
@@ -22,10 +25,11 @@ struct InputState {
     walk: (f32, f32),
     look: (f32, f32),
     capture_mouse: bool,
+    do_normal: bool,
 }
 
 widget_ids! {
-struct Ids{canvas, positionlbl}
+struct Ids{canvas, positionlbl, crosshairs}
 }
 
 pub fn client_main() {
@@ -87,6 +91,7 @@ pub fn client_main() {
     let mut pressed_keys: HashSet<Keycode> = HashSet::new();
 
     let ids = Ids::new(rctx.gui.widget_id_generator());
+    let mut click_pos: Option<BlockPosition> = None;
 
     sdl_ctx
         .mouse()
@@ -122,11 +127,35 @@ pub fn client_main() {
 
             let (dyaw, dpitch) = input_state.look;
             let CameraSettings::FPS { pitch, yaw } = &mut client.camera_settings;
-            *pitch += dpitch / 60.0;
-            *pitch = f32::min(f32::max(*pitch, -PI / 2.0), PI / 2.0);
-            *yaw += dyaw / 60.0;
+            *pitch -= dpitch / 60.0;
+            *pitch = f32::min(f32::max(*pitch, -PI / 4.0), PI / 4.0);
+            *yaw -= dyaw / 60.0;
             *yaw %= 2.0 * PI;
             let (pitch, yaw) = (*pitch, *yaw);
+
+            if let Some(bpos) = click_pos {
+                let shift = pressed_keys.contains(&Keycode::LShift);
+                let mut voxels = world.voxels.write();
+                click_pos = None;
+                // place block
+                let cpos = chunkpos_from_blockpos(bpos);
+                let mut ch =
+                    UncompressedChunk::clone(&voxels.get_uncompressed_chunk(cpos).unwrap());
+                let bidx = blockidx_from_blockpos(bpos);
+                let i_place;
+                i_place = voxels
+                    .registry
+                    .get_definition_from_name(if shift {
+                        "core:diamond_ore"
+                    } else {
+                        "core:void"
+                    })
+                    .unwrap();
+                ch.blocks_yzx[bidx].id = i_place.id;
+                let rch = voxels.chunks.get_mut(&cpos).unwrap();
+                rch.compress(&ch);
+                voxels.dirtify(bpos);
+            }
 
             for _pfrm in 0..physics_frames {
                 // do physics tick
@@ -135,15 +164,13 @@ pub fn client_main() {
                 // position
                 let qyaw = Quaternion::from_polar_decomposition(1.0, yaw, Vector3::y_axis());
                 let qpitch = Quaternion::from_polar_decomposition(1.0, pitch, Vector3::x_axis());
-                lp_loc.orientation = (qpitch * qyaw).normalize();
+                lp_loc.orientation = UnitQuaternion::new_normalize(qpitch * qyaw);
 
-                let mut mview = glm::quat_to_mat3(&lp_loc.orientation);
-                mview.set_column(1, &-mview.column(1));
-                mview = mview.transpose();
+                let mview = glm::quat_to_mat3(&-lp_loc.orientation).transpose();
 
                 let wvel = Vector3::new(input_state.walk.0, 0.0, input_state.walk.1) * 1.0;
-                lp_loc.position -= mview * wvel;
-                lp_loc.velocity = -(PHYSICS_FRAME_TIME as f32) * wvel;
+                lp_loc.position += mview * wvel;
+                lp_loc.velocity = (PHYSICS_FRAME_TIME as f32) * wvel;
                 drop(entities);
                 //
                 world.physics_tick();
@@ -192,17 +219,20 @@ pub fn client_main() {
                 },
                 Event::KeyDown { keycode, .. } => {
                     match keycode {
-                        Some(sdl2::keyboard::Keycode::F) => {
+                        Some(Keycode::F) => {
                             input_state.capture_mouse = !input_state.capture_mouse;
                             sdl_ctx
                                 .mouse()
                                 .set_relative_mouse_mode(input_state.capture_mouse);
                         }
-                        Some(sdl2::keyboard::Keycode::Backquote) => {
+                        Some(Keycode::Backquote) => {
                             // rctx.do_dump = true;
                         }
-                        Some(sdl2::keyboard::Keycode::Escape) => {
+                        Some(Keycode::Escape) => {
                             break 'running;
+                        }
+                        Some(Keycode::Q) => {
+                            input_state.do_normal = true;
                         }
                         _ => {}
                     }
@@ -220,7 +250,7 @@ pub fn client_main() {
                 } => {
                     if input_state.capture_mouse {
                         input_state.look.0 += xrel as f32 * 0.4;
-                        input_state.look.1 -= yrel as f32 * 0.3;
+                        input_state.look.1 += yrel as f32 * 0.3;
                     } else {
                         let wsz = rctx.window.size();
                         let m = conrod_core::input::Motion::MouseCursor {
@@ -242,10 +272,10 @@ pub fn client_main() {
             input_state.walk.1 -= 1.0;
         }
         if pressed_keys.contains(&Keycode::A) {
-            input_state.walk.0 += 1.0;
+            input_state.walk.0 -= 1.0;
         }
         if pressed_keys.contains(&Keycode::D) {
-            input_state.walk.0 -= 1.0;
+            input_state.walk.0 += 1.0;
         }
         if pressed_keys.contains(&Keycode::LShift) {
             input_state.walk.0 *= 0.3;
@@ -269,6 +299,7 @@ pub fn client_main() {
             .set(ids.canvas, &mut ui);
         let player_pos;
         let player_ang;
+        let player_py;
         let loaded_cnum;
         let drawn_cnum = vctx.drawn_chunks_number();
         let pset_cnum = vctx.progress_set_len();
@@ -280,10 +311,46 @@ pub fn client_main() {
             let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
             player_pos = lp_loc.position;
             player_ang = lp_loc.orientation;
+            let CameraSettings::FPS { pitch, yaw } = client.camera_settings;
+            player_py = (pitch, yaw);
+            if input_state.do_normal {
+                input_state.do_normal = false;
+                use crate::world::raycast;
+                let mview = glm::quat_to_mat3(&player_ang).transpose();
+                let fwd = mview * vec3(0.0, 0.0, 1.0);
+                let rc =
+                    raycast::RaycastQuery::new_directed(player_pos, fwd, 32.0, Some(&voxels), None)
+                        .execute();
+                match &rc.hit {
+                    raycast::Hit::Nothing => {
+                        eprintln!("Nothing hit!");
+                    }
+                    raycast::Hit::Voxel {
+                        position,
+                        datum,
+                        normal,
+                    } => {
+                        let vdef = voxels.registry.get_definition_from_id(*datum);
+                        eprintln!(
+                            "Voxel hit @{:?}, name: {}, normal: {:?}",
+                            position, &vdef.name, normal
+                        );
+                        let shift = pressed_keys.contains(&Keycode::LShift);
+                        if shift {
+                            click_pos = Some(*position + normal.to_vec());
+                        } else {
+                            click_pos = Some(*position);
+                        }
+                    }
+                    raycast::Hit::Entity => {
+                        eprintln!("Entity hit!");
+                    }
+                }
+            }
         }
         let pos = format!("Position: {:.1}, {:.1}, {:.1}\nAngles: {:#?}\nLast FT (ms): {:.1}\nAvg FT (ms): {:.1}\nMax FT (ms): {:.1}\n Avg FPS: {:.1}\nLoaded chunks: {}\nDrawn chunks: {} (ps{})",
                           player_pos.x, player_pos.y, player_pos.z,
-                          player_ang,
+                          player_py,
                           frame_delta_time * 1000.0,
                           avg_ft * 1000.0,
                           max_ft * 1000.0,
@@ -297,6 +364,9 @@ pub fn client_main() {
             .color(conrod_core::color::WHITE)
             .top_left_of(ids.canvas)
             .set(ids.positionlbl, &mut ui);
+        widget::Circle::outline(10.0)
+            .middle_of(ids.canvas)
+            .set(ids.crosshairs, &mut ui);
 
         if let Some(fps) = cfg.render_fps_lock {
             let end_current_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;

@@ -72,7 +72,7 @@ pub struct CLocation {
     id: ValidEntityID,
     pub position: Vector3<f32>,
     pub velocity: Vector3<f32>,
-    pub orientation: Quaternion<f32>,
+    pub orientation: UnitQuaternion<f32>,
     pub bounding_shape: BoundingShape,
     pub bounding_offset: Vector3<f32>,
 }
