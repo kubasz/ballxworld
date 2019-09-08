@@ -7,6 +7,7 @@ use rayon::prelude::*;
 use smallvec::SmallVec;
 use std::collections::HashSet;
 use std::iter::FromIterator;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -22,6 +23,7 @@ pub struct WorldLoadGen {
     pub progress_set: Arc<Mutex<HashSet<ChunkPosition>>>,
     pub generator: Arc<StdGenerator>,
     worker_threads: Vec<thread::JoinHandle<()>>,
+    thread_killer: Arc<AtomicBool>,
     work_receiver: CachedThreadLocal<mpsc::Receiver<ChunkMsg>>,
 }
 
@@ -33,6 +35,7 @@ impl WorldLoadGen {
             progress_set: Arc::new(Mutex::new(HashSet::new())),
             generator: Arc::new(StdGenerator::new(seed)),
             worker_threads: Vec::new(),
+            thread_killer: Arc::new(AtomicBool::new(false)),
             work_receiver: CachedThreadLocal::new(),
         };
         wlg.init_worker_threads();
@@ -58,11 +61,22 @@ impl WorldLoadGen {
             let tgen = self.generator.clone();
             let tlq = self.loading_queue.clone();
             let tps = self.progress_set.clone();
+            let tks = self.thread_killer.clone();
             let thr = tb
-                .spawn(move || Self::worldgen_worker(tworld, tgen, tlq, tps, ttx))
+                .spawn(move || Self::worldgen_worker(tworld, tgen, tlq, tps, ttx, tks))
                 .expect("Could not create worldgen worker thread");
             self.worker_threads.push(thr);
         }
+    }
+
+    fn kill_threads(&mut self) {
+        self.thread_killer.store(true, Ordering::SeqCst);
+        let old_threads = std::mem::replace(&mut self.worker_threads, Vec::new());
+        for t in old_threads.into_iter() {
+            t.thread().unpark();
+            drop(t.join());
+        }
+        self.thread_killer.store(false, Ordering::SeqCst);
     }
 
     fn worldgen_worker(
@@ -71,6 +85,7 @@ impl WorldLoadGen {
         load_queue_arc: Arc<Mutex<Vec<(i32, ChunkPosition)>>>,
         progress_set_arc: Arc<Mutex<HashSet<ChunkPosition>>>,
         submission: mpsc::Sender<ChunkMsg>,
+        killswitch: Arc<AtomicBool>,
     ) {
         let registry_arc;
         {
@@ -91,6 +106,9 @@ impl WorldLoadGen {
                 drop(load_queue);
                 drop(progress_set);
                 thread::park();
+                if killswitch.load(Ordering::SeqCst) {
+                    return;
+                }
                 continue;
             }
 
@@ -112,7 +130,9 @@ impl WorldLoadGen {
                 ucchunk.position = p;
                 worldgen_arc.generate_chunk(&mut ucchunk, &registry_arc);
                 chunk.compress(&ucchunk);
-                submission.send(ChunkMsg { chunk }).unwrap();
+                if submission.send(ChunkMsg { chunk }).is_err() {
+                    return;
+                }
                 done_chunks.push(p);
             }
         }
@@ -194,5 +214,11 @@ impl WorldLoadGen {
                 t.thread().unpark();
             }
         }
+    }
+}
+
+impl Drop for WorldLoadGen {
+    fn drop(&mut self) {
+        self.kill_threads();
     }
 }

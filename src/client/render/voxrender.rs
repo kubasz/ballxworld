@@ -11,6 +11,7 @@ use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::{mpsc, Weak};
 use std::thread;
@@ -103,6 +104,7 @@ pub struct VoxelRenderer {
     draw_queue: Arc<Mutex<Vec<ChunkPosition>>>,
     progress_set: Arc<Mutex<HashSet<ChunkPosition>>>,
     worker_threads: Vec<thread::JoinHandle<()>>,
+    thread_killer: Arc<AtomicBool>,
     work_receiver: CachedThreadLocal<mpsc::Receiver<ChunkMsg>>,
 }
 
@@ -171,8 +173,19 @@ impl VoxelRenderer {
             draw_queue: Arc::new(Mutex::new(Vec::new())),
             progress_set: Arc::new(Mutex::new(HashSet::new())),
             worker_threads: Vec::new(),
+            thread_killer: Arc::new(AtomicBool::new(false)),
             work_receiver: CachedThreadLocal::new(),
         }
+    }
+
+    fn kill_threads(&mut self) {
+        self.thread_killer.store(true, Ordering::SeqCst);
+        let old_threads = std::mem::replace(&mut self.worker_threads, Vec::new());
+        for t in old_threads.into_iter() {
+            t.thread().unpark();
+            drop(t.join());
+        }
+        self.thread_killer.store(false, Ordering::SeqCst);
     }
 
     pub fn get_texture_id(&self, name: &str) -> u32 {
@@ -262,7 +275,7 @@ impl VoxelRenderer {
 
     pub fn set_world(&mut self, world: Arc<World>, rctx: &RenderingContext) {
         // create worker threads
-        self.worker_threads.clear();
+        self.kill_threads();
         const NUM_WORKERS: usize = 2;
         const STACK_SIZE: usize = 4 * 1024 * 1024;
         let (tx, rx) = mpsc::channel();
@@ -278,8 +291,11 @@ impl VoxelRenderer {
             let qs = rctx.queues.clone();
             let work_queue = self.draw_queue.clone();
             let progress_set = self.progress_set.clone();
+            let killswitch = self.thread_killer.clone();
             let thr = tb
-                .spawn(move || Self::vox_worker(tworld, qs, work_queue, progress_set, ttx))
+                .spawn(move || {
+                    Self::vox_worker(tworld, qs, work_queue, progress_set, ttx, killswitch)
+                })
                 .expect("Could not create voxrender worker thread");
             self.worker_threads.push(thr);
         }
@@ -292,6 +308,7 @@ impl VoxelRenderer {
         work_queue: Arc<Mutex<Vec<ChunkPosition>>>,
         progress_set: Arc<Mutex<HashSet<ChunkPosition>>>,
         submission: mpsc::Sender<ChunkMsg>,
+        killswitch: Arc<AtomicBool>,
     ) {
         let device;
         let _q;
@@ -315,9 +332,11 @@ impl VoxelRenderer {
 
         let mut done_chunks: Vec<Vector3<i32>> = Vec::new();
         loop {
+            if killswitch.load(Ordering::SeqCst) {
+                return;
+            }
             let world = world_w.upgrade();
             if world.is_none() {
-                eprintln!("World changing - voxrender worker terminating");
                 return;
             }
             let world = world.unwrap();
@@ -333,6 +352,9 @@ impl VoxelRenderer {
                 drop(work_queue);
                 drop(progress_set);
                 thread::park();
+                if killswitch.load(Ordering::SeqCst) {
+                    return;
+                }
                 continue;
             }
 
@@ -413,7 +435,6 @@ impl VoxelRenderer {
                     .send((cpos, Arc::new(RwLock::new(dchunk))))
                     .is_err()
                 {
-                    eprintln!("World changing - voxrender worker terminating");
                     return;
                 }
                 done_chunks.push(cpos);
@@ -606,5 +627,11 @@ impl VoxelRenderer {
         fctx.cmd = Some(cmdbufbuild);
 
         self.atmosphere_renderer.inpass_draw(fctx, mview, mproj);
+    }
+}
+
+impl Drop for VoxelRenderer {
+    fn drop(&mut self) {
+        self.kill_threads();
     }
 }
