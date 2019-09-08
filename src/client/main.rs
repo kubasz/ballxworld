@@ -1,4 +1,5 @@
 use crate::client::config::Config;
+use crate::client::input::InputManager;
 use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::client::world::{CameraSettings, ClientWorld};
 use crate::math::*;
@@ -10,9 +11,7 @@ use crate::world::{
     blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition, UncompressedChunk,
 };
 use conrod_core::widget_ids;
-use sdl2::event::{Event, WindowEvent};
-use sdl2::keyboard::Keycode;
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -86,16 +85,13 @@ pub fn client_main() {
     let mut physics_accum_time = 0.0f64;
     //
 
-    let mut input_state = InputState::default();
-    input_state.capture_mouse = false;
-    let mut pressed_keys: HashSet<Keycode> = HashSet::new();
+    let mut input_mgr = InputManager::new(&sdl_ctx);
+    input_mgr.input_state.capture_input_requested = true;
 
     let ids = Ids::new(rctx.gui.widget_id_generator());
     let mut click_pos: Option<BlockPosition> = None;
+    let mut click_place = false;
 
-    sdl_ctx
-        .mouse()
-        .set_relative_mouse_mode(input_state.capture_mouse);
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     'running: loop {
         let current_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
@@ -125,7 +121,8 @@ pub fn client_main() {
             let mut client = ClientWorld::write(&world);
             let local_player = client.local_player;
 
-            let (dyaw, dpitch) = input_state.look;
+            let (dyaw, dpitch) = (input_mgr.input_state.look.x, input_mgr.input_state.look.y);
+            input_mgr.input_state.look = zero();
             let CameraSettings::FPS { pitch, yaw } = &mut client.camera_settings;
             *pitch -= dpitch / 60.0;
             *pitch = f32::min(f32::max(*pitch, -PI / 4.0), PI / 4.0);
@@ -134,7 +131,6 @@ pub fn client_main() {
             let (pitch, yaw) = (*pitch, *yaw);
 
             if let Some(bpos) = click_pos {
-                let shift = pressed_keys.contains(&Keycode::LShift);
                 let mut voxels = world.voxels.write();
                 click_pos = None;
                 // place block
@@ -145,7 +141,7 @@ pub fn client_main() {
                 let i_place;
                 i_place = voxels
                     .registry
-                    .get_definition_from_name(if shift {
+                    .get_definition_from_name(if click_place {
                         "core:diamond_ore"
                     } else {
                         "core:void"
@@ -168,7 +164,14 @@ pub fn client_main() {
 
                 let mview = glm::quat_to_mat3(&-lp_loc.orientation).transpose();
 
-                let wvel = Vector3::new(input_state.walk.0, 0.0, input_state.walk.1) * 1.0;
+                let mut wvel = Vector3::new(
+                    input_mgr.input_state.walk.x,
+                    0.0,
+                    input_mgr.input_state.walk.y,
+                );
+                if input_mgr.input_state.sprint.is_active() {
+                    wvel *= 3.0;
+                }
                 lp_loc.position += mview * wvel;
                 lp_loc.velocity = (PHYSICS_FRAME_TIME as f32) * wvel;
                 drop(entities);
@@ -187,103 +190,14 @@ pub fn client_main() {
             RenderingContext::frame_finish(fc);
         }
 
-        input_state.walk = (0.0, 0.0);
-        input_state.look = (0.0, 0.0);
         for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. } => break 'running,
-                Event::Window { win_event, .. } => match win_event {
-                    WindowEvent::Resized(w, h) => {
-                        rctx.outdated_swapchain = true;
-                        rctx.gui.handle_event(conrod_core::event::Input::Resize(
-                            f64::from(w),
-                            f64::from(h),
-                        ));
-                    }
-                    WindowEvent::SizeChanged(w, h) => {
-                        rctx.outdated_swapchain = true;
-                        rctx.gui.handle_event(conrod_core::event::Input::Resize(
-                            f64::from(w),
-                            f64::from(h),
-                        ));
-                    }
-                    WindowEvent::FocusGained => {
-                        sdl_ctx
-                            .mouse()
-                            .set_relative_mouse_mode(input_state.capture_mouse);
-                    }
-                    WindowEvent::FocusLost => {
-                        sdl_ctx.mouse().set_relative_mouse_mode(false);
-                    }
-                    _ => {}
-                },
-                Event::KeyDown { keycode, .. } => {
-                    match keycode {
-                        Some(Keycode::F) => {
-                            input_state.capture_mouse = !input_state.capture_mouse;
-                            sdl_ctx
-                                .mouse()
-                                .set_relative_mouse_mode(input_state.capture_mouse);
-                        }
-                        Some(Keycode::Backquote) => {
-                            // rctx.do_dump = true;
-                        }
-                        Some(Keycode::Escape) => {
-                            break 'running;
-                        }
-                        Some(Keycode::Q) => {
-                            input_state.do_normal = true;
-                        }
-                        _ => {}
-                    }
-                    if let Some(keycode) = keycode {
-                        pressed_keys.insert(keycode);
-                    }
-                }
-                Event::KeyUp { keycode, .. } => {
-                    if let Some(keycode) = keycode {
-                        pressed_keys.remove(&keycode);
-                    }
-                }
-                Event::MouseMotion {
-                    x, y, xrel, yrel, ..
-                } => {
-                    if input_state.capture_mouse {
-                        input_state.look.0 += xrel as f32 * 0.4;
-                        input_state.look.1 += yrel as f32 * 0.3;
-                    } else {
-                        let wsz = rctx.window.size();
-                        let m = conrod_core::input::Motion::MouseCursor {
-                            x: f64::from(x - wsz.0 as i32 / 2),
-                            y: -f64::from(y - wsz.0 as i32 / 2),
-                        };
-                        rctx.gui.handle_event(conrod_core::event::Input::Motion(m));
-                    }
-                }
-                _ => {}
-            }
+            input_mgr.process(&mut rctx, event);
         }
+        input_mgr.post_events_update(&mut rctx);
 
-        // Simple noclip camera
-        if pressed_keys.contains(&Keycode::W) {
-            input_state.walk.1 += 1.0;
-        }
-        if pressed_keys.contains(&Keycode::S) {
-            input_state.walk.1 -= 1.0;
-        }
-        if pressed_keys.contains(&Keycode::A) {
-            input_state.walk.0 -= 1.0;
-        }
-        if pressed_keys.contains(&Keycode::D) {
-            input_state.walk.0 += 1.0;
-        }
-        if pressed_keys.contains(&Keycode::LShift) {
-            input_state.walk.0 *= 0.3;
-            input_state.walk.1 *= 0.3;
-        }
-        if pressed_keys.contains(&Keycode::LCtrl) {
-            input_state.walk.0 *= 3.0;
-            input_state.walk.1 *= 3.0;
+        if input_mgr.input_state.requesting_exit {
+            input_mgr.input_state.requesting_exit = false;
+            break 'running;
         }
 
         // simple test gui
@@ -313,37 +227,33 @@ pub fn client_main() {
             player_ang = lp_loc.orientation;
             let CameraSettings::FPS { pitch, yaw } = client.camera_settings;
             player_py = (pitch, yaw);
-            if input_state.do_normal {
-                input_state.do_normal = false;
+
+            let primary = input_mgr.input_state.primary_action.is_active();
+            let secondary = input_mgr.input_state.secondary_action.is_active();
+            if primary | secondary {
                 use crate::world::raycast;
                 let mview = glm::quat_to_mat3(&player_ang).transpose();
                 let fwd = mview * vec3(0.0, 0.0, 1.0);
                 let rc =
                     raycast::RaycastQuery::new_directed(player_pos, fwd, 32.0, Some(&voxels), None)
                         .execute();
-                match &rc.hit {
-                    raycast::Hit::Nothing => {
-                        eprintln!("Nothing hit!");
-                    }
-                    raycast::Hit::Voxel {
-                        position,
-                        datum,
-                        normal,
-                    } => {
-                        let vdef = voxels.registry.get_definition_from_id(*datum);
-                        eprintln!(
-                            "Voxel hit @{:?}, name: {}, normal: {:?}",
-                            position, &vdef.name, normal
-                        );
-                        let shift = pressed_keys.contains(&Keycode::LShift);
-                        if shift {
+                click_place = secondary;
+                if let raycast::Hit::Voxel {
+                    position,
+                    normal,
+                    normal_datum,
+                    ..
+                } = &rc.hit
+                {
+                    if normal_datum
+                        .map(|d| !voxels.registry.get_definition_from_id(d).has_hitbox)
+                        .unwrap_or(false)
+                    {
+                        if click_place {
                             click_pos = Some(*position + normal.to_vec());
                         } else {
                             click_pos = Some(*position);
                         }
-                    }
-                    raycast::Hit::Entity => {
-                        eprintln!("Entity hit!");
                     }
                 }
             }

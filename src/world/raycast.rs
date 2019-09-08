@@ -20,6 +20,7 @@ pub enum Hit {
         position: BlockPosition,
         datum: VoxelDatum,
         normal: Direction,
+        normal_datum: Option<VoxelDatum>,
     },
     Entity,
 }
@@ -115,6 +116,7 @@ impl<'q> RaycastQuery<'q> {
             let ichunk_dim = CHUNK_DIM as i32;
             bpos -= cpos * ichunk_dim;
             let mut chunk = voxels.get_uncompressed_chunk(cpos);
+            let mut normal_datum = None;
 
             for _ in 0..iters {
                 // check block
@@ -131,10 +133,14 @@ impl<'q> RaycastQuery<'q> {
                                 position,
                                 datum,
                                 normal,
+                                normal_datum,
                             },
                             distance,
                         };
                     }
+                    normal_datum = Some(datum);
+                } else {
+                    normal_datum = None;
                 }
 
                 // move to next block
