@@ -1,7 +1,7 @@
 use crate::math::*;
 use crate::world::{
     blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition, Direction, VoxelDatum,
-    WEntities, WVoxels, CHUNK_DIM,
+    WEntities, WVoxels, World, CHUNK_DIM,
 };
 
 #[derive(Clone)]
@@ -9,6 +9,7 @@ pub struct RaycastQuery<'q> {
     pub start_point: Vector3<f32>,
     pub direction: Vector3<f32>,
     pub distance_limit: f32,
+    pub world: &'q World,
     pub hit_voxels: Option<&'q WVoxels>,
     pub hit_entities: Option<&'q WEntities>,
 }
@@ -42,6 +43,7 @@ impl<'q> RaycastQuery<'q> {
         start_point: Vector3<f32>,
         direction: Vector3<f32>,
         distance_limit: f32,
+        world: &'q World,
         hit_voxels: Option<&'q WVoxels>,
         hit_entities: Option<&'q WEntities>,
     ) -> Self {
@@ -49,6 +51,7 @@ impl<'q> RaycastQuery<'q> {
             start_point,
             direction,
             distance_limit,
+            world,
             hit_voxels,
             hit_entities,
         }
@@ -58,6 +61,7 @@ impl<'q> RaycastQuery<'q> {
         start_point: Vector3<f32>,
         orientation: UnitQuaternion<f32>,
         distance_limit: f32,
+        world: &'q World,
         hit_voxels: Option<&'q WVoxels>,
         hit_entities: Option<&'q WEntities>,
     ) -> Self {
@@ -66,6 +70,7 @@ impl<'q> RaycastQuery<'q> {
             start_point,
             direction,
             distance_limit,
+            world,
             hit_voxels,
             hit_entities,
         }
@@ -115,15 +120,16 @@ impl<'q> RaycastQuery<'q> {
 
             let ichunk_dim = CHUNK_DIM as i32;
             bpos -= cpos * ichunk_dim;
-            let mut chunk = voxels.get_uncompressed_chunk(cpos);
+            let mut vcache = self.world.get_vcache();
+            let mut chunk = vcache.get_uncompressed_chunk(voxels, cpos);
             let mut normal_datum = None;
 
             for _ in 0..iters {
                 // check block
-                if let Some(chunk) = &chunk {
+                if let Some(chunk) = chunk {
                     let bidx = blockidx_from_blockpos(bpos);
                     let datum = chunk.blocks_yzx[bidx];
-                    let vdef = voxels.registry.get_definition_from_id(datum);
+                    let vdef = self.world.vregistry.get_definition_from_id(datum);
                     if vdef.has_hitbox {
                         let position = bpos + cpos * ichunk_dim;
                         let distance = (position.map(|c| c as f32) - self.start_point).magnitude();
@@ -144,34 +150,27 @@ impl<'q> RaycastQuery<'q> {
                 }
 
                 // move to next block
-                if t_max.x < t_max.y && t_max.x < t_max.z {
-                    bpos.x += step.x;
-                    if bpos.x < 0 || bpos.x >= ichunk_dim {
-                        bpos.x -= ichunk_dim * step.x;
-                        cpos.x += step.x;
-                        chunk = voxels.get_uncompressed_chunk(cpos);
+                let min_tmax = {
+                    if t_max.x < t_max.y {
+                        if t_max.x < t_max.z {
+                            0
+                        } else {
+                            2
+                        }
+                    } else if t_max.y < t_max.z {
+                        1
+                    } else {
+                        2
                     }
-                    t_max.x += t_delta.x;
-                    normal = normals[0];
-                } else if t_max.y < t_max.z {
-                    bpos.y += step.y;
-                    t_max.y += t_delta.y;
-                    if bpos.y < 0 || bpos.y >= ichunk_dim {
-                        bpos.y -= ichunk_dim * step.y;
-                        cpos.y += step.y;
-                        chunk = voxels.get_uncompressed_chunk(cpos);
-                    }
-                    normal = normals[1];
-                } else {
-                    bpos.z += step.z;
-                    t_max.z += t_delta.z;
-                    if bpos.z < 0 || bpos.z >= ichunk_dim {
-                        bpos.z -= ichunk_dim * step.z;
-                        cpos.z += step.z;
-                        chunk = voxels.get_uncompressed_chunk(cpos);
-                    }
-                    normal = normals[2];
+                };
+                bpos[min_tmax] += step[min_tmax];
+                if bpos[min_tmax] < 0 || bpos[min_tmax] >= ichunk_dim {
+                    bpos[min_tmax] -= ichunk_dim * step[min_tmax];
+                    cpos[min_tmax] += step[min_tmax];
+                    chunk = vcache.get_uncompressed_chunk(voxels, cpos);
                 }
+                t_max[min_tmax] += t_delta[min_tmax];
+                normal = normals[min_tmax];
             }
         }
 

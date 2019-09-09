@@ -7,9 +7,7 @@ use crate::world;
 use crate::world::blocks::register_standard_blocks;
 use crate::world::ecs::{CLoadAnchor, CLocation, ECSHandler};
 use crate::world::generation::WorldLoadGen;
-use crate::world::{
-    blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition, UncompressedChunk,
-};
+use crate::world::{blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition};
 use conrod_core::widget_ids;
 use std::collections::VecDeque;
 use std::f32::consts::PI;
@@ -132,15 +130,15 @@ pub fn client_main() {
 
             if let Some(bpos) = click_pos {
                 let mut voxels = world.voxels.write();
+                let mut vcache = world.get_vcache();
                 click_pos = None;
                 // place block
                 let cpos = chunkpos_from_blockpos(bpos);
-                let mut ch =
-                    UncompressedChunk::clone(&voxels.get_uncompressed_chunk(cpos).unwrap());
+                let ch = vcache.get_uncompressed_chunk_mut(&voxels, cpos).unwrap();
                 let bidx = blockidx_from_blockpos(bpos);
                 let i_place;
-                i_place = voxels
-                    .registry
+                i_place = world
+                    .vregistry
                     .get_definition_from_name(if click_place {
                         "core:diamond_ore"
                     } else {
@@ -234,9 +232,15 @@ pub fn client_main() {
                 use crate::world::raycast;
                 let mview = glm::quat_to_mat3(&player_ang).transpose();
                 let fwd = mview * vec3(0.0, 0.0, 1.0);
-                let rc =
-                    raycast::RaycastQuery::new_directed(player_pos, fwd, 32.0, Some(&voxels), None)
-                        .execute();
+                let rc = raycast::RaycastQuery::new_directed(
+                    player_pos,
+                    fwd,
+                    32.0,
+                    &world,
+                    Some(&voxels),
+                    None,
+                )
+                .execute();
                 click_place = secondary;
                 if let raycast::Hit::Voxel {
                     position,
@@ -246,7 +250,7 @@ pub fn client_main() {
                 } = &rc.hit
                 {
                     if normal_datum
-                        .map(|d| !voxels.registry.get_definition_from_id(d).has_hitbox)
+                        .map(|d| !world.vregistry.get_definition_from_id(d).has_hitbox)
                         .unwrap_or(false)
                     {
                         if click_place {

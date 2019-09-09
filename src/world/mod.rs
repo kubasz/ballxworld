@@ -12,7 +12,7 @@ use divrem::{DivFloor, RemFloor};
 use lru::LruCache;
 use parking_lot::RwLock;
 pub use registry::VoxelRegistry;
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
 use std::sync::Arc;
 use thread_local::ThreadLocal;
@@ -124,7 +124,7 @@ impl UncompressedChunk {
 
 /// Stored per-thread in the corresponding world object
 pub struct VCache {
-    uncompressed_chunks: LruCache<ChunkPosition, Arc<UncompressedChunk>>,
+    uncompressed_chunks: LruCache<ChunkPosition, Box<UncompressedChunk>>,
 }
 
 impl Default for VCache {
@@ -138,6 +138,60 @@ impl Default for VCache {
 impl VCache {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn ensure_newest_cached(&mut self, voxels: &WVoxels, cpos: ChunkPosition) -> Option<()> {
+        let newest = voxels.chunks.get(&cpos)?;
+        let cached = self.uncompressed_chunks.get_mut(&cpos);
+        if let Some(cached) = cached {
+            if cached.dirty < newest.dirty {
+                *cached = newest.decompress();
+            }
+            Some(())
+        } else {
+            self.uncompressed_chunks.put(cpos, newest.decompress());
+            Some(())
+        }
+    }
+
+    /// Cached
+    pub fn get_uncompressed_chunk(
+        &mut self,
+        voxels: &WVoxels,
+        cpos: ChunkPosition,
+    ) -> Option<&UncompressedChunk> {
+        self.ensure_newest_cached(voxels, cpos)?;
+        self.uncompressed_chunks
+            .get(&cpos)
+            .map(|x| x as &UncompressedChunk)
+    }
+
+    pub fn get_uncompressed_chunk_mut(
+        &mut self,
+        voxels: &WVoxels,
+        cpos: ChunkPosition,
+    ) -> Option<&mut UncompressedChunk> {
+        self.ensure_newest_cached(voxels, cpos)?;
+        self.uncompressed_chunks
+            .get_mut(&cpos)
+            .map(|x| x as &mut UncompressedChunk)
+    }
+
+    pub fn peek_uncompressed_chunk(&self, cpos: ChunkPosition) -> Option<&UncompressedChunk> {
+        self.uncompressed_chunks
+            .peek(&cpos)
+            .map(|x| x as &UncompressedChunk)
+    }
+
+    pub fn get_block(&mut self, voxels: &WVoxels, bpos: BlockPosition) -> Option<VoxelDatum> {
+        let cpos = chunkpos_from_blockpos(bpos);
+        self.ensure_newest_cached(voxels, cpos)?;
+        Some(self.uncompressed_chunks.get(&cpos)?.blocks_yzx[blockidx_from_blockpos(bpos)])
+    }
+
+    pub fn peek_block(&self, bpos: BlockPosition) -> Option<VoxelDatum> {
+        let cpos = chunkpos_from_blockpos(bpos);
+        Some(self.uncompressed_chunks.peek(&cpos)?.blocks_yzx[blockidx_from_blockpos(bpos)])
     }
 }
 
@@ -313,15 +367,13 @@ impl VChunk {
     }
 
     /// Decompresses the current version of this chunk
-    pub fn decompress(&self) -> Arc<UncompressedChunk> {
-        let mut uc = Box::new(UncompressedChunk {
-            position: self.position,
-            dirty: self.dirty,
-            blocks_yzx: [Default::default(); CHUNK_DIM3],
-        });
+    pub fn decompress(&self) -> Box<UncompressedChunk> {
+        let mut uc: Box<UncompressedChunk> = Box::default();
+        uc.position = self.position;
+        uc.dirty = self.dirty;
         let VChunkData::QuickCompressed { vox } = &self.data;
         decompress_rle(vox, &mut uc.blocks_yzx, |v| VoxelDatum { id: v });
-        Arc::from(uc)
+        uc
     }
 }
 
@@ -377,10 +429,9 @@ impl VoxelDefinition {
 
 type ClientWorld = crate::client::world::ClientWorld;
 
+#[derive(Default)]
 pub struct WVoxels {
     pub chunks: HashMap<ChunkPosition, VChunk>,
-    pub cache: ThreadLocal<RefCell<VCache>>,
-    pub registry: Arc<VoxelRegistry>,
 }
 
 #[derive(Default)]
@@ -390,52 +441,16 @@ pub struct WEntities {
 
 pub struct World {
     pub name: String,
+    pub vregistry: Arc<VoxelRegistry>,
+    pub vcache: ThreadLocal<RefCell<VCache>>,
     pub voxels: RwLock<WVoxels>,
     pub entities: RwLock<WEntities>,
     pub client_world: Option<RwLock<ClientWorld>>,
 }
 
 impl WVoxels {
-    pub fn new(registry: Arc<VoxelRegistry>) -> Self {
-        Self {
-            chunks: HashMap::new(),
-            cache: ThreadLocal::new(),
-            registry,
-        }
-    }
-
-    fn ensure_newest_cached(&self, cpos: ChunkPosition) -> Option<()> {
-        let newest = self.chunks.get(&cpos)?;
-        let cache = self.cache.get_or_default();
-        let mut mcache = cache.borrow_mut();
-        let cached = mcache.uncompressed_chunks.get_mut(&cpos);
-        if let Some(cached) = cached {
-            if cached.dirty != newest.dirty {
-                *cached = newest.decompress();
-            }
-            Some(())
-        } else {
-            mcache.uncompressed_chunks.put(cpos, newest.decompress());
-            Some(())
-        }
-    }
-
-    /// Cached
-    pub fn get_uncompressed_chunk(&self, cpos: ChunkPosition) -> Option<Arc<UncompressedChunk>> {
-        self.ensure_newest_cached(cpos)?;
-        let cache = self.cache.get_or_default();
-        let mut mcache = cache.borrow_mut();
-        Some(mcache.uncompressed_chunks.get(&cpos)?.clone())
-    }
-
-    pub fn get_block(&self, bpos: BlockPosition) -> Option<VoxelDatum> {
-        let cpos = chunkpos_from_blockpos(bpos);
-        self.ensure_newest_cached(cpos)?;
-        let cache = self.cache.get_or_default();
-        let mut mcache = cache.borrow_mut();
-        Some(
-            mcache.uncompressed_chunks.get(&cpos)?.clone().blocks_yzx[blockidx_from_blockpos(bpos)],
-        )
+    pub fn new() -> Self {
+        Default::default()
     }
 
     pub fn dirtify(&mut self, bpos: BlockPosition) {
@@ -494,15 +509,21 @@ impl WEntities {
 impl World {
     pub fn new(
         name: String,
-        registry: Arc<VoxelRegistry>,
+        vregistry: Arc<VoxelRegistry>,
         client_world: Option<RwLock<ClientWorld>>,
     ) -> Self {
         Self {
             name,
-            voxels: RwLock::new(WVoxels::new(registry)),
+            vregistry,
+            vcache: ThreadLocal::new(),
+            voxels: RwLock::new(WVoxels::new()),
             entities: RwLock::new(WEntities::new()),
             client_world,
         }
+    }
+
+    pub fn get_vcache(&self) -> RefMut<'_, VCache> {
+        self.vcache.get_or_default().borrow_mut()
     }
 
     pub fn physics_tick(&self) {

@@ -87,11 +87,6 @@ impl WorldLoadGen {
         submission: mpsc::Sender<ChunkMsg>,
         killswitch: Arc<AtomicBool>,
     ) {
-        let registry_arc;
-        {
-            let world = world_arc.voxels.read();
-            registry_arc = world.registry.clone();
-        }
         let mut done_chunks: Vec<Vector3<i32>> = Vec::new();
         loop {
             let mut load_queue = load_queue_arc.lock();
@@ -128,7 +123,7 @@ impl WorldLoadGen {
                 chunk.position = p;
                 let mut ucchunk = UncompressedChunk::new();
                 ucchunk.position = p;
-                worldgen_arc.generate_chunk(&mut ucchunk, &registry_arc);
+                worldgen_arc.generate_chunk(&mut ucchunk, &world_arc.vregistry);
                 chunk.compress(&ucchunk);
                 if submission.send(ChunkMsg { chunk }).is_err() {
                     return;

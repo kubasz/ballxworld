@@ -322,14 +322,6 @@ impl VoxelRenderer {
         let voxel_staging_v = CpuBufferPool::upload(device.clone());
         let voxel_staging_i = CpuBufferPool::upload(device.clone());
 
-        let registry;
-
-        {
-            let world = world_w.upgrade().unwrap();
-            let voxels = world.voxels.read();
-            registry = voxels.registry.clone();
-        }
-
         let mut done_chunks: Vec<Vector3<i32>> = Vec::new();
         loop {
             if killswitch.load(Ordering::SeqCst) {
@@ -385,7 +377,7 @@ impl VoxelRenderer {
             for cpos in chunk_objs_to_add.into_iter() {
                 // give a chance to release the lock to a writer on each iteration
                 let voxels = world.voxels.read();
-                let mesh = mesh_from_chunk(&voxels, cpos, &registry);
+                let mesh = mesh_from_chunk(&world, &voxels, cpos);
                 if mesh.is_none() {
                     done_chunks.push(cpos);
                     continue;
@@ -558,9 +550,15 @@ impl VoxelRenderer {
             let voxels = world.voxels.read();
             use crate::world::raycast;
             let fwd = mrot.transpose() * vec3(0.0, 0.0, 1.0);
-            let rc =
-                raycast::RaycastQuery::new_directed(player_pos, fwd, 32.0, Some(&voxels), None)
-                    .execute();
+            let rc = raycast::RaycastQuery::new_directed(
+                player_pos,
+                fwd,
+                32.0,
+                &world,
+                Some(&voxels),
+                None,
+            )
+            .execute();
             if let raycast::Hit::Voxel { position, .. } = rc.hit {
                 hichunk = chunkpos_from_blockpos(position);
                 hiidx = blockidx_from_blockpos(position) as i32;

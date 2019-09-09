@@ -2,10 +2,9 @@ use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
 use crate::math::*;
 use crate::world::registry::VoxelRegistry;
 use crate::world::{
-    blockidx_from_blockpos, ChunkPosition, UncompressedChunk, WVoxels, CHUNK_DIM, CHUNK_DIM2,
+    blockidx_from_blockpos, ChunkPosition, UncompressedChunk, WVoxels, World, CHUNK_DIM, CHUNK_DIM2,
 };
 use smallvec::SmallVec;
-use std::sync::Arc;
 
 struct CubeSide {
     // counter-clockwise coords of the face
@@ -19,15 +18,28 @@ struct CubeSide {
 }
 
 pub fn mesh_from_chunk(
+    world: &World,
     voxels: &WVoxels,
     cpos: ChunkPosition,
-    registry: &VoxelRegistry,
 ) -> Option<ChunkBuffers> {
-    let mut chunks: SmallVec<[Arc<UncompressedChunk>; 32]> = SmallVec::new();
+    let registry: &VoxelRegistry = &world.vregistry;
+    let mut vcache = world.get_vcache();
+    let mut chunks: SmallVec<[&UncompressedChunk; 32]> = SmallVec::new();
     for y in -1..=1 {
         for z in -1..=1 {
             for x in -1..=1 {
-                chunks.push(voxels.get_uncompressed_chunk(cpos + vec3(x, y, z))?);
+                vcache.ensure_newest_cached(voxels, cpos + vec3(x, y, z))?;
+            }
+        }
+    }
+    for y in -1..=1 {
+        for z in -1..=1 {
+            for x in -1..=1 {
+                chunks.push(
+                    vcache
+                        .peek_uncompressed_chunk(cpos + vec3(x, y, z))
+                        .unwrap(),
+                );
             }
         }
     }
