@@ -316,7 +316,7 @@ impl StdGenerator {
 
         let mut cellgen = self
             .cell_gen
-            .get_or(|| Box::new(RefCell::new(CellGen::new(self.seed))))
+            .get_or(|| RefCell::new(CellGen::new(self.seed)))
             .borrow_mut();
 
         const VCD: i32 = CHUNK_DIM as i32;

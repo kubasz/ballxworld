@@ -406,7 +406,7 @@ impl WVoxels {
 
     fn ensure_newest_cached(&self, cpos: ChunkPosition) -> Option<()> {
         let newest = self.chunks.get(&cpos)?;
-        let cache = self.cache.get_default();
+        let cache = self.cache.get_or_default();
         let mut mcache = cache.borrow_mut();
         let cached = mcache.uncompressed_chunks.get_mut(&cpos);
         if let Some(cached) = cached {
@@ -423,7 +423,7 @@ impl WVoxels {
     /// Cached
     pub fn get_uncompressed_chunk(&self, cpos: ChunkPosition) -> Option<Arc<UncompressedChunk>> {
         self.ensure_newest_cached(cpos)?;
-        let cache = self.cache.get_default();
+        let cache = self.cache.get_or_default();
         let mut mcache = cache.borrow_mut();
         Some(mcache.uncompressed_chunks.get(&cpos)?.clone())
     }
@@ -431,7 +431,7 @@ impl WVoxels {
     pub fn get_block(&self, bpos: BlockPosition) -> Option<VoxelDatum> {
         let cpos = chunkpos_from_blockpos(bpos);
         self.ensure_newest_cached(cpos)?;
-        let cache = self.cache.get_default();
+        let cache = self.cache.get_or_default();
         let mut mcache = cache.borrow_mut();
         Some(
             mcache.uncompressed_chunks.get(&cpos)?.clone().blocks_yzx[blockidx_from_blockpos(bpos)],

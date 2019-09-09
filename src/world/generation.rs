@@ -51,7 +51,7 @@ impl WorldLoadGen {
         self.worker_threads.reserve_exact(NUM_WORKERS);
         let (tx, rx) = mpsc::channel();
         self.work_receiver.clear();
-        self.work_receiver.get_or(move || Box::new(rx));
+        self.work_receiver.get_or(move || rx);
         for _ in 0..NUM_WORKERS {
             let tb = thread::Builder::new()
                 .name("bxw-worldgen".to_owned())
