@@ -16,14 +16,14 @@ use std::sync::Arc;
 use std::sync::{mpsc, Weak};
 use std::thread;
 use thread_local::CachedThreadLocal;
-use vulkano::buffer::{BufferUsage, CpuBufferPool, ImmutableBuffer, TypedBufferAccess};
+use vulkano::buffer::{BufferUsage, CpuBufferPool, ImmutableBuffer, TypedBufferAccess, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBuffer};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::descriptor::DescriptorSet;
 use vulkano::framebuffer::Subpass;
-use vulkano::image::ImmutableImage;
+use vulkano::image::{ImmutableImage, ImageUsage, ImageLayout, MipmapsCount, ImageAccess};
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
-use vulkano::sampler::Sampler;
+use vulkano::sampler::{Sampler, Filter};
 use vulkano::sync::GpuFuture;
 
 #[allow(clippy::ref_in_deref)] // in impl_vertex! macro
@@ -116,9 +116,9 @@ impl VoxelRenderer {
         use vulkano::sampler::*;
         let texture_sampler = Sampler::new(
             rctx.device.clone(),
-            Filter::Nearest,
-            Filter::Nearest,
-            MipmapMode::Nearest,
+            Filter::Linear,
+            Filter::Linear,
+            MipmapMode::Linear,
             SamplerAddressMode::Repeat,
             SamplerAddressMode::Repeat,
             SamplerAddressMode::ClampToEdge,
@@ -258,17 +258,70 @@ impl VoxelRenderer {
             array_layers: numimages,
         };
         let queue = rctx.queues.lock_primary_queue();
-        let (vimg, vfuture) = ImmutableImage::from_iter(
-            rawdata.iter().copied(),
-            vdim,
-            vulkano::format::R8G8B8A8Srgb,
-            queue.clone(),
-        )
-        .expect("Could not create voxel texture array");
-        vfuture
-            .then_signal_fence()
-            .wait(None)
-            .expect("Could not upload voxel texture array");
+        let vimg =
+            {
+                let buf = CpuAccessibleBuffer::from_iter(rctx.device.clone(),
+                BufferUsage::transfer_source(), rawdata.into_iter())
+                    .expect("Could not create voxel texture upload buffer");
+                let usage = ImageUsage {
+                    transfer_destination: true,
+                    transfer_source: true,
+                    sampled: true,
+                    ..ImageUsage::none()
+                };
+                let layout = ImageLayout::ShaderReadOnlyOptimal;
+
+                let (img, init) =
+                    ImmutableImage::uninitialized(rctx.device.clone(),
+                                                  vdim,
+                                                  vulkano::format::R8G8B8A8Srgb,
+                                                  MipmapsCount::Log2,
+                                                  usage,
+                                                  layout,
+                                                  rctx.device.active_queue_families())
+                        .expect("Could not create voxel texture image");
+
+                let mut cb = AutoCommandBufferBuilder::new(rctx.device.clone(), queue.family()).unwrap()
+                    .copy_buffer_to_image_dimensions(buf,
+                                                     init,
+                                                     [0, 0, 0],
+                                                     vdim.width_height_depth(),
+                                                     0,
+                                                     vdim.array_layers_with_cube(),
+                                                     0)
+                    .unwrap();
+
+                for mip in 1 .. img.mipmap_levels() {
+                    let mipw = (idim.0 >> mip).max(1) as i32;
+                    let miph = (idim.1 >> mip).max(1) as i32;
+                    cb = cb.blit_image(
+                        img.clone(),
+                        [0,0,0],
+                        [mipw*2, miph*2, 1],
+                        0,
+                        mip-1,
+                        img.clone(),
+                        [0,0,0],
+                        [mipw, miph, 1],
+                        0,
+                        mip,
+                        vdim.array_layers(),
+                        Filter::Linear,
+                    ).unwrap();
+                }
+
+                let cb = cb.build()
+                    .unwrap();
+
+                let future = match cb.execute(queue.clone()) {
+                    Ok(f) => f,
+                    Err(_) => unreachable!(),
+                };
+
+                future.then_signal_fence().wait(None).expect("Could not upload voxel texture array");
+
+                img
+            };
 
         (vimg, names)
     }
