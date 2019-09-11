@@ -1,4 +1,4 @@
-use std::ffi::{CString, CStr};
+use std::ffi::{CString, CStr, c_void};
 use std::marker::PhantomData;
 use std::sync::{Arc};
 use parking_lot::{Mutex, MutexGuard};
@@ -12,6 +12,7 @@ use vk_mem as vma;
 use std::os::raw::c_char;
 use ash::vk::Handle;
 use num_traits::clamp;
+use std::mem::ManuallyDrop;
 
 pub fn allocation_cbs() -> Option<&'static vk::AllocationCallbacks> {
     None
@@ -123,12 +124,18 @@ impl OwnedBuffer {
 
 const INFLIGHT_FRAMES: u32 = 1;
 
+pub struct DebugExts {
+    pub utils: ash::extensions::ext::DebugUtils,
+    pub debug_messenger: vk::DebugUtilsMessengerEXT,
+}
+
 pub struct RenderingHandles {
     pub window: Window,
     pub entry: ash::Entry,
     pub instance: ash::Instance,
     pub ext_surface: ash::extensions::khr::Surface,
     pub ext_swapchain: ash::extensions::khr::Swapchain,
+    pub ext_debug: Option<DebugExts>,
     pub surface: vk::SurfaceKHR,
     pub surface_format: vk::SurfaceFormatKHR,
     pub physical: vk::PhysicalDevice,
@@ -156,9 +163,9 @@ pub struct Swapchain {
 
 pub struct RenderingContext {
     // basic handles
-    pub handles: RenderingHandles,
+    pub handles: ManuallyDrop<RenderingHandles>,
     // swapchain
-    pub swapchain: Swapchain,
+    pub swapchain: ManuallyDrop<Swapchain>,
     frame_index: u32,
     // default render set
     pub cmd_pool: vk::CommandPool,
@@ -195,6 +202,32 @@ pub type PrePassFrameContext<'r> = FrameContext<'r, PrePassStage>;
 pub type InPassFrameContext<'r> = FrameContext<'r, InPassStage>;
 pub type PostPassFrameContext<'r> = FrameContext<'r, PostPassStage>;
 
+extern "system" fn debug_msg_callback(
+    msg_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    msg_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    cb_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    udata: *mut c_void,
+) -> vk::Bool32 {
+    if cb_data.is_null() {
+        return vk::FALSE;
+    }
+    let cb_data: &vk::DebugUtilsMessengerCallbackDataEXT = unsafe{&*cb_data};
+    let str_severity = match msg_severity {
+        vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => "verb",
+        vk::DebugUtilsMessageSeverityFlagsEXT::INFO => "info",
+        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => "WARN",
+        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => "ERR!",
+        _ => "????",
+    };
+    let str_msg = format!("{} [#{} {}]",
+        unsafe{CStr::from_ptr(cb_data.p_message)}.to_string_lossy(),
+        cb_data.message_id_number,
+        unsafe{CStr::from_ptr(cb_data.p_message_id_name)}.to_string_lossy(),
+    );
+    eprintln!("[{}] {}", str_severity, str_msg);
+    vk::FALSE
+}
+
 impl RenderingHandles {
     fn new(sdl_video: &sdl2::VideoSubsystem, cfg: &Config) -> Self {
         sdl_video.vulkan_load_library_default().unwrap();
@@ -209,7 +242,7 @@ impl RenderingHandles {
         }
         let window = window.build().expect("Failed to create the game window");
         let entry = ash::Entry::new().expect("Can't load Vulkan system library entrypoints");
-        let instance = Self::create_instance(&entry, &window);
+        let (instance, ext_debug) = Self::create_instance(&entry, &window, cfg);
         let ext_surface = ash::extensions::khr::Surface::new(&entry, &instance);
         let surface = {
             let sdlvki = instance.handle().as_raw() as sdl2::video::VkInstance;
@@ -379,6 +412,7 @@ impl RenderingHandles {
             instance,
             ext_surface,
             ext_swapchain,
+            ext_debug,
             surface,
             surface_format,
             physical,
@@ -389,35 +423,47 @@ impl RenderingHandles {
         }
     }
 
-    fn create_instance(entry: &ash::Entry, window: &Window) -> ash::Instance {
+    fn create_instance(entry: &ash::Entry, window: &Window, cfg: &Config) -> (ash::Instance, Option<DebugExts>) {
         let app_name = CString::new("BallX World").unwrap();
         let engine_name = CString::new("BallX World Engine").unwrap();
-
 
         let sdl_exts = window
             .vulkan_instance_extensions()
             .expect("Couldn't get a list of the required VK instance extensions");
         let avail_exts = entry.enumerate_instance_extension_properties().expect("Could not enumerate available Vulkan extensions");
-        let raw_exts: Vec<CString> =
+        let avail_enames: Vec<&CStr> = avail_exts.iter().map(|e| unsafe{CStr::from_ptr(e.extension_name.as_ptr())}).collect();
+        let mut raw_exts: Vec<CString> =
             sdl_exts
                 .into_iter()
                 .map(|x| CString::new(x).expect("Invalid required VK instance extension")).collect();
-        if cfg!(debug) {
-            // TODO: Debug utils extensions
-        }
         for ext in raw_exts.iter() {
-            let available = avail_exts.iter().any(|e| {
-                let en = unsafe{CStr::from_ptr(e.extension_name.as_ptr())};
-                en == ext.as_ref()
-            });
+            let available = avail_enames.contains(&ext.as_c_str());
             if !available {
                 panic!("Required Vulkan extension {} not present on this system! Update your drivers", ext.to_str().unwrap());
             }
         }
 
+        let avail_layers = entry.enumerate_instance_layer_properties().expect("Could not enumerate available Vulkan layers");
+        let avail_lnames: Vec<&CStr> = avail_layers.iter().map(|l| unsafe{CStr::from_ptr(l.layer_name.as_ptr())}).collect();
+        let mut raw_layers: Vec<CString> = Vec::new();
+
+        let mut has_debug = false;
+        if cfg.vk_debug_layers {
+            let duname = ash::extensions::ext::DebugUtils::name();
+            if avail_enames.contains(&duname) {
+                raw_exts.push(duname.to_owned());
+                has_debug = true;
+            }
+            let lname = CString::new("VK_LAYER_KHRONOS_validation").unwrap();
+            if avail_lnames.contains(&lname.as_c_str()) {
+                raw_layers.push(lname);
+            }
+        }
+
         let enabled_exts: Vec<*const c_char> =
             raw_exts.iter().map(|s| s.as_ptr()).collect();
-
+        let enabled_layers: Vec<*const c_char> =
+            raw_layers.iter().map(|s| s.as_ptr()).collect();
 
         let ai = vk::ApplicationInfo::builder()
             .api_version(vk_make_version!(1, 1, 0))
@@ -427,15 +473,31 @@ impl RenderingHandles {
             .engine_name(&engine_name);
         let ici = vk::InstanceCreateInfo::builder()
             .application_info(&ai)
-            .enabled_layer_names(&[])
+            .enabled_layer_names(&enabled_layers)
             .enabled_extension_names(&enabled_exts);
-        unsafe {
+        let instance = unsafe {
             entry.create_instance(&ici, allocation_cbs())
-        }.expect("Couldn't create Vulkan instance")
+        }.expect("Couldn't create Vulkan instance");
+
+        if has_debug {
+            let utils = ash::extensions::ext::DebugUtils::new(entry, &instance);
+            let mci = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+                .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
+                .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
+                .pfn_user_callback(Some(debug_msg_callback));
+            let msg = unsafe{utils.create_debug_utils_messenger(&mci, allocation_cbs())}.expect("Couldn't create debug messenger");
+            eprintln!("Created Vulkan debug messenger");
+            let ext_debug = DebugExts {
+                utils, debug_messenger: msg
+            };
+            (instance, Some(ext_debug))
+        } else {
+            (instance, None)
+        }
     }
 
     pub fn destroy(self) {
-        let Self{window, instance, ext_surface, surface, device, vmalloc, mainpass, ..} = self;
+        let Self{window, instance, ext_surface, ext_debug, surface, device, vmalloc, mainpass, ..} = self;
         if mainpass != vk::RenderPass::null() {
             unsafe{device.destroy_render_pass(mainpass, allocation_cbs());}
         }
@@ -443,6 +505,9 @@ impl RenderingHandles {
         vmalloc.destroy();
         unsafe {ext_surface.destroy_surface(surface, allocation_cbs());}
         unsafe {device.destroy_device(allocation_cbs());}
+        if let Some(ext_debug) = ext_debug {
+            unsafe {ext_debug.utils.destroy_debug_utils_messenger(ext_debug.debug_messenger, allocation_cbs());}
+        }
         unsafe {instance.destroy_instance(allocation_cbs());}
         drop(window);
     }
@@ -670,6 +735,28 @@ impl Swapchain {
     }
 }
 
+impl Drop for RenderingContext {
+    fn drop(&mut self) {
+        if self.handles.device.handle() == vk::Device::null() {
+            return;
+        }
+        unsafe{self.handles.device.device_wait_idle().unwrap();}
+        if self.pipeline_cache != vk::PipelineCache::null() {
+            unsafe{self.handles.device.destroy_pipeline_cache(self.pipeline_cache, allocation_cbs());}
+            self.pipeline_cache = vk::PipelineCache::null();
+        }
+        self.inflight_cmds.clear();
+        if self.cmd_pool != vk::CommandPool::null() {
+            unsafe{self.handles.device.destroy_command_pool(self.cmd_pool, allocation_cbs());}
+            self.cmd_pool = vk::CommandPool::null();
+        }
+        unsafe {
+            ManuallyDrop::drop(&mut self.swapchain);
+            ManuallyDrop::drop(&mut self.handles);
+        }
+    }
+}
+
 impl RenderingContext {
     pub fn new(sdl_video: &sdl2::VideoSubsystem, cfg: &Config) -> RenderingContext {
         let handles = RenderingHandles::new(sdl_video, cfg);
@@ -697,8 +784,8 @@ impl RenderingContext {
         assert_eq!(inflight_cmds.len(), INFLIGHT_FRAMES as usize);
 
         RenderingContext {
-            handles,
-            swapchain,
+            handles: ManuallyDrop::new(handles),
+            swapchain: ManuallyDrop::new(swapchain),
             frame_index: 0,
             cmd_pool,
             inflight_cmds,

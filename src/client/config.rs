@@ -13,6 +13,7 @@ pub struct Config {
 
     /// not in TOML
     pub debug_logging: bool,
+    pub vk_debug_layers: bool,
 
     toml_doc: Option<toml_edit::Document>,
 }
@@ -32,6 +33,7 @@ impl Config {
             performance_draw_distance: 4,
 
             debug_logging: true, //cfg!(debug_assertions),
+            vk_debug_layers: true,
 
             toml_doc: None,
         }
