@@ -1,7 +1,7 @@
 #![allow(unused_variables)]
 use crate::client::config::Config;
 use crate::client::input::InputManager;
-use crate::client::render::{RenderingContext};
+use crate::client::render::RenderingContext;
 use crate::client::world::{CameraSettings, ClientWorld};
 use crate::math::*;
 use crate::world;
