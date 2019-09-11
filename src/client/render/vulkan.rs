@@ -1,96 +1,169 @@
-use std::ffi::CString;
+use std::ffi::{CString, CStr};
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex, MutexGuard};
-
+use std::sync::{Arc};
+use parking_lot::{Mutex, MutexGuard};
 use sdl2::video::Window;
-
 use crate::client::config::Config;
-
 use std::cmp::max;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
-use vulkano::device::{Device, Queue};
-use vulkano::format::Format;
-use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
-use vulkano::image::{AttachmentImage, SwapchainImage};
-use vulkano::instance::{Instance, InstanceExtensions, PhysicalDevice, RawInstanceExtensions};
-use vulkano::pipeline::viewport::Viewport;
-use vulkano::swapchain::{
-    AcquireError, PresentMode, Surface, SurfaceTransform, Swapchain, SwapchainAcquireFuture,
-    SwapchainCreationError,
-};
-use vulkano::sync::{Fence, FenceSignalFuture, FlushError, GpuFuture, NowFuture};
-use vulkano::{app_info_from_cargo_toml, single_pass_renderpass};
+use ash::vk;
+use ash::vk_make_version;
+use ash::version::{EntryV1_0, InstanceV1_0, DeviceV1_0};
+use vk_mem as vma;
+use std::os::raw::c_char;
+use ash::vk::Handle;
+use num_traits::clamp;
 
-pub type QueueGuard<'a> = MutexGuard<'a, Arc<Queue>>;
+pub fn allocation_cbs() -> Option<&'static vk::AllocationCallbacks> {
+    None
+}
+
+pub type QueueGuard<'a> = MutexGuard<'a, vk::Queue>;
+/// (queue, family)
+pub type QueuePair = (Mutex<vk::Queue>, u32);
 
 pub enum Queues {
     /// Combined Graphics+Transfer+Compute queue
-    Combined(Mutex<Arc<Queue>>),
+    Combined(QueuePair),
     /// Two queues from the same G+T+C family
     Dual {
-        render: Mutex<Arc<Queue>>,
-        gtransfer: Mutex<Arc<Queue>>,
+        render: QueuePair,
+        gtransfer: QueuePair,
     },
 }
 
 impl Queues {
+    pub fn get_primary_family(&self) -> u32 {
+        match self {
+            Queues::Combined(q) => q.1,
+            Queues::Dual { render, .. } => render.1,
+        }
+    }
+
+    pub fn get_gtransfer_family(&self) -> u32 {
+        match self {
+            Queues::Combined(q) => q.1,
+            Queues::Dual { gtransfer, .. } => gtransfer.1,
+        }
+    }
+
     pub fn lock_primary_queue(&self) -> QueueGuard {
         match self {
-            Queues::Combined(q) => q.lock().unwrap(),
-            Queues::Dual { render, .. } => render.lock().unwrap(),
+            Queues::Combined(q) => q.0.lock(),
+            Queues::Dual { render, .. } => render.0.lock(),
         }
     }
 
     /// Warning: might lock main queue if gtransfer not present!
     pub fn lock_gtransfer_queue(&self) -> QueueGuard {
         match self {
-            Queues::Combined(q) => q.lock().unwrap(),
-            Queues::Dual { gtransfer, .. } => gtransfer.lock().unwrap(),
+            Queues::Combined(q) => q.0.lock(),
+            Queues::Dual { gtransfer, .. } => gtransfer.0.lock(),
         }
     }
 }
 
-pub trait WaitableFuture: GpuFuture {
-    fn wait_or_noop(&mut self);
+#[derive(Copy, Clone, Default)]
+pub struct DynamicState {
+    pub viewport: vk::Viewport
 }
 
-impl<F> WaitableFuture for FenceSignalFuture<F>
-where
-    F: GpuFuture,
-{
-    fn wait_or_noop(&mut self) {
-        self.wait(None).unwrap();
+#[derive(Default)]
+pub struct OwnedImage {
+    pub image: vk::Image,
+    pub allocation: Option<(vma::Allocation, vma::AllocationInfo)>,
+}
+
+impl OwnedImage {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn from(vmalloc: &mut vma::Allocator, img_info: &vk::ImageCreateInfo, mem_info: &vma::AllocationCreateInfo) -> Self {
+        let r = vmalloc.create_image(img_info, mem_info).expect("Could not create Vulkan image");
+        Self {
+            image: r.0,
+            allocation: Some((r.1, r.2)),
+        }
+    }
+
+    pub fn destroy(&mut self, vmalloc: &mut vma::Allocator) {
+        if self.allocation.is_some() {
+            vmalloc.destroy_image(self.image, &self.allocation.take().unwrap().0).unwrap();
+            self.image = vk::Image::null();
+        }
     }
 }
 
-impl WaitableFuture for NowFuture {
-    fn wait_or_noop(&mut self) {
-        // noop
+#[derive(Default)]
+pub struct OwnedBuffer {
+    pub buffer: vk::Buffer,
+    pub allocation: Option<(vma::Allocation, vma::AllocationInfo)>,
+}
+
+impl OwnedBuffer {
+    pub fn new() -> Self {
+        Default::default()
     }
+
+    pub fn from(vmalloc: &mut vma::Allocator, buf_info: &vk::BufferCreateInfo, mem_info: &vma::AllocationCreateInfo) -> Self {
+        let r = vmalloc.create_buffer(buf_info, mem_info).expect("Could not create Vulkan buffer");
+        Self {
+            buffer: r.0,
+            allocation: Some((r.1, r.2)),
+        }
+    }
+
+    pub fn destroy(&mut self, vmalloc: &mut vma::Allocator) {
+        if self.allocation.is_some() {
+            vmalloc.destroy_buffer(self.buffer, &self.allocation.take().unwrap().0).unwrap();
+            self.buffer = vk::Buffer::null();
+        }
+    }
+}
+
+const INFLIGHT_FRAMES: u32 = 1;
+
+pub struct RenderingHandles {
+    pub window: Window,
+    pub entry: ash::Entry,
+    pub instance: ash::Instance,
+    pub ext_surface: ash::extensions::khr::Surface,
+    pub ext_swapchain: ash::extensions::khr::Swapchain,
+    pub surface: vk::SurfaceKHR,
+    pub surface_format: vk::SurfaceFormatKHR,
+    pub physical: vk::PhysicalDevice,
+    pub device: ash::Device,
+    pub queues: Arc<Queues>,
+    pub vmalloc: Mutex<vma::Allocator>,
+    pub mainpass: vk::RenderPass,
+}
+
+pub struct Swapchain {
+    pub swapchain: vk::SwapchainKHR,
+    pub swapimage_size: vk::Extent2D,
+    pub swapimages: Vec<vk::Image>,
+    pub swapimageviews: Vec<vk::ImageView>,
+    pub depth_image: OwnedImage,
+    pub depth_view: vk::ImageView,
+    pub inflight_render_finished_semaphores: Vec<vk::Semaphore>,
+    pub inflight_image_available_semaphores: Vec<vk::Semaphore>,
+    pub inflight_fences: Vec<vk::Fence>,
+    pub inflight_index: u32,
+    pub outdated: bool,
+    pub dynamic_state: DynamicState,
+    pub framebuffers: Vec<vk::Framebuffer>,
 }
 
 pub struct RenderingContext {
     // basic handles
-    pub window: Window,
-    pub instance_extensions: InstanceExtensions,
-    pub instance: Arc<Instance>,
-    pub surface: Arc<Surface<()>>,
-    pub device: Arc<Device>,
-    pub queues: Arc<Queues>,
-    pub sync_transfer_fence: Fence,
+    pub handles: RenderingHandles,
     // swapchain
-    pub swapchain: Arc<Swapchain<()>>,
-    pub swapimages: Vec<Arc<SwapchainImage<()>>>,
-    previous_frame_future: Box<dyn WaitableFuture>,
-    pub outdated_swapchain: bool,
+    pub swapchain: Swapchain,
+    frame_index: u32,
     // default render set
-    pub mainpass: Arc<dyn RenderPassAbstract + Send + Sync>,
-    pub framebuffers: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
-    pub dynamic_state: DynamicState,
-    // GUI-related handles
-    pub gui_renderer: conrod_vulkano::Renderer,
-    pub gui: conrod_core::Ui,
-    pub gui_image_map: conrod_core::image::Map<conrod_vulkano::Image>,
+    pub cmd_pool: vk::CommandPool,
+    pub inflight_cmds: Vec<vk::CommandBuffer>,
+    pub pipeline_cache: vk::PipelineCache,
 }
 
 pub trait FrameStage {}
@@ -110,65 +183,20 @@ impl FrameStage for PostPassStage {}
 #[must_use]
 pub struct FrameContext<'r, Stage: FrameStage> {
     pub rctx: &'r mut RenderingContext,
-    pub cmd: Option<AutoCommandBufferBuilder>,
+    pub cmd: vk::CommandBuffer,
     pub delta_time: f64,
     pub dims: [u32; 2],
-    pub image_num: usize,
-    acquire_future: SwapchainAcquireFuture<()>,
+    pub image_index: usize,
+    pub inflight_index: usize,
     _phantom: PhantomData<Stage>,
-}
-
-impl<'r, Stage: FrameStage> FrameContext<'r, Stage> {
-    /// Replaces cmd with None, so that it can be modified and put back
-    #[must_use]
-    pub fn replace_cmd(&mut self) -> AutoCommandBufferBuilder {
-        std::mem::replace(&mut self.cmd, None).unwrap()
-    }
 }
 
 pub type PrePassFrameContext<'r> = FrameContext<'r, PrePassStage>;
 pub type InPassFrameContext<'r> = FrameContext<'r, InPassStage>;
 pub type PostPassFrameContext<'r> = FrameContext<'r, PostPassStage>;
 
-fn generate_updated_framebuffers(
-    swapimages: &[Arc<SwapchainImage<()>>],
-    mainpass: Arc<dyn RenderPassAbstract + Send + Sync>,
-    dynamic_state: &mut DynamicState,
-) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
-    let dimensions = swapimages[0].dimensions();
-
-    let depth_image = AttachmentImage::transient(
-        mainpass.device().clone(),
-        dimensions,
-        vulkano::format::D32Sfloat_S8Uint,
-    )
-    .unwrap();
-
-    let viewport = Viewport {
-        origin: [0.0, 0.0],
-        dimensions: [dimensions[0] as f32, dimensions[1] as f32],
-        depth_range: 0.0..1.0,
-    };
-    dynamic_state.viewports = Some(vec![viewport]);
-
-    swapimages
-        .iter()
-        .map(|img| {
-            Arc::new(
-                Framebuffer::start(mainpass.clone())
-                    .add(img.clone())
-                    .unwrap()
-                    .add(depth_image.clone())
-                    .unwrap()
-                    .build()
-                    .unwrap(),
-            ) as Arc<dyn FramebufferAbstract + Send + Sync>
-        })
-        .collect::<Vec<_>>()
-}
-
-impl RenderingContext {
-    pub fn new(sdl_video: &sdl2::VideoSubsystem, cfg: &Config) -> RenderingContext {
+impl RenderingHandles {
+    fn new(sdl_video: &sdl2::VideoSubsystem, cfg: &Config) -> Self {
         sdl_video.vulkan_load_library_default().unwrap();
         let mut window = sdl_video.window("BallX World", cfg.window_width, cfg.window_height);
         window
@@ -180,278 +208,553 @@ impl RenderingContext {
             window.fullscreen();
         }
         let window = window.build().expect("Failed to create the game window");
-        let instance_extensions;
-        let instance = {
-            let sdl_exts = window
-                .vulkan_instance_extensions()
-                .expect("Couldn't get a list of the required VK instance extensions");
-            let raw_exts = RawInstanceExtensions::new(
-                sdl_exts
-                    .into_iter()
-                    .map(|x| CString::new(x).expect("Invalid required VK instance extension")),
-            );
-            instance_extensions = InstanceExtensions::from(&raw_exts);
-            Instance::new(
-                Some(&app_info_from_cargo_toml!()),
-                &instance_extensions,
-                None,
-            )
-        }
-        .expect("Failed to create Vulkan instance");
-        let surface = Arc::new(unsafe {
-            use vulkano::VulkanObject;
-            let sdlvki = instance.internal_object() as sdl2::video::VkInstance;
+        let entry = ash::Entry::new().expect("Can't load Vulkan system library entrypoints");
+        let instance = Self::create_instance(&entry, &window);
+        let ext_surface = ash::extensions::khr::Surface::new(&entry, &instance);
+        let surface = {
+            let sdlvki = instance.handle().as_raw() as sdl2::video::VkInstance;
             let rsurf = window
                 .vulkan_create_surface(sdlvki)
                 .expect("Couldn't create VK surface") as u64;
-            Surface::from_raw_surface(instance.clone(), rsurf, ())
-        });
-        let physical = PhysicalDevice::enumerate(&instance)
-            .next()
+            vk::SurfaceKHR::from_raw(rsurf)
+        };
+        let physical = unsafe {
+            instance.enumerate_physical_devices()
+        }.expect("Could not enumerate Vulkan physical devices")
+            .into_iter().next()
             .expect("no device available");
+        let pprop = unsafe {instance.get_physical_device_properties(physical)};
+        let pname = unsafe {CStr::from_ptr(pprop.device_name.as_ptr())}.to_string_lossy();
 
-        println!("Choosing device {}", physical.name());
-        for family in physical.queue_families() {
+        println!("Choosing device {}", pname);
+        let qfamilies = unsafe {instance.get_physical_device_queue_family_properties(physical)};
+        for family in qfamilies.iter() {
             println!(
                 "Found a queue family with {:?} queue(s)",
-                family.queues_count()
+                family.queue_count
             );
         }
 
-        let queue_family = physical
-            .queue_families()
-            .find(|&q| {
-                q.supports_graphics()
-                    && q.supports_compute()
-                    && surface.is_supported(q).unwrap_or(false)
-            })
+        let queue_family = qfamilies.iter().enumerate()
+            .find(|(i, &q)| {
+                    q.queue_flags.contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE)
+                    && unsafe {
+                    ext_surface.get_physical_device_surface_support(physical, *i as u32, surface)
+                }
+            }
+            )
+            .map(|(i,q)| (i as u32, q))
             .expect("couldn't find a graphical queue family");
         let queue_cnt;
-        let (device, mut queues) = {
-            let device_ext = vulkano::device::DeviceExtensions {
-                khr_swapchain: true,
-                ..vulkano::device::DeviceExtensions::none()
-            };
-            let mut queue_families = Vec::new();
-            queue_families.push((queue_family, 0.75)); // graphics queue
-            if queue_family.queues_count() > 1 {
-                queue_families.push((queue_family, 0.25)); // voxel transfer queue
-                queue_cnt = 2;
-            } else {
-                queue_cnt = 1;
+        let device = {
+            let raw_exts: Vec<&'static CStr> = vec![
+                ash::extensions::khr::Swapchain::name()
+            ];
+            let exts: Vec<*const c_char> = raw_exts.iter().map(|s| s.as_ptr()).collect();
+            let avail_exts = unsafe {instance.enumerate_device_extension_properties(physical)}.expect("Can't enumerate VkDevice extensions");
+            for ext in raw_exts.iter() {
+                let available = avail_exts.iter().any(|e| {
+                    let en = unsafe{CStr::from_ptr(e.extension_name.as_ptr())};
+                    en == *ext
+                });
+                if !available {
+                    panic!("Required Vulkan Device extension {} not present on selected device!", ext.to_str().unwrap());
+                }
             }
-            Device::new(
-                physical,
-                physical.supported_features(),
-                &device_ext,
-                queue_families,
-            )
-            .expect("failed to create device")
+            let features = vk::PhysicalDeviceFeatures::builder()
+                .sampler_anisotropy(true);
+
+            queue_cnt = queue_family.1.queue_count.min(2);
+            let priorities: Vec<f32> = if queue_cnt==1 {vec![1.0]} else {vec![0.75, 0.25]};
+            let mut queue_families = Vec::new();
+            queue_families.push(vk::DeviceQueueCreateInfo {
+                queue_family_index: queue_family.0,
+                queue_count: queue_cnt,
+                p_queue_priorities: priorities.as_ptr(),
+                ..Default::default()
+            });
+
+            let dci = vk::DeviceCreateInfo::builder()
+                .enabled_extension_names(&exts)
+                .enabled_features(&features)
+                .queue_create_infos(&queue_families);
+
+            unsafe {instance.create_device(physical, &dci, None)}
+                .expect("Couldn't create Vulkan device")
         };
         let queues = if queue_cnt > 1 {
             if cfg.debug_logging {
                 eprintln!("Creating 2 Vulkan queues for asynchronous operations");
             }
-            let rqueue = queues.next().expect("Couldn't create rendering queue");
-            let tqueue = queues.next().expect("Couldn't create voxel-transfer queue");
+            let rqueue = unsafe {device.get_device_queue(queue_family.0, 0) };
+            let tqueue = unsafe {device.get_device_queue(queue_family.0, 1) };
             Queues::Dual {
-                render: Mutex::new(rqueue),
-                gtransfer: Mutex::new(tqueue),
+                render: (Mutex::new(rqueue), queue_family.0),
+                gtransfer: (Mutex::new(tqueue), queue_family.0),
             }
         } else {
             if cfg.debug_logging {
                 eprintln!("Creating 1 Vulkan queue - more are not supported");
             }
-            let queue = queues.next().expect("Couldn't create rendering queue");
-            Queues::Combined(Mutex::new(queue))
+            let rqueue = unsafe {device.get_device_queue(queue_family.0, 0) };
+            Queues::Combined((Mutex::new(rqueue), queue_family.0))
         };
 
-        let queue = queues.lock_primary_queue();
-
-        let (swapchain, swapimages) = {
-            let caps = surface
-                .capabilities(physical)
-                .expect("failed to get surface capabilities");
-            let dimensions = caps.current_extent.unwrap_or([1280, 720]);
-            let alpha = caps.supported_composite_alpha.iter().next().unwrap();
-            let format = caps.supported_formats[0].0;
-            Swapchain::new(
-                device.clone(),
-                surface.clone(),
-                max(3, 1 + caps.min_image_count),
-                format,
-                dimensions,
-                1,
-                caps.supported_usage_flags,
-                &queue.clone(),
-                SurfaceTransform::Identity,
-                alpha,
-                if caps.present_modes.mailbox && !cfg.render_wait_for_vsync {
-                    PresentMode::Mailbox
-                } else {
-                    PresentMode::Fifo
-                },
-                true,
-                None,
-            )
-            .expect("failed to create swapchain")
+        let vmalloc = {
+            let ai = vma::AllocatorCreateInfo {
+                flags: vma::AllocatorCreateFlags::EXTERNALLY_SYNCHRONIZED | vma::AllocatorCreateFlags::KHR_DEDICATED_ALLOCATION,
+                instance: instance.clone(),
+                physical_device: physical,
+                device: device.clone(),
+                frame_in_use_count: INFLIGHT_FRAMES,
+                heap_size_limits: None,
+                preferred_large_heap_block_size: 0,
+            };
+            vma::Allocator::new(&ai).expect("Could not create Vulkan memory allocator")
         };
 
-        let mainpass = Arc::new(
-            single_pass_renderpass!(device.clone(),
-                attachments: {
-                    color: {
-                        load: Clear,
-                        store: Store,
-                        format: swapchain.format(),
-                        samples: 1,
-                    },
-                    depth: {
-                        load: Clear,
-                        store: DontCare,
-                        format: Format::D32Sfloat_S8Uint,
-                        samples: 1,
-                    }
-                },
-                pass: {
-                    color: [color],
-                    depth_stencil: {depth}
-                }
-            )
-            .unwrap(),
-        );
+        let ext_swapchain = ash::extensions::khr::Swapchain::new(&instance, &device);
 
-        let mut dynamic_state = DynamicState {
-            line_width: None,
-            viewports: None,
-            scissors: None,
+        let formats = unsafe{ext_surface.get_physical_device_surface_formats(physical, surface)}
+            .expect("Failed to get surface formats");
+        let surface_format = *formats.iter()
+            .find(|f| f.format == vk::Format::B8G8R8A8_UNORM && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR)
+            .or_else(|| formats.iter().find(|f| f.format == vk::Format::R8G8B8A8_UNORM && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR))
+            .unwrap_or(&formats[0]);
+
+        let mainpass = {
+            let color_at = vk::AttachmentDescription::builder()
+                .format(surface_format.format)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .build();
+            let depth_at = vk::AttachmentDescription::builder()
+                .format(vk::Format::D32_SFLOAT_S8_UINT)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                .build();
+            let color_ref = vk::AttachmentReference::builder()
+                .attachment(0)
+                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .build();
+            let depth_ref = vk::AttachmentReference::builder()
+                .attachment(1)
+                .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                .build();
+            let color_refs = [color_ref];
+            let ats = [color_at, depth_at];
+            let deps = [vk::SubpassDependency::builder()
+                .src_subpass(vk::SUBPASS_EXTERNAL)
+                .dst_subpass(0)
+                .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .src_access_mask(vk::AccessFlags::empty())
+                .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE).build()];
+            let subpass = vk::SubpassDescription::builder()
+                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+                .color_attachments(&color_refs)
+                .depth_stencil_attachment(&depth_ref)
+                .build();
+            let subpasses = [subpass];
+            let rpci = vk::RenderPassCreateInfo::builder()
+                .attachments(&ats)
+                .subpasses(&subpasses)
+                .dependencies(&deps);
+            unsafe{device.create_render_pass(&rpci, allocation_cbs())}.expect("Could not create Vulkan renderpass")
         };
 
-        let framebuffers =
-            generate_updated_framebuffers(&swapimages, mainpass.clone(), &mut dynamic_state);
+        Self {
+            window,
+            entry,
+            instance,
+            ext_surface,
+            ext_swapchain,
+            surface,
+            surface_format,
+            physical,
+            device,
+            queues: Arc::new(queues),
+            vmalloc: Mutex::new(vmalloc),
+            mainpass,
+        }
+    }
 
-        let previous_frame_future = Box::new(vulkano::sync::now(device.clone()));
+    fn create_instance(entry: &ash::Entry, window: &Window) -> ash::Instance {
+        let app_name = CString::new("BallX World").unwrap();
+        let engine_name = CString::new("BallX World Engine").unwrap();
 
-        let dims = swapimages[0].dimensions();
 
-        let gui_renderer = conrod_vulkano::Renderer::new(
-            device.clone(),
-            Subpass::from(mainpass.clone(), 0).unwrap(),
-            queue.family(),
-            dims,
-            1.0, // FIXME: SDL2 DPI factor needs to be put here
-        )
-        .unwrap();
+        let sdl_exts = window
+            .vulkan_instance_extensions()
+            .expect("Couldn't get a list of the required VK instance extensions");
+        let avail_exts = entry.enumerate_instance_extension_properties().expect("Could not enumerate available Vulkan extensions");
+        let raw_exts: Vec<CString> =
+            sdl_exts
+                .into_iter()
+                .map(|x| CString::new(x).expect("Invalid required VK instance extension")).collect();
+        if cfg!(debug) {
+            // TODO: Debug utils extensions
+        }
+        for ext in raw_exts.iter() {
+            let available = avail_exts.iter().any(|e| {
+                let en = unsafe{CStr::from_ptr(e.extension_name.as_ptr())};
+                en == ext.as_ref()
+            });
+            if !available {
+                panic!("Required Vulkan extension {} not present on this system! Update your drivers", ext.to_str().unwrap());
+            }
+        }
 
-        let mut gui = conrod_core::UiBuilder::new([f64::from(dims[0]), f64::from(dims[1])]).build();
+        let enabled_exts: Vec<*const c_char> =
+            raw_exts.iter().map(|s| s.as_ptr()).collect();
 
-        let gui_image_map = conrod_core::image::Map::new();
 
-        gui.fonts
-            .insert_from_file("res/fonts/LiberationSans-Regular.ttf")
-            .expect("Couldn't load Liberation Sans font");
+        let ai = vk::ApplicationInfo::builder()
+            .api_version(vk_make_version!(1, 1, 0))
+            .application_version(vk_make_version!(1, 0, 0))
+            .engine_version(vk_make_version!(1, 0, 0))
+            .application_name(&app_name)
+            .engine_name(&engine_name);
+        let ici = vk::InstanceCreateInfo::builder()
+            .application_info(&ai)
+            .enabled_layer_names(&[])
+            .enabled_extension_names(&enabled_exts);
+        unsafe {
+            entry.create_instance(&ici, allocation_cbs())
+        }.expect("Couldn't create Vulkan instance")
+    }
 
-        let sync_transfer_fence = Fence::alloc_signaled(device.clone())
-            .expect("Could not create synchronous transfer GPU fence");
+    pub fn destroy(self) {
+        let Self{window, instance, ext_surface, surface, device, vmalloc, mainpass, ..} = self;
+        if mainpass != vk::RenderPass::null() {
+            unsafe{device.destroy_render_pass(mainpass, allocation_cbs());}
+        }
+        let mut vmalloc = vmalloc.into_inner();
+        vmalloc.destroy();
+        unsafe {ext_surface.destroy_surface(surface, allocation_cbs());}
+        unsafe {device.destroy_device(allocation_cbs());}
+        unsafe {instance.destroy_instance(allocation_cbs());}
+        drop(window);
+    }
+}
 
-        drop(queue);
+impl Swapchain {
+    pub fn new(handles: &RenderingHandles, cfg: &Config) -> Self {
+        let mut sch = Self {
+            swapchain: vk::SwapchainKHR::null(),
+            swapimage_size: Default::default(),
+            swapimages: Vec::new(),
+            swapimageviews: Vec::new(),
+            depth_image: OwnedImage::new(),
+            depth_view: Default::default(),
+            inflight_render_finished_semaphores: Vec::new(),
+            inflight_image_available_semaphores: Vec::new(),
+            inflight_fences: Vec::new(),
+            inflight_index: 0,
+            outdated: false,
+            dynamic_state: DynamicState::default(),
+            framebuffers: Vec::new(),
+        };
+        sch.recreate_swapchain(handles, cfg);
+        sch
+    }
+
+    fn destroy_vk_objs(&mut self, handles: &RenderingHandles, destroy_swapchain: bool) {
+        unsafe {handles.device.device_wait_idle().unwrap();}
+        for fence in self.inflight_fences.drain(..) {
+            if fence != vk::Fence::null() {
+                unsafe {handles.device.destroy_fence(fence, allocation_cbs());}
+            }
+        }
+        for semaphore in self.inflight_render_finished_semaphores.drain(..).chain(self.inflight_image_available_semaphores.drain(..)) {
+            if semaphore != vk::Semaphore::null() {
+                unsafe {handles.device.destroy_semaphore(semaphore, allocation_cbs());}
+            }
+        }
+        for fb in self.framebuffers.drain(..) {
+            if fb != vk::Framebuffer::null() {
+                unsafe {handles.device.destroy_framebuffer(fb, allocation_cbs());}
+            }
+        }
+        for iv in self.swapimageviews.drain(..) {
+            if iv != vk::ImageView::null() {
+                unsafe {handles.device.destroy_image_view(iv, allocation_cbs());}
+            }
+        }
+        for img in self.swapimages.drain(..) {
+            if img != vk::Image::null() {
+                unsafe {handles.device.destroy_image(img, allocation_cbs());}
+            }
+        }
+        if self.depth_view != vk::ImageView::null() {
+            unsafe {handles.device.destroy_image_view(self.depth_view, allocation_cbs());}
+        }
+        self.depth_image.destroy(&mut handles.vmalloc.lock());
+        if destroy_swapchain && self.swapchain != vk::SwapchainKHR::null() {
+            unsafe{handles.ext_swapchain.destroy_swapchain(self.swapchain, allocation_cbs());}
+            self.swapchain = vk::SwapchainKHR::null();
+        }
+    }
+
+    fn recreate_swapchain(&mut self, handles: &RenderingHandles, cfg: &Config) {
+        self.destroy_vk_objs(handles, false);
+        let ext_surface = &handles.ext_surface;
+        let ext_swapchain = &handles.ext_swapchain;
+        let dimensions = handles.window.vulkan_drawable_size();
+
+        if cfg.debug_logging {
+            eprintln!("Recreating swapchain with size ({}, {})", dimensions.0, dimensions.1);
+        }
+
+        let caps = unsafe{ext_surface.get_physical_device_surface_capabilities(handles.physical, handles.surface)}
+            .expect("Failed to get surface capabilities");
+
+        let present_modes = unsafe{ext_surface.get_physical_device_surface_present_modes(handles.physical, handles.surface)}
+            .expect("Failed to get surface present modes");
+
+        let present_mode: vk::PresentModeKHR = {
+            if !cfg.render_wait_for_vsync {
+                present_modes.iter().copied()
+                    .find(|p| *p == vk::PresentModeKHR::MAILBOX)
+                    .or_else(|| present_modes.iter().copied().find(|p| *p == vk::PresentModeKHR::IMMEDIATE))
+                    .unwrap_or(vk::PresentModeKHR::FIFO)
+            } else {
+                vk::PresentModeKHR::FIFO
+            }
+        };
+
+        let extent = vk::Extent2D{
+            width: clamp(dimensions.0, caps.min_image_extent.width, caps.max_image_extent.width),
+            height: clamp(dimensions.1, caps.min_image_extent.height, caps.max_image_extent.height),
+        };
+        self.swapimage_size = extent;
+
+        let image_count = u32::min(caps.min_image_count + 1, caps.max_image_count);
+
+        let (image_sharing_mode, queue_family_indices) =
+            (vk::SharingMode::EXCLUSIVE, &[handles.queues.get_primary_family()]);
+
+        let sci = vk::SwapchainCreateInfoKHR::builder()
+            .surface(handles.surface)
+            .min_image_count(image_count)
+            .image_color_space(handles.surface_format.color_space)
+            .image_format(handles.surface_format.format)
+            .image_extent(extent)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_sharing_mode(image_sharing_mode)
+            .queue_family_indices(queue_family_indices)
+            .pre_transform(caps.current_transform)
+            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+            .present_mode(present_mode)
+            .clipped(true)
+            .old_swapchain(vk::SwapchainKHR::null())
+            .image_array_layers(1);
+
+        self.swapchain = unsafe{
+            ext_swapchain.create_swapchain(&sci, allocation_cbs())
+        }.expect("Failed to create swapchain");
+
+        self.outdated = false;
+
+        self.swapimages = unsafe {ext_swapchain.get_swapchain_images(self.swapchain)
+            .expect("Failed to get swapchain images")};
+        let image_count = self.swapimages.len() as u32;
+
+        self.swapimageviews = {
+            let mut iv = Vec::with_capacity(image_count as usize);
+            for swi in self.swapimages.iter() {
+                let ivci = vk::ImageViewCreateInfo::builder()
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(handles.surface_format.format)
+                    .components(vk::ComponentMapping{
+                        r: vk::ComponentSwizzle::IDENTITY,
+                        g: vk::ComponentSwizzle::IDENTITY,
+                        b: vk::ComponentSwizzle::IDENTITY,
+                        a: vk::ComponentSwizzle::IDENTITY,
+                    })
+                    .subresource_range(vk::ImageSubresourceRange{
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .image(*swi);
+                iv.push(unsafe{handles.device.create_image_view(&ivci, allocation_cbs())}.expect("Failed to create swapchain imageview"));
+            }
+            iv
+        };
+
+        self.depth_image = {
+            let qfis = [handles.queues.get_primary_family()];
+            let ici = vk::ImageCreateInfo::builder()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(vk::Format::D32_SFLOAT_S8_UINT)
+                .extent(vk::Extent3D{width: extent.width, height: extent.height, depth: 1})
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                .queue_family_indices(&qfis)
+                .initial_layout(vk::ImageLayout::UNDEFINED);
+            let aci = vma::AllocationCreateInfo {
+                usage: vma::MemoryUsage::GpuOnly,
+                flags: vma::AllocationCreateFlags::DEDICATED_MEMORY,
+                ..Default::default()
+            };
+            OwnedImage::from(&mut handles.vmalloc.lock(), &ici, &aci)
+        };
+
+        self.depth_view = {
+            let ivci = vk::ImageViewCreateInfo::builder()
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(vk::Format::D32_SFLOAT_S8_UINT)
+                .components(vk::ComponentMapping{
+                    r: vk::ComponentSwizzle::IDENTITY,
+                    g: vk::ComponentSwizzle::IDENTITY,
+                    b: vk::ComponentSwizzle::IDENTITY,
+                    a: vk::ComponentSwizzle::IDENTITY,
+                })
+                .subresource_range(vk::ImageSubresourceRange{
+                    aspect_mask: vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .image(self.depth_image.image);
+            unsafe{handles.device.create_image_view(&ivci, allocation_cbs())}.expect("Failed to create depth imageview")
+        };
+
+        for img in self.swapimageviews.iter() {
+            let attachs = [*img, self.depth_view];
+            let fci = vk::FramebufferCreateInfo::builder()
+                .render_pass(handles.mainpass)
+                .attachments(&attachs)
+                .width(extent.width)
+                .height(extent.height)
+                .layers(1);
+            self.framebuffers.push(unsafe{handles.device.create_framebuffer(&fci, allocation_cbs())}.expect("Failed to create framebuffer"));
+        }
+
+        for _ in 0..INFLIGHT_FRAMES {
+            let sci = vk::SemaphoreCreateInfo::builder().build();
+            let rfsem = unsafe{handles.device.create_semaphore(&sci, allocation_cbs())}.expect("Could not create Vulkan semaphore");
+            let iasem = unsafe{handles.device.create_semaphore(&sci, allocation_cbs())}.expect("Could not create Vulkan semaphore");
+            self.inflight_render_finished_semaphores.push(rfsem);
+            self.inflight_image_available_semaphores.push(iasem);
+
+            let fci = vk::FenceCreateInfo::builder()
+                .flags(vk::FenceCreateFlags::SIGNALED).build();
+            let iff = unsafe{handles.device.create_fence(&fci, allocation_cbs())}.expect("Could not create Vulkan fence");
+            self.inflight_fences.push(iff);
+        }
+
+        self.dynamic_state.viewport = vk::Viewport {
+            x: 0.0, y:0.0,
+            width: extent.width as f32, height: extent.height as f32,
+            min_depth: 0.0, max_depth: 1.0
+        };
+    }
+}
+
+impl RenderingContext {
+    pub fn new(sdl_video: &sdl2::VideoSubsystem, cfg: &Config) -> RenderingContext {
+        let handles = RenderingHandles::new(sdl_video, cfg);
+        let swapchain = Swapchain::new(&handles, cfg);
+
+        let pipeline_cache = {
+            let pci = vk::PipelineCacheCreateInfo::builder();
+            unsafe{handles.device.create_pipeline_cache(&pci, allocation_cbs())}.expect("Couldn't create pipeline cache")
+        };
+
+        let cmd_pool = {
+            let cpci = vk::CommandPoolCreateInfo::builder()
+                .queue_family_index(handles.queues.get_primary_family())
+                .flags(vk::CommandPoolCreateFlags::TRANSIENT | vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+            unsafe{handles.device.create_command_pool(&cpci, allocation_cbs())}.expect("Couldn't create main command pool")
+        };
+
+        let inflight_cmds = {
+            let cbai = vk::CommandBufferAllocateInfo::builder()
+                .command_buffer_count(INFLIGHT_FRAMES)
+                .command_pool(cmd_pool)
+                .level(vk::CommandBufferLevel::PRIMARY);
+            unsafe{handles.device.allocate_command_buffers(&cbai)}.expect("Couldn't allocate command buffers")
+        };
+        assert_eq!(inflight_cmds.len(), INFLIGHT_FRAMES as usize);
 
         RenderingContext {
-            window,
-            instance_extensions,
-            instance,
-            device: device.clone(),
-            surface,
-            queues: Arc::new(queues),
-            sync_transfer_fence,
+            handles,
             swapchain,
-            swapimages,
-            mainpass,
-            framebuffers,
-            dynamic_state,
-            previous_frame_future,
-            outdated_swapchain: false,
-            gui_renderer,
-            gui,
-            gui_image_map,
+            frame_index: 0,
+            cmd_pool,
+            inflight_cmds,
+            pipeline_cache,
         }
     }
 
     /// Returns None if e.g. swapchain is in the process of being recreated
-    pub fn frame_begin_prepass(&mut self, delta_time: f64) -> Option<PrePassFrameContext> {
-        self.previous_frame_future.cleanup_finished();
+    pub fn frame_begin_prepass(&mut self, cfg: &Config, delta_time: f64) -> Option<PrePassFrameContext> {
+        let device = &self.handles.device;
+        let inflight_index = self.swapchain.inflight_index as usize;
+        self.swapchain.inflight_index = (self.swapchain.inflight_index + 1) % INFLIGHT_FRAMES;
+        let inflight_fence = self.swapchain.inflight_fences[inflight_index];
+        unsafe{device.wait_for_fences(&[inflight_fence], true, u64::max_value())}.expect("Failed waiting for fence");
+        unsafe{device.reset_fences(&[inflight_fence])}.expect("Couldn't reset fence");
+
+        self.handles.vmalloc.lock().set_current_frame_index(self.frame_index).unwrap();
+        self.frame_index += 1;
 
         let dims = {
-            let d = self.window.vulkan_drawable_size();
+            let d = self.handles.window.vulkan_drawable_size();
             [max(16, d.0), max(16, d.1)]
         };
 
-        if self.outdated_swapchain {
-            let (new_swapchain, new_images) = match self.swapchain.recreate_with_dimension(dims) {
-                Ok(r) => r,
-                // occurs on manual resizes, just ignore
-                Err(SwapchainCreationError::UnsupportedDimensions) => return None,
-                Err(err) => panic!("{:?}", err),
-            };
-
-            self.swapchain = new_swapchain;
-            self.swapimages = new_images;
-            self.framebuffers = generate_updated_framebuffers(
-                &self.swapimages,
-                self.mainpass.clone(),
-                &mut self.dynamic_state,
-            );
-
-            self.outdated_swapchain = false;
+        if self.swapchain.outdated {
+            self.swapchain.recreate_swapchain(&self.handles, &cfg);
+            return None;
         }
-        self.gui.win_w = f64::from(dims[0]);
-        self.gui.win_h = f64::from(dims[1]);
 
-        let queue = self.queues.lock_primary_queue();
-        let (image_num, acquire_future) =
-            match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
-                Ok(r) => r,
-                Err(AcquireError::OutOfDate) => {
-                    self.outdated_swapchain = true;
-                    return None;
-                }
-                Err(err) => panic!("{:?}", err),
-            };
+        let image_index = match unsafe{self.handles.ext_swapchain.acquire_next_image(
+            self.swapchain.swapchain, u64::max_value(),
+            self.swapchain.inflight_image_available_semaphores[inflight_index], vk::Fence::null())} {
+            Ok((idx, false)) => idx,
+            Ok((idx, true)) => {
+                self.swapchain.outdated = true;
+                idx
+            },
+            Err(err) => panic!("{:?}", err),
+        };
 
-        let mut cmdbufbuild =
-            AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), queue.family())
-                .unwrap();
-
-        let gui_primitives = self.gui.draw();
-        let gui_viewport = [0.0, 0.0, dims[0] as f32, dims[1] as f32];
-        let dpi_factor = 1.0f64; // FIXME: DPI factor
-        if let Some(cmd) = self
-            .gui_renderer
-            .fill(
-                &self.gui_image_map,
-                gui_viewport,
-                dpi_factor,
-                gui_primitives,
-            )
-            .unwrap()
-        {
-            let buffer = cmd
-                .glyph_cpu_buffer_pool
-                .chunk(cmd.glyph_cache_pixel_buffer.iter().cloned())
-                .unwrap();
-            cmdbufbuild = cmdbufbuild
-                .copy_buffer_to_image(buffer, cmd.glyph_cache_texture)
-                .expect("Failed to submit glyph cache update");
-        }
-        drop(queue);
+        let cmd = {
+            let buf = self.inflight_cmds[inflight_index];
+            unsafe{device.reset_command_buffer(buf, vk::CommandBufferResetFlags::empty())}.expect("Couldn't reset frame cmd buffer");
+            let cbbi = vk::CommandBufferBeginInfo::builder()
+                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+            unsafe{device.begin_command_buffer(buf, &cbbi)}.expect("Couldn't start recording command buffer");
+            buf
+        };
 
         Some(PrePassFrameContext {
             rctx: self,
-            cmd: Some(cmdbufbuild),
+            cmd,
             delta_time,
             dims,
-            image_num,
-            acquire_future,
+            image_index: image_index as usize,
+            inflight_index,
             _phantom: PhantomData,
         })
     }
@@ -462,71 +765,60 @@ impl RenderingContext {
             cmd,
             delta_time,
             dims,
-            image_num,
-            acquire_future,
+            image_index,
+            inflight_index,
             _phantom,
         } = fctx;
-        let mut cmdbufbuild = cmd.unwrap();
-        cmdbufbuild = cmdbufbuild
-            .begin_render_pass(
-                me.framebuffers[image_num].clone(),
-                false,
-                vec![[0.1, 0.1, 0.1, 1.0].into(), (1f32, 0u32).into()],
-            )
-            .expect("Failed to begin render pass");
+
+        let clear_color = vk::ClearValue{color: vk::ClearColorValue{
+            float32: [0.1, 0.1, 0.1, 1.0]
+        }};
+        let clear_depth = vk::ClearValue{depth_stencil: vk::ClearDepthStencilValue {
+            depth: 1.0,
+            stencil: 0,
+        }};
+        let clears = [clear_color, clear_depth];
+        let rpbi = vk::RenderPassBeginInfo::builder()
+            .render_pass(me.handles.mainpass)
+            .framebuffer(me.swapchain.framebuffers[image_index])
+            .clear_values(&clears);
+        unsafe{
+            me.handles.device.cmd_begin_render_pass(cmd, &rpbi, vk::SubpassContents::INLINE);
+        }
 
         InPassFrameContext {
             rctx: me,
-            cmd: Some(cmdbufbuild),
+            cmd,
             delta_time,
             dims,
-            image_num,
-            acquire_future,
+            image_index,
+            inflight_index,
             _phantom: PhantomData,
         }
     }
 
-    pub fn inpass_draw_gui(fctx: &mut InPassFrameContext) {
-        let mut cmdbufbuild = fctx.replace_cmd();
-        let queue = fctx.rctx.queues.lock_primary_queue();
+    pub fn frame_goto_postpass(fctx: InPassFrameContext) -> PostPassFrameContext {
+        let InPassFrameContext {
+            rctx: me,
+            cmd,
+            delta_time,
+            dims,
+            image_index,
+            inflight_index,
+            _phantom,
+        } = fctx;
 
-        let gui_viewport = [0.0, 0.0, fctx.dims[0] as f32, fctx.dims[1] as f32];
-        let gui_draw_cmds = fctx
-            .rctx
-            .gui_renderer
-            .draw(queue.clone(), &fctx.rctx.gui_image_map, gui_viewport)
-            .unwrap();
-        for cmd in gui_draw_cmds {
-            let conrod_vulkano::DrawCommand {
-                graphics_pipeline,
-                dynamic_state,
-                vertex_buffer,
-                descriptor_set,
-            } = cmd;
-            cmdbufbuild = cmdbufbuild
-                .draw(
-                    graphics_pipeline,
-                    &dynamic_state,
-                    vec![vertex_buffer],
-                    descriptor_set,
-                    (),
-                )
-                .expect("Failed to submit GUI draw command");
+        unsafe {
+            me.handles.device.cmd_end_render_pass(cmd);
         }
 
-        fctx.cmd = Some(cmdbufbuild);
-    }
-
-    pub fn frame_goto_postpass(fctx: InPassFrameContext) -> PostPassFrameContext {
         PostPassFrameContext {
-            rctx: fctx.rctx,
-            cmd: fctx
-                .cmd
-                .map(|c| c.end_render_pass().expect("Failed to end render pass")),
-            delta_time: fctx.delta_time,
-            dims: fctx.dims,
-            image_num: fctx.image_num,
-            acquire_future: fctx.acquire_future,
+            rctx: me,
+            cmd,
+            delta_time,
+            dims,
+            image_index,
+            inflight_index,
             _phantom: PhantomData,
         }
     }
@@ -535,38 +827,45 @@ impl RenderingContext {
         let PostPassFrameContext {
             rctx: me,
             cmd,
-            image_num,
-            acquire_future,
+            image_index,
+            inflight_index,
             ..
         } = fctx;
 
-        let queue = me.queues.lock_primary_queue();
+        unsafe {
+            me.handles.device.end_command_buffer(cmd)
+        }.expect("Couldn't end recording command buffer");
 
-        let cmdbuf = cmd
-            .unwrap()
-            .build()
-            .expect("Failed to build frame draw commands");
+        let imgavail = [me.swapchain.inflight_image_available_semaphores[inflight_index]];
+        let rendfinish = [me.swapchain.inflight_render_finished_semaphores[inflight_index]];
+        let cmds = [cmd];
+        let wss = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 
-        me.previous_frame_future.wait_or_noop();
+        let si = vk::SubmitInfo::builder()
+            .wait_semaphores(&imgavail)
+            .signal_semaphores(&rendfinish)
+            .command_buffers(&cmds)
+            .wait_dst_stage_mask(&wss)
+            .build();
 
-        let future = vulkano::sync::now(me.device.clone())
-            .join(acquire_future)
-            .then_execute(queue.clone(), cmdbuf)
-            .unwrap()
-            .then_swapchain_present(queue.clone(), me.swapchain.clone(), image_num)
-            .then_signal_fence_and_flush();
-        match future {
-            Ok(future) => {
-                me.previous_frame_future = Box::new(future);
-            }
-            Err(FlushError::OutOfDate) => {
-                me.previous_frame_future = Box::new(vulkano::sync::now(me.device.clone()));
-                me.outdated_swapchain = true;
-            }
-            Err(e) => {
-                me.previous_frame_future = Box::new(vulkano::sync::now(me.device.clone()));
-                println!("{:?}", e);
-            }
+        let queue = me.handles.queues.lock_primary_queue();
+
+        unsafe {
+            me.handles.device.queue_submit(*queue, &[si], me.swapchain.inflight_fences[inflight_index])
+        }.expect("Couldn't submit frame command buffer");
+
+        let swchs = [me.swapchain.swapchain];
+        let imgids = [image_index as u32];
+        let pi = vk::PresentInfoKHR::builder()
+            .wait_semaphores(&rendfinish)
+            .swapchains(&swchs)
+            .image_indices(&imgids);
+        match unsafe {
+            me.handles.ext_swapchain.queue_present(*queue, &pi)
+        } {
+            Ok(false) => {},
+            Ok(true) => {me.swapchain.outdated = true;}
+            Err(err) => {panic!("{:?}", err);}
         }
     }
 }

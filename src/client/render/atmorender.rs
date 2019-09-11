@@ -2,15 +2,9 @@ use crate::client::config::Config;
 use crate::client::render::{InPassFrameContext, RenderingContext};
 use crate::math::*;
 use std::sync::Arc;
-use vulkano::buffer::{BufferUsage, CpuBufferPool};
-use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
-use vulkano::descriptor::PipelineLayoutAbstract;
-use vulkano::framebuffer::{RenderPassAbstract, Subpass};
-use vulkano::pipeline::depth_stencil::{Compare, DepthStencil};
-use vulkano::pipeline::vertex::BufferlessDefinition;
-use vulkano::pipeline::GraphicsPipeline;
+use ash::prelude::*;
+use ash::vk;
 
-#[allow(clippy::ref_in_deref)] // in impl_vertex! macro
 pub mod shaders {
     #[derive(Copy, Clone, Default)]
     #[repr(C)]
@@ -18,31 +12,11 @@ pub mod shaders {
         pub view: [[f32; 4]; 4],
         pub proj: [[f32; 4]; 4],
     }
-
-    pub mod vs {
-        vulkano_shaders::shader! {
-        ty: "vertex",
-        path: "src/client/shaders/atmosphere.vert"
-        }
-    }
-
-    pub mod fs {
-        vulkano_shaders::shader! {
-        ty: "fragment",
-        path: "src/client/shaders/atmosphere.frag"
-        }
-    }
 }
 
-pub type SkyPipeline = GraphicsPipeline<
-    BufferlessDefinition,
-    Box<dyn PipelineLayoutAbstract + Send + Sync>,
-    Arc<dyn RenderPassAbstract + Send + Sync>,
->;
-
 pub struct AtmosphereRenderer {
-    pub sky_pipeline: Arc<SkyPipeline>,
-    pub ubuffers: CpuBufferPool<shaders::SkyUBO>,
+    pub sky_pipeline: vk::Pipeline,
+    //pub ubuffers: CpuBufferPool<shaders::SkyUBO>,
 }
 
 impl AtmosphereRenderer {

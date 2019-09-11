@@ -1,6 +1,5 @@
 use crate::client::render::RenderingContext;
 use crate::math::*;
-use conrod_core::input as gui_input;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
@@ -96,18 +95,12 @@ impl<'i> InputManager<'i> {
             Event::Quit { .. } => self.input_state.requesting_exit = true,
             Event::Window { win_event, .. } => match win_event {
                 WindowEvent::Resized(w, h) => {
-                    rctx.outdated_swapchain = true;
-                    rctx.gui.handle_event(conrod_core::event::Input::Resize(
-                        f64::from(w),
-                        f64::from(h),
-                    ));
+                    rctx.swapchain.outdated = true;
+                    // gui
                 }
                 WindowEvent::SizeChanged(w, h) => {
-                    rctx.outdated_swapchain = true;
-                    rctx.gui.handle_event(conrod_core::event::Input::Resize(
-                        f64::from(w),
-                        f64::from(h),
-                    ));
+                    rctx.swapchain.outdated = true;
+                    // gui
                 }
                 WindowEvent::FocusGained => {
                     self.update_input_capture();
@@ -132,8 +125,7 @@ impl<'i> InputManager<'i> {
                         self.pressed_keys.insert(keycode);
                         self.process_captured_key(true, keycode);
                     } else {
-                        let btn = gui_input::Button::Keyboard(gui_input::Key::Space);
-                        rctx.gui.handle_event(conrod_core::event::Input::Press(btn));
+                        // gui
                     }
                 }
             }
@@ -144,9 +136,7 @@ impl<'i> InputManager<'i> {
                     if self.capturing_input {
                         self.process_captured_key(false, keycode);
                     } else {
-                        let btn = gui_input::Button::Keyboard(gui_input::Key::Space);
-                        rctx.gui
-                            .handle_event(conrod_core::event::Input::Release(btn));
+                        // gui
                     }
                 }
             }
@@ -157,23 +147,14 @@ impl<'i> InputManager<'i> {
                     self.input_state.look.x += xrel as f32 * 0.4;
                     self.input_state.look.y += yrel as f32 * 0.3;
                 } else {
-                    let wsz = rctx.window.size();
-                    let m = gui_input::Motion::MouseCursor {
-                        x: f64::from(x - wsz.0 as i32 / 2),
-                        y: -f64::from(y - wsz.0 as i32 / 2),
-                    };
-                    rctx.gui.handle_event(conrod_core::event::Input::Motion(m));
+                    // gui
                 }
             }
             Event::MouseWheel { x, y, .. } => {
                 if self.capturing_input {
                     self.input_state.scroller += y.signum();
                 } else {
-                    let m = gui_input::Motion::Scroll {
-                        x: f64::from(x),
-                        y: f64::from(y),
-                    };
-                    rctx.gui.handle_event(conrod_core::event::Input::Motion(m));
+                    // gui
                 }
             }
             Event::MouseButtonDown {
@@ -182,8 +163,7 @@ impl<'i> InputManager<'i> {
                 if self.capturing_input {
                     self.process_captured_mouse_button(true, mouse_btn, x, y);
                 } else {
-                    let b = gui_input::Button::Mouse(Self::map_sdl_mouse_btn(mouse_btn));
-                    rctx.gui.handle_event(conrod_core::event::Input::Press(b));
+                    // gui
                 }
             }
             Event::MouseButtonUp {
@@ -192,8 +172,7 @@ impl<'i> InputManager<'i> {
                 if self.capturing_input {
                     self.process_captured_mouse_button(false, mouse_btn, x, y);
                 } else {
-                    let b = gui_input::Button::Mouse(Self::map_sdl_mouse_btn(mouse_btn));
-                    rctx.gui.handle_event(conrod_core::event::Input::Release(b));
+                    // gui
                 }
             }
             _ => {}
@@ -259,7 +238,7 @@ impl<'i> InputManager<'i> {
             .update(self.pressed_keys.contains(&Keycode::LCtrl));
     }
 
-    fn map_sdl_mouse_btn(sbtn: MouseButton) -> gui_input::MouseButton {
+    /*fn map_sdl_mouse_btn(sbtn: MouseButton) -> gui_input::MouseButton {
         match sbtn {
             MouseButton::Left => gui_input::MouseButton::Left,
             MouseButton::Middle => gui_input::MouseButton::Middle,
@@ -268,5 +247,5 @@ impl<'i> InputManager<'i> {
             MouseButton::X2 => gui_input::MouseButton::X2,
             _ => gui_input::MouseButton::Unknown,
         }
-    }
+    }*/
 }

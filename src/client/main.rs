@@ -1,6 +1,7 @@
+#![allow(unused_variables)]
 use crate::client::config::Config;
 use crate::client::input::InputManager;
-use crate::client::render::{RenderingContext, VoxelRenderer};
+use crate::client::render::{RenderingContext};
 use crate::client::world::{CameraSettings, ClientWorld};
 use crate::math::*;
 use crate::world;
@@ -8,7 +9,6 @@ use crate::world::blocks::register_standard_blocks;
 use crate::world::ecs::{CLoadAnchor, CLocation, ECSHandler};
 use crate::world::generation::WorldLoadGen;
 use crate::world::{blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition};
-use conrod_core::widget_ids;
 use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::io::{Read, Write};
@@ -23,10 +23,6 @@ struct InputState {
     look: (f32, f32),
     capture_mouse: bool,
     do_normal: bool,
-}
-
-widget_ids! {
-struct Ids{canvas, positionlbl, crosshairs}
 }
 
 pub fn client_main() {
@@ -58,13 +54,13 @@ pub fn client_main() {
     }
 
     let mut rctx = RenderingContext::new(&sdl_vid, &cfg);
-    let mut vctx = VoxelRenderer::new(&cfg, &mut rctx);
+    //let mut vctx = VoxelRenderer::new(&cfg, &mut rctx); FIXME
 
     let mut frametimes = VecDeque::new();
     let frametime_count: usize = 100;
 
     let mut vxreg = world::registry::VoxelRegistry::new();
-    register_standard_blocks(&mut vxreg, Some(&vctx));
+    register_standard_blocks(&mut vxreg, None); //FIXME
     let vxreg = Arc::new(vxreg);
     let world = ClientWorld::new_world("world".to_owned(), vxreg.clone());
     let world = Arc::new(world);
@@ -75,7 +71,7 @@ pub fn client_main() {
         let anchor: &mut CLoadAnchor = ents.ecs.get_component_mut(lp).unwrap();
         anchor.radius = cfg.performance_load_distance;
     }
-    vctx.set_world(world.clone(), &rctx);
+    //vctx.set_world(world.clone(), &rctx);
     let mut wgen = WorldLoadGen::new(world.clone(), 0);
 
     let pf_mult = 1.0 / sdl_timer.performance_frequency() as f64;
@@ -86,7 +82,6 @@ pub fn client_main() {
     let mut input_mgr = InputManager::new(&sdl_ctx);
     input_mgr.input_state.capture_input_requested = true;
 
-    let ids = Ids::new(rctx.gui.widget_id_generator());
     let mut click_pos: Option<BlockPosition> = None;
     let mut click_place = false;
 
@@ -179,11 +174,10 @@ pub fn client_main() {
             wgen.load_tick();
         }
 
-        if let Some(mut fc) = rctx.frame_begin_prepass(frame_delta_time) {
-            vctx.prepass_draw(&mut fc);
+        if let Some(mut fc) = rctx.frame_begin_prepass(&cfg, frame_delta_time) {
+            //vctx.prepass_draw(&mut fc); FIXME
             let mut fc = RenderingContext::frame_goto_pass(fc);
-            vctx.inpass_draw(&mut fc);
-            RenderingContext::inpass_draw_gui(&mut fc);
+            //vctx.inpass_draw(&mut fc); FIXME
             let fc = RenderingContext::frame_goto_postpass(fc);
             RenderingContext::frame_finish(fc);
         }
@@ -198,26 +192,11 @@ pub fn client_main() {
             break 'running;
         }
 
-        // simple test gui
-        let mut ui = rctx.gui.set_widgets();
-        use conrod_core::*;
-        let avg_ft = frametimes.iter().sum::<f64>() / frametime_count as f64;
-        let max_ft = frametimes
-            .iter()
-            .copied()
-            .fold(std::f64::NEG_INFINITY, f64::max);
-        widget::Canvas::new()
-            .color(conrod_core::color::TRANSPARENT)
-            .set(ids.canvas, &mut ui);
         let player_pos;
         let player_ang;
         let player_py;
-        let loaded_cnum;
-        let drawn_cnum = vctx.drawn_chunks_number();
-        let pset_cnum = vctx.progress_set_len();
         {
             let voxels = world.voxels.read();
-            loaded_cnum = voxels.chunks.len();
             let client = ClientWorld::read(&world);
             let entities = world.entities.read();
             let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
@@ -262,25 +241,6 @@ pub fn client_main() {
                 }
             }
         }
-        let pos = format!("Position: {:.1}, {:.1}, {:.1}\nAngles: {:#?}\nLast FT (ms): {:.1}\nAvg FT (ms): {:.1}\nMax FT (ms): {:.1}\n Avg FPS: {:.1}\nLoaded chunks: {}\nDrawn chunks: {} (ps{})",
-                          player_pos.x, player_pos.y, player_pos.z,
-                          player_py,
-                          frame_delta_time * 1000.0,
-                          avg_ft * 1000.0,
-                          max_ft * 1000.0,
-                          1.0 / avg_ft,
-                          loaded_cnum,
-                          drawn_cnum,
-            pset_cnum,
-        );
-        widget::Text::new(&pos)
-            .font_size(14)
-            .color(conrod_core::color::WHITE)
-            .top_left_of(ids.canvas)
-            .set(ids.positionlbl, &mut ui);
-        widget::Circle::outline(10.0)
-            .middle_of(ids.canvas)
-            .set(ids.crosshairs, &mut ui);
 
         if let Some(fps) = cfg.render_fps_lock {
             let end_current_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
