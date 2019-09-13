@@ -7,6 +7,7 @@ edition = "2018"
 [dependencies]
 ash = "0.29"
 vk-mem = "0.1"
+vk-sync = "0.1"
 rand = "0.7"
 toml_edit = "0.1"
 image = "0.22"

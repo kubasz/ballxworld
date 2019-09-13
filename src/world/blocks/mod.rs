@@ -1,7 +1,6 @@
-//use crate::client::render::VoxelRenderer;
+use crate::client::render::VoxelRenderer;
 use crate::world::registry::{VoxelDefinitionBuilder, VoxelRegistry};
 use crate::world::TextureMapping;
-type VoxelRenderer = ();
 
 pub fn register_standard_blocks(vxreg: &mut VoxelRegistry, vctx: Option<&VoxelRenderer>) {
     vxreg
@@ -69,8 +68,7 @@ trait OptionalTextureNames {
 impl OptionalTextureNames for VoxelDefinitionBuilder<'_> {
     fn opt_texture_names(self, vctx: Option<&VoxelRenderer>, t: TextureMapping<&str>) -> Self {
         if let Some(vctx) = vctx {
-            //self.texture_names(vctx, t)
-            self
+            self.texture_names(vctx, t)
         } else {
             self
         }

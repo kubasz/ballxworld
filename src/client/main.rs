@@ -1,7 +1,8 @@
 #![allow(unused_variables)]
+#![deny(unused_must_use)]
 use crate::client::config::Config;
 use crate::client::input::InputManager;
-use crate::client::render::RenderingContext;
+use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::client::world::{CameraSettings, ClientWorld};
 use crate::math::*;
 use crate::world;
@@ -54,13 +55,13 @@ pub fn client_main() {
     }
 
     let mut rctx = RenderingContext::new(&sdl_vid, &cfg);
-    //let mut vctx = VoxelRenderer::new(&cfg, &mut rctx); FIXME
+    let mut vctx = VoxelRenderer::new(&cfg, &mut rctx);
 
     let mut frametimes = VecDeque::new();
     let frametime_count: usize = 100;
 
     let mut vxreg = world::registry::VoxelRegistry::new();
-    register_standard_blocks(&mut vxreg, None); //FIXME
+    register_standard_blocks(&mut vxreg, Some(&vctx)); //FIXME
     let vxreg = Arc::new(vxreg);
     let world = ClientWorld::new_world("world".to_owned(), vxreg.clone());
     let world = Arc::new(world);
@@ -71,7 +72,7 @@ pub fn client_main() {
         let anchor: &mut CLoadAnchor = ents.ecs.get_component_mut(lp).unwrap();
         anchor.radius = cfg.performance_load_distance;
     }
-    //vctx.set_world(world.clone(), &rctx);
+    vctx.set_world(world.clone(), &rctx);
     let mut wgen = WorldLoadGen::new(world.clone(), 0);
 
     let pf_mult = 1.0 / sdl_timer.performance_frequency() as f64;
@@ -175,9 +176,9 @@ pub fn client_main() {
         }
 
         if let Some(mut fc) = rctx.frame_begin_prepass(&cfg, frame_delta_time) {
-            //vctx.prepass_draw(&mut fc); FIXME
+            vctx.prepass_draw(&mut fc);
             let mut fc = RenderingContext::frame_goto_pass(fc);
-            //vctx.inpass_draw(&mut fc); FIXME
+            vctx.inpass_draw(&mut fc);
             let fc = RenderingContext::frame_goto_postpass(fc);
             RenderingContext::frame_finish(fc);
         }
@@ -194,7 +195,6 @@ pub fn client_main() {
 
         let player_pos;
         let player_ang;
-        let player_py;
         {
             let voxels = world.voxels.read();
             let client = ClientWorld::read(&world);
@@ -202,8 +202,6 @@ pub fn client_main() {
             let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
             player_pos = lp_loc.position;
             player_ang = lp_loc.orientation;
-            let CameraSettings::FPS { pitch, yaw } = client.camera_settings;
-            player_py = (pitch, yaw);
 
             let primary = input_mgr.input_state.primary_action.is_active();
             let secondary = input_mgr.input_state.secondary_action.is_active();

@@ -3,6 +3,7 @@ extern crate nalgebra_glm as glm;
 
 pub mod client;
 pub mod math;
+pub mod util;
 pub mod world;
 
 use jemallocator;

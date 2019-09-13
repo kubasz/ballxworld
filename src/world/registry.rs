@@ -1,9 +1,7 @@
-//use crate::client::render::VoxelRenderer;
+use crate::client::render::VoxelRenderer;
 use crate::world::{TextureMapping, VoxelDatum, VoxelDefinition, VoxelId};
 use std::collections::HashMap;
 use std::sync::Arc;
-
-type VoxelRenderer = ();
 
 pub struct VoxelDefinitionBuilder<'a> {
     registry: &'a mut VoxelRegistry,
@@ -78,7 +76,7 @@ impl<'a> VoxelDefinitionBuilder<'a> {
     }
 
     pub fn texture_names(mut self, vctx: &VoxelRenderer, t: TextureMapping<&str>) -> Self {
-        //self.texture_mapping = t.map(|n| vctx.get_texture_id(n));
+        self.texture_mapping = t.map(|n| vctx.get_texture_id(n));
         self
     }
 }
