@@ -143,7 +143,7 @@ pub struct VoxelRenderer {
     world: Option<Arc<World>>,
     pub voxel_pipeline_layout: vk::PipelineLayout,
     pub voxel_pipeline: vk::Pipeline,
-    //atmosphere_renderer: AtmosphereRenderer,
+    atmosphere_renderer: AtmosphereRenderer,
     drawn_chunks: HashMap<ChunkPosition, DrawnChunk>,
     pub ubuffer: OwnedBuffer,
     draw_queue: Arc<Mutex<Vec<ChunkPosition>>>,
@@ -437,7 +437,7 @@ impl VoxelRenderer {
             world: None,
             voxel_pipeline_layout: pipeline_layot,
             voxel_pipeline,
-            //atmosphere_renderer: AtmosphereRenderer::new(cfg, rctx),
+            atmosphere_renderer: AtmosphereRenderer::new(cfg, rctx),
             drawn_chunks: HashMap::new(),
             ubuffer,
             draw_queue: Arc::new(Mutex::new(Vec::new())),
@@ -1199,7 +1199,7 @@ impl VoxelRenderer {
             );
         }
 
-        for (pos, chunk) in self.drawn_chunks.iter() {
+        for (pos, chunk) in self.drawn_chunks.iter().filter(|c| c.1.icount > 0) {
             let pc = vox::VoxelPC {
                 chunk_offset: pos.map(|x| (x as f32) * (CHUNK_DIM as f32)).into(),
                 highlight_index: if chunk.cpos == hichunk { hiidx } else { -1 },
@@ -1216,21 +1216,19 @@ impl VoxelRenderer {
                     pc_bytes,
                 )
             }
-            if chunk.icount > 0 {
-                unsafe {
-                    device.cmd_bind_vertex_buffers(fctx.cmd, 0, &[chunk.buffer.buffer], &[0]);
-                    device.cmd_bind_index_buffer(
-                        fctx.cmd,
-                        chunk.buffer.buffer,
-                        chunk.istart as vk::DeviceSize,
-                        vk::IndexType::UINT32,
-                    );
-                    device.cmd_draw_indexed(fctx.cmd, chunk.icount, 1, 0, 0, 0);
-                }
+            unsafe {
+                device.cmd_bind_vertex_buffers(fctx.cmd, 0, &[chunk.buffer.buffer], &[0]);
+                device.cmd_bind_index_buffer(
+                    fctx.cmd,
+                    chunk.buffer.buffer,
+                    chunk.istart as vk::DeviceSize,
+                    vk::IndexType::UINT32,
+                );
+                device.cmd_draw_indexed(fctx.cmd, chunk.icount, 1, 0, 0, 0);
             }
         }
 
-        //self.atmosphere_renderer.inpass_draw(fctx, mview, mproj);
+        self.atmosphere_renderer.inpass_draw(fctx, mview, mproj);
     }
 }
 

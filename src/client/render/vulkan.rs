@@ -1280,7 +1280,7 @@ impl RenderingContext {
             .image_indices(&imgids);
         match unsafe { me.handles.ext_swapchain.queue_present(*queue, &pi) } {
             Ok(false) => {}
-            Ok(true) => {
+            Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 me.swapchain.outdated = true;
             }
             Err(err) => {

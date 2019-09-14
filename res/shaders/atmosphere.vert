@@ -1,8 +1,7 @@
 #version 450
 
-layout(set = 0, binding = 0) uniform UniformBufferObject {
-    mat4 view;
-    mat4 proj;
+layout(push_constant) uniform UniformBufferObject {
+    mat4 viewproj;
 } ubo;
 
 const float vtable[8*3] = float[](
@@ -39,5 +38,5 @@ void main() {
     else {id = 3*itable[gl_VertexIndex];}
     vec3 pos = vec3(vtable[id], vtable[id+1], vtable[id+2]);
     v_position = pos;
-    gl_Position = (ubo.proj * vec4((ubo.view * vec4(pos, 0.0)).xyz, 1.0)).xyww;
+    gl_Position = (ubo.viewproj * vec4(pos, 1.0)).xyww;
 }

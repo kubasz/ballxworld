@@ -13,19 +13,19 @@ all: shaders
 shaders: $(SHADERBINS)
 
 debug: shaders
-    cargo build
+	cargo build
 
 release: shaders
-    cargo build --release
+	cargo build --release
 
 debug-run: shaders
-    cargo run
+	cargo run
 
 release-run: shaders
-    cargo run --release
+	cargo run --release
 
 clippy:
-    cargo clippy --release
+	cargo clippy --release
 
 %.frag.spv : %.frag
 	@$(SHADERC) $(SHADERFLAGS) $< -o $@
