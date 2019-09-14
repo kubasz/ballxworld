@@ -1,21 +1,21 @@
 use crate::client::config::Config;
+use ash::prelude::VkResult;
 use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::vk;
-use ash::vk::{Handle, CommandPool};
+use ash::vk::{CommandPool, Handle};
 use ash::vk_make_version;
 use num_traits::clamp;
 use parking_lot::{Mutex, MutexGuard};
+use rand::AsByteSliceMut;
 use sdl2::video::Window;
 use std::cmp::max;
 use std::ffi::{c_void, CStr, CString};
+use std::io::{Read, Seek};
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::os::raw::c_char;
 use std::sync::Arc;
 use vk_mem as vma;
-use std::io::{Seek, Read};
-use rand::AsByteSliceMut;
-use ash::prelude::VkResult;
 
 pub fn allocation_cbs() -> Option<&'static vk::AllocationCallbacks> {
     None
@@ -85,7 +85,7 @@ impl OwnedImage {
     pub fn from(
         vmalloc: &mut vma::Allocator,
         img_info: &vk::ImageCreateInfo,
-        mem_info: &vma::AllocationCreateInfo
+        mem_info: &vma::AllocationCreateInfo,
     ) -> Self {
         let r = vmalloc
             .create_image(img_info, mem_info)
@@ -96,7 +96,10 @@ impl OwnedImage {
         }
     }
 
-    pub fn give_name<F: FnOnce()->S, S>(&self, handles: &RenderingHandles, name_fn: F) where S: Into<Vec<u8>> {
+    pub fn give_name<F: FnOnce() -> S, S>(&self, handles: &RenderingHandles, name_fn: F)
+    where
+        S: Into<Vec<u8>>,
+    {
         if let Some(ext_debug) = handles.ext_debug.as_ref() {
             let name_slice = name_fn();
             let name = CString::new(name_slice).unwrap();
@@ -104,7 +107,12 @@ impl OwnedImage {
                 .object_handle(self.image.as_raw())
                 .object_type(vk::ObjectType::IMAGE)
                 .object_name(name.as_c_str());
-            unsafe{ext_debug.utils.debug_utils_set_object_name(handles.device.handle(), &ni)}.unwrap();
+            unsafe {
+                ext_debug
+                    .utils
+                    .debug_utils_set_object_name(handles.device.handle(), &ni)
+            }
+            .unwrap();
         }
     }
 
@@ -143,7 +151,10 @@ impl OwnedBuffer {
         }
     }
 
-    pub fn give_name<F: FnOnce()->S, S>(&self, handles: &RenderingHandles, name_fn: F) where S: Into<Vec<u8>> {
+    pub fn give_name<F: FnOnce() -> S, S>(&self, handles: &RenderingHandles, name_fn: F)
+    where
+        S: Into<Vec<u8>>,
+    {
         if let Some(ext_debug) = handles.ext_debug.as_ref() {
             let name_slice = name_fn();
             let name = CString::new(name_slice).unwrap();
@@ -151,7 +162,12 @@ impl OwnedBuffer {
                 .object_handle(self.buffer.as_raw())
                 .object_type(vk::ObjectType::BUFFER)
                 .object_name(name.as_c_str());
-            unsafe{ext_debug.utils.debug_utils_set_object_name(handles.device.handle(), &ni)}.unwrap();
+            unsafe {
+                ext_debug
+                    .utils
+                    .debug_utils_set_object_name(handles.device.handle(), &ni)
+            }
+            .unwrap();
         }
     }
 
@@ -245,31 +261,47 @@ pub struct FrameContext<'r, Stage: FrameStage> {
 }
 
 impl<'r, Stage: FrameStage> FrameContext<'r, Stage> {
-    pub fn begin_region<F: FnOnce()->S, S>(&self, color: [f32; 4], name_fn: F) where S: Into<Vec<u8>> {
+    pub fn begin_region<F: FnOnce() -> S, S>(&self, color: [f32; 4], name_fn: F)
+    where
+        S: Into<Vec<u8>>,
+    {
         if let Some(ext_debug) = self.rctx.handles.ext_debug.as_ref() {
             let name_slice = name_fn();
             let name = CString::new(name_slice).unwrap();
             let label = vk::DebugUtilsLabelEXT::builder()
                 .color(color)
                 .label_name(name.as_c_str());
-            unsafe{ext_debug.utils.cmd_begin_debug_utils_label(self.cmd, &label);}
+            unsafe {
+                ext_debug
+                    .utils
+                    .cmd_begin_debug_utils_label(self.cmd, &label);
+            }
         }
     }
 
     pub fn end_region(&self) {
         if let Some(ext_debug) = self.rctx.handles.ext_debug.as_ref() {
-            unsafe{ext_debug.utils.cmd_end_debug_utils_label(self.cmd);}
+            unsafe {
+                ext_debug.utils.cmd_end_debug_utils_label(self.cmd);
+            }
         }
     }
 
-    pub fn insert_label<F: FnOnce()->S, S>(&self, color: [f32; 4], name_fn: F) where S: Into<Vec<u8>> {
+    pub fn insert_label<F: FnOnce() -> S, S>(&self, color: [f32; 4], name_fn: F)
+    where
+        S: Into<Vec<u8>>,
+    {
         if let Some(ext_debug) = self.rctx.handles.ext_debug.as_ref() {
             let name_slice = name_fn();
             let name = CString::new(name_slice).unwrap();
             let label = vk::DebugUtilsLabelEXT::builder()
                 .color(color)
                 .label_name(name.as_c_str());
-            unsafe{ext_debug.utils.cmd_insert_debug_utils_label(self.cmd, &label);}
+            unsafe {
+                ext_debug
+                    .utils
+                    .cmd_insert_debug_utils_label(self.cmd, &label);
+            }
         }
     }
 }
@@ -510,24 +542,28 @@ impl RenderingHandles {
             let cpci = vk::CommandPoolCreateInfo::builder()
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT)
                 .queue_family_index(queues.get_primary_family());
-            unsafe{device.create_command_pool(&cpci, allocation_cbs())}.expect("Couldn't create one-off command pool")
+            unsafe { device.create_command_pool(&cpci, allocation_cbs()) }
+                .expect("Couldn't create one-off command pool")
         };
 
-        (window, Self {
-            entry,
-            instance,
-            ext_surface,
-            ext_swapchain,
-            ext_debug,
-            surface,
-            surface_format,
-            physical,
-            device,
-            queues: Arc::new(queues),
-            vmalloc: Arc::new(Mutex::new(vmalloc)),
-            mainpass,
-            oneoff_cmd_pool: Arc::new(Mutex::new(oneoff_cmd_pool))
-        })
+        (
+            window,
+            Self {
+                entry,
+                instance,
+                ext_surface,
+                ext_swapchain,
+                ext_debug,
+                surface,
+                surface_format,
+                physical,
+                device,
+                queues: Arc::new(queues),
+                vmalloc: Arc::new(Mutex::new(vmalloc)),
+                mainpass,
+                oneoff_cmd_pool: Arc::new(Mutex::new(oneoff_cmd_pool)),
+            },
+        )
     }
 
     fn create_instance(
@@ -625,8 +661,8 @@ impl RenderingHandles {
         use std::{fs, io, mem};
 
         // read SPIR-V file
-        let mut spv: Vec<u8> = fs::read(path)
-            .unwrap_or_else(|_| panic!("Could not read shader module from {}", path));
+        let mut spv: Vec<u8> =
+            fs::read(path).unwrap_or_else(|_| panic!("Could not read shader module from {}", path));
 
         // create module
         let smci = vk::ShaderModuleCreateInfo {
@@ -634,7 +670,7 @@ impl RenderingHandles {
             code_size: spv.len(),
             ..vk::ShaderModuleCreateInfo::builder().build()
         };
-        let sm = unsafe{self.device.create_shader_module(&smci, allocation_cbs())}
+        let sm = unsafe { self.device.create_shader_module(&smci, allocation_cbs()) }
             .unwrap_or_else(|e| panic!("Could not create shader module from `{}`: {}", path, e));
         Ok(sm)
     }
@@ -656,12 +692,16 @@ impl RenderingHandles {
                 device.destroy_render_pass(mainpass, allocation_cbs());
             }
         }
-        let mut vmalloc = Arc::try_unwrap(vmalloc).unwrap_or_else(|_| panic!("Multiple references to vmalloc")).into_inner();
+        let mut vmalloc = Arc::try_unwrap(vmalloc)
+            .unwrap_or_else(|_| panic!("Multiple references to vmalloc"))
+            .into_inner();
         vmalloc.destroy();
         unsafe {
             ext_surface.destroy_surface(surface, allocation_cbs());
         }
-        let oneoff_cmd_pool = Arc::try_unwrap(oneoff_cmd_pool).unwrap_or_else(|_| panic!("Multiple references to oneoff_cmd_pool")).into_inner();
+        let oneoff_cmd_pool = Arc::try_unwrap(oneoff_cmd_pool)
+            .unwrap_or_else(|_| panic!("Multiple references to oneoff_cmd_pool"))
+            .into_inner();
         unsafe {
             device.destroy_command_pool(oneoff_cmd_pool, allocation_cbs());
         }
@@ -908,7 +948,8 @@ impl Swapchain {
             };
             OwnedImage::from(&mut handles.vmalloc.lock(), &ici, &aci)
         };
-        self.depth_image.give_name(&handles, ||"swapchain.depth_image");
+        self.depth_image
+            .give_name(&handles, || "swapchain.depth_image");
 
         self.depth_view = {
             let ivci = vk::ImageViewCreateInfo::builder()
@@ -1075,7 +1116,8 @@ impl RenderingContext {
         };
 
         if self.swapchain.outdated {
-            self.swapchain.recreate_swapchain(&self.window, &self.handles, &cfg);
+            self.swapchain
+                .recreate_swapchain(&self.window, &self.handles, &cfg);
             return None;
         }
 
@@ -1143,8 +1185,8 @@ impl RenderingContext {
             offset: vk::Offset2D::default(),
             extent: vk::Extent2D {
                 width: me.swapchain.dynamic_state.viewport.width as u32,
-                height: me.swapchain.dynamic_state.viewport.height as u32
-            }
+                height: me.swapchain.dynamic_state.viewport.height as u32,
+            },
         };
         let clears = [clear_color, clear_depth];
         let rpbi = vk::RenderPassBeginInfo::builder()
@@ -1250,14 +1292,21 @@ impl RenderingContext {
 
 pub struct FenceGuard<'h> {
     handles: &'h RenderingHandles,
-    fence: vk::Fence
+    fence: vk::Fence,
 }
 
 impl<'h> FenceGuard<'h> {
-    pub fn new<'s, F: FnOnce()->&'s str>(handles: &'h RenderingHandles, signaled: bool, name_fn: F) -> Self {
-        let fci = vk::FenceCreateInfo::builder()
-            .flags(if signaled {vk::FenceCreateFlags::SIGNALED} else {vk::FenceCreateFlags::empty()});
-        let fence = unsafe{handles.device.create_fence(&fci, allocation_cbs())}
+    pub fn new<'s, F: FnOnce() -> &'s str>(
+        handles: &'h RenderingHandles,
+        signaled: bool,
+        name_fn: F,
+    ) -> Self {
+        let fci = vk::FenceCreateInfo::builder().flags(if signaled {
+            vk::FenceCreateFlags::SIGNALED
+        } else {
+            vk::FenceCreateFlags::empty()
+        });
+        let fence = unsafe { handles.device.create_fence(&fci, allocation_cbs()) }
             .expect("Couldn't create Vulkan fence");
         if let Some(ext_debug) = handles.ext_debug.as_ref() {
             let name_slice = name_fn();
@@ -1266,12 +1315,14 @@ impl<'h> FenceGuard<'h> {
                 .object_handle(fence.as_raw())
                 .object_type(vk::ObjectType::FENCE)
                 .object_name(name.as_c_str());
-            unsafe{ext_debug.utils.debug_utils_set_object_name(handles.device.handle(), &ni)}.unwrap();
+            unsafe {
+                ext_debug
+                    .utils
+                    .debug_utils_set_object_name(handles.device.handle(), &ni)
+            }
+            .unwrap();
         }
-        Self {
-            handles,
-            fence
-        }
+        Self { handles, fence }
     }
 
     pub fn handle(&self) -> vk::Fence {
@@ -1279,26 +1330,36 @@ impl<'h> FenceGuard<'h> {
     }
 
     pub fn signaled(&self) -> bool {
-        match unsafe{self.handles.device.get_fence_status(self.fence)} {
+        match unsafe { self.handles.device.get_fence_status(self.fence) } {
             Ok(_) => true,
             Err(vk::Result::NOT_READY) => false,
-            Err(e) => panic!(e)
+            Err(e) => panic!(e),
         }
     }
 
     pub fn wait(&self, timeout_ns: Option<u64>) -> VkResult<()> {
-        unsafe{self.handles.device.wait_for_fences(&[self.fence], true, timeout_ns.unwrap_or(u64::max_value()))}
+        unsafe {
+            self.handles.device.wait_for_fences(
+                &[self.fence],
+                true,
+                timeout_ns.unwrap_or(u64::max_value()),
+            )
+        }
     }
 
     pub fn reset(&self) {
-        unsafe{self.handles.device.reset_fences(&[self.fence])}.expect("Couldn't reset fence");
+        unsafe { self.handles.device.reset_fences(&[self.fence]) }.expect("Couldn't reset fence");
     }
 }
 
 impl<'h> Drop for FenceGuard<'h> {
     fn drop(&mut self) {
         if self.fence != vk::Fence::null() {
-            unsafe { self.handles.device.destroy_fence(self.fence, allocation_cbs()); }
+            unsafe {
+                self.handles
+                    .device
+                    .destroy_fence(self.fence, allocation_cbs());
+            }
             self.fence = vk::Fence::null();
         }
     }
@@ -1307,7 +1368,7 @@ impl<'h> Drop for FenceGuard<'h> {
 pub struct OnetimeCmdGuard<'h> {
     fence: FenceGuard<'h>,
     pool_lock: Option<MutexGuard<'h, CommandPool>>,
-    cmd: vk::CommandBuffer
+    cmd: vk::CommandBuffer,
 }
 
 impl<'h> OnetimeCmdGuard<'h> {
@@ -1317,14 +1378,14 @@ impl<'h> OnetimeCmdGuard<'h> {
             .command_pool(*pool)
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(1);
-        let cmd = unsafe{handles.device.allocate_command_buffers(&bai)}
+        let cmd = unsafe { handles.device.allocate_command_buffers(&bai) }
             .expect("Couldn't allocate one-time cmd buffer")[0];
         let bgi = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-        unsafe{handles.device.begin_command_buffer(cmd, &bgi)}
+        unsafe { handles.device.begin_command_buffer(cmd, &bgi) }
             .expect("Couldn't begin recording one-time cmd buffer");
         Self {
-            fence: FenceGuard::new(handles, false, ||"one-time cmd"),
+            fence: FenceGuard::new(handles, false, || "one-time cmd"),
             pool_lock: Some(pool),
             cmd,
         }
@@ -1336,20 +1397,23 @@ impl<'h> OnetimeCmdGuard<'h> {
 
     pub fn execute(mut self, queue: &QueueGuard) {
         let handles = self.fence.handles;
-        unsafe{handles.device.end_command_buffer(self.cmd)}
+        unsafe { handles.device.end_command_buffer(self.cmd) }
             .expect("Couldn't end recording one-time cmd buffer");
 
         let bufs = [self.cmd];
 
         let mut pool_lock = self.pool_lock.take().unwrap();
-        let si = vk::SubmitInfo::builder()
-            .command_buffers(&bufs);
+        let si = vk::SubmitInfo::builder().command_buffers(&bufs);
         let sis = [si.build()];
-        unsafe{handles.device.queue_submit(**queue, &sis, self.fence.fence)}
+        unsafe { handles.device.queue_submit(**queue, &sis, self.fence.fence) }
             .expect("Couldn't submit one-time cmd buffer");
-        self.fence.wait(None).expect("Failed waiting for one-time cmd fence");
+        self.fence
+            .wait(None)
+            .expect("Failed waiting for one-time cmd fence");
 
-        unsafe{handles.device.free_command_buffers(*pool_lock, &bufs);}
+        unsafe {
+            handles.device.free_command_buffers(*pool_lock, &bufs);
+        }
         std::mem::forget(self);
     }
 }

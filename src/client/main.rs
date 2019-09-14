@@ -176,15 +176,15 @@ pub fn client_main() {
         }
 
         if let Some(mut fc) = rctx.frame_begin_prepass(&cfg, frame_delta_time) {
-            fc.begin_region([0.7, 0.7, 0.1, 1.0], ||"vctx.prepass_draw");
+            fc.begin_region([0.7, 0.7, 0.1, 1.0], || "vctx.prepass_draw");
             vctx.prepass_draw(&mut fc);
             fc.end_region();
             let mut fc = RenderingContext::frame_goto_pass(fc);
-            fc.begin_region([0.3, 0.3, 0.8, 1.0], ||"vctx.inpass_draw");
+            fc.begin_region([0.3, 0.3, 0.8, 1.0], || "vctx.inpass_draw");
             vctx.inpass_draw(&mut fc);
             fc.end_region();
             let fc = RenderingContext::frame_goto_postpass(fc);
-            fc.insert_label([0.1, 0.8, 0.1, 1.0], ||"frame_finish");
+            fc.insert_label([0.1, 0.8, 0.1, 1.0], || "frame_finish");
             RenderingContext::frame_finish(fc);
         }
 
