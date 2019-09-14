@@ -5,6 +5,7 @@ use ash::vk;
 use ash::vk::Handle;
 use parking_lot::MutexGuard;
 use std::ffi::CString;
+use std::mem::ManuallyDrop;
 use vk_mem as vma;
 
 pub fn name_vk_object<F: FnOnce() -> S, S>(
@@ -196,7 +197,7 @@ impl<'h> Drop for FenceGuard<'h> {
 }
 
 pub struct OnetimeCmdGuard<'h> {
-    fence: FenceGuard<'h>,
+    fence: ManuallyDrop<FenceGuard<'h>>,
     custom_pool: Option<vk::CommandPool>,
     pool_lock: Option<MutexGuard<'h, vk::CommandPool>>,
     cmd: vk::CommandBuffer,
@@ -222,7 +223,7 @@ impl<'h> OnetimeCmdGuard<'h> {
         unsafe { handles.device.begin_command_buffer(cmd, &bgi) }
             .expect("Couldn't begin recording one-time cmd buffer");
         Self {
-            fence: FenceGuard::new(handles, false, || "one-time cmd"),
+            fence: ManuallyDrop::new(FenceGuard::new(handles, false, || "one-time cmd")),
             custom_pool,
             pool_lock,
             cmd,
@@ -248,6 +249,9 @@ impl<'h> OnetimeCmdGuard<'h> {
         self.fence
             .wait(None)
             .expect("Failed waiting for one-time cmd fence");
+        unsafe {
+            ManuallyDrop::drop(&mut self.fence);
+        }
 
         unsafe {
             handles.device.free_command_buffers(
