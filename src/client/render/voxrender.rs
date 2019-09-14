@@ -116,6 +116,12 @@ impl Debug for DrawnChunk {
     }
 }
 
+impl DrawnChunk {
+    fn destroy(&mut self, handles: &RenderingHandles) {
+        self.buffer.destroy(&mut handles.vmalloc.lock());
+    }
+}
+
 type ChunkMsg = (ChunkPosition, DrawnChunk);
 
 pub struct VoxelRenderer {
@@ -401,6 +407,29 @@ impl VoxelRenderer {
         }
     }
 
+    pub fn destroy(&mut self, handles: &RenderingHandles) {
+        self.kill_threads();
+        unsafe{
+            handles.device.device_wait_idle().unwrap();
+        }
+        for (_cpos, mut ch) in self.drawn_chunks.drain() {
+            ch.destroy(handles);
+        }
+        unsafe{
+            handles.device.destroy_pipeline(self.voxel_pipeline, allocation_cbs());
+            handles.device.destroy_pipeline_layout(self.voxel_pipeline_layout, allocation_cbs());
+            self.uniform_dss.clear();
+            handles.device.destroy_descriptor_pool(self.ds_pool, allocation_cbs());
+            handles.device.destroy_descriptor_set_layout(self.texture_ds_layout, allocation_cbs());
+            handles.device.destroy_descriptor_set_layout(self.uniform_ds_layout, allocation_cbs());
+            handles.device.destroy_sampler(self.texture_sampler, allocation_cbs());
+            self.texture_name_map.clear();
+            handles.device.destroy_image_view(self.texture_array_view, allocation_cbs());
+            self.texture_array.destroy(&mut handles.vmalloc.lock());
+            self.ubuffer.destroy(&mut handles.vmalloc.lock());
+        }
+    }
+
     fn kill_threads(&mut self) {
         self.thread_killer.store(true, Ordering::SeqCst);
         let old_threads = std::mem::replace(&mut self.worker_threads, Vec::new());
@@ -521,7 +550,7 @@ impl VoxelRenderer {
                 .usage(vk::BufferUsageFlags::TRANSFER_SRC)
                 .size((idim.0*idim.1*numimages*4) as vk::DeviceSize);
             let aci = vma::AllocationCreateInfo {
-                usage: vma::MemoryUsage::CpuToGpu,
+                usage: vma::MemoryUsage::CpuOnly,
                 flags: vma::AllocationCreateFlags::DEDICATED_MEMORY | vma::AllocationCreateFlags::MAPPED,
                 ..Default::default()
             };
@@ -561,17 +590,82 @@ impl VoxelRenderer {
             }];
             unsafe{rctx.handles.device.cmd_copy_buffer_to_image(cmd.handle(), buf.buffer, img.image,
                                                                 vk::ImageLayout::TRANSFER_DST_OPTIMAL, &whole_copy);}
+            let ibarrier = vk_sync::ImageBarrier{
+                previous_accesses: &[vk_sync::AccessType::TransferWrite],
+                next_accesses: &[vk_sync::AccessType::TransferRead],
+                previous_layout: vk_sync::ImageLayout::Optimal,
+                next_layout: vk_sync::ImageLayout::Optimal,
+                discard_contents: false,
+                src_queue_family_index: qfis[0],
+                dst_queue_family_index: qfis[0],
+                image: img.image,
+                range: vk::ImageSubresourceRange {
+                    base_mip_level: 0,
+                    level_count: 1,
+                    ..whole_img
+                }
+            };
             vk_sync::cmd::pipeline_barrier(rctx.handles.device.fp_v1_0(), cmd.handle(), None, &[], &[
-                vk_sync::ImageBarrier{
-                    previous_accesses: &[vk_sync::AccessType::TransferWrite],
+                ibarrier.clone()
+            ]);
+            for mip in 1 .. mip_lvls {
+                let prev_mip = mip - 1;
+                let prev_sz = (idim.0 >> prev_mip, idim.1 >> prev_mip);
+                let now_sz = (idim.0 >> mip, idim.1 >> mip);
+                let img_blit = [vk::ImageBlit {
+                    src_subresource: vk::ImageSubresourceLayers{
+                        mip_level: prev_mip,
+                        ..whole_mip0
+                    },
+                    src_offsets: [
+                        vk::Offset3D::default(),
+                        vk::Offset3D {
+                            x: prev_sz.0 as i32,
+                            y: prev_sz.1 as i32,
+                            z: 1
+                        }
+                    ],
+                    dst_subresource: vk::ImageSubresourceLayers{
+                        mip_level: mip,
+                        ..whole_mip0
+                    },
+                    dst_offsets: [
+                        vk::Offset3D::default(),
+                        vk::Offset3D {
+                            x: now_sz.0 as i32,
+                            y: now_sz.1 as i32,
+                            z: 1
+                        }
+                    ]
+                }];
+                unsafe{
+                    rctx.handles.device.cmd_blit_image(
+                        cmd.handle(),
+                        img.image,
+                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                        img.image,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        &img_blit,
+                        vk::Filter::LINEAR
+                    );
+                    vk_sync::cmd::pipeline_barrier(rctx.handles.device.fp_v1_0(), cmd.handle(), None, &[], &[
+                        vk_sync::ImageBarrier {
+                            range: vk::ImageSubresourceRange {
+                                base_mip_level: mip,
+                                level_count: 1,
+                                ..whole_img
+                            },
+                            ..ibarrier.clone()
+                        }
+                    ]);
+                }
+            }
+            vk_sync::cmd::pipeline_barrier(rctx.handles.device.fp_v1_0(), cmd.handle(), None, &[], &[
+                vk_sync::ImageBarrier {
+                    previous_accesses: &[vk_sync::AccessType::TransferRead],
                     next_accesses: &[vk_sync::AccessType::FragmentShaderReadSampledImageOrUniformTexelBuffer],
-                    previous_layout: vk_sync::ImageLayout::Optimal,
-                    next_layout: vk_sync::ImageLayout::Optimal,
-                    discard_contents: false,
-                    src_queue_family_index: qfis[0],
-                    dst_queue_family_index: qfis[0],
-                    image: img.image,
-                    range: whole_img
+                    range: whole_img,
+                    ..ibarrier.clone()
                 }
             ]);
             cmd.execute(&queue);
@@ -706,65 +800,77 @@ impl VoxelRenderer {
                 let i_tot_sz = i_sz * (icount as usize);
                 let tot_sz = v_tot_sz + i_tot_sz;
 
-                let qfs = [handles.queues.get_primary_family()];
-                let mut staging = {
-                    let bi = vk::BufferCreateInfo::builder()
-                        .usage(vk::BufferUsageFlags::TRANSFER_SRC)
-                        .size(tot_sz as u64)
-                        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                        .queue_family_indices(&qfs);
-                    let ai = vma::AllocationCreateInfo {
-                        usage: vma::MemoryUsage::CpuToGpu,
-                        flags: vma::AllocationCreateFlags::MAPPED,
-                        ..Default::default()
+                let dchunk = if tot_sz > 0 {
+                    let qfs = [handles.queues.get_primary_family()];
+                    let mut staging = {
+                        let bi = vk::BufferCreateInfo::builder()
+                            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+                            .size(tot_sz as u64)
+                            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                            .queue_family_indices(&qfs)
+                            .build();
+                        let ai = vma::AllocationCreateInfo {
+                            usage: vma::MemoryUsage::CpuOnly,
+                            flags: vma::AllocationCreateFlags::MAPPED,
+                            ..Default::default()
+                        };
+                        OwnedBuffer::from(&mut handles.vmalloc.lock(), &bi, &ai)
                     };
-                    OwnedBuffer::from(&mut handles.vmalloc.lock(), &bi, &ai)
-                };
-                let buffer = {
-                    let bi = vk::BufferCreateInfo::builder()
-                        .usage(vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER)
-                        .size(tot_sz as u64)
-                        .queue_family_indices(&qfs)
-                        .sharing_mode(vk::SharingMode::EXCLUSIVE);
-                    let ai = vma::AllocationCreateInfo {
-                        usage: vma::MemoryUsage::GpuOnly,
-                        ..Default::default()
+                    let buffer = {
+                        let bi = vk::BufferCreateInfo::builder()
+                            .usage(vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER)
+                            .size(tot_sz as u64)
+                            .queue_family_indices(&qfs)
+                            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+                        let ai = vma::AllocationCreateInfo {
+                            usage: vma::MemoryUsage::GpuOnly,
+                            ..Default::default()
+                        };
+                        OwnedBuffer::from(&mut handles.vmalloc.lock(), &bi, &ai)
                     };
-                    OwnedBuffer::from(&mut handles.vmalloc.lock(), &bi, &ai)
-                };
-                buffer.give_name(&handles, ||format!("chunk({},{},{})", cpos.x, cpos.y, cpos.z));
-                // write to staging
-                {
-                    let ai = staging.allocation.as_ref().unwrap();
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(mesh.vertices.as_ptr(),
-                                                      ai.1.get_mapped_data() as *mut vox::VoxelVertex,
-                                                      mesh.vertices.len());
-                        std::ptr::copy_nonoverlapping(mesh.indices.as_ptr(),
-                                                      ai.1.get_mapped_data().add(v_tot_sz) as *mut u32,
-                                                      mesh.indices.len());
+                    buffer.give_name(&handles, || format!("chunk({},{},{})", cpos.x, cpos.y, cpos.z));
+                    // write to staging
+                    {
+                        let ai = staging.allocation.as_ref().unwrap();
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(mesh.vertices.as_ptr(),
+                                                          ai.1.get_mapped_data() as *mut vox::VoxelVertex,
+                                                          mesh.vertices.len());
+                            std::ptr::copy_nonoverlapping(mesh.indices.as_ptr(),
+                                                          ai.1.get_mapped_data().add(v_tot_sz) as *mut u32,
+                                                          mesh.indices.len());
+                        }
+                        handles.vmalloc.lock().flush_allocation(&ai.0, 0, tot_sz).unwrap();
                     }
-                    handles.vmalloc.lock().flush_allocation(&ai.0, 0, tot_sz).unwrap();
-                }
-                // copy from staging to gpu
-                {
-                    let cmd = OnetimeCmdGuard::new(&handles);
-                    let bci = vk::BufferCopy::builder()
-                        .size(tot_sz as vk::DeviceSize).build();
-                    unsafe{
-                        handles.device.cmd_copy_buffer(cmd.handle(), staging.buffer, buffer.buffer, &[bci]);
+                    // copy from staging to gpu
+                    {
+                        let cmd = OnetimeCmdGuard::new(&handles);
+                        let bci = vk::BufferCopy::builder()
+                            .size(tot_sz as vk::DeviceSize).build();
+                        unsafe {
+                            handles.device.cmd_copy_buffer(cmd.handle(), staging.buffer, buffer.buffer, &[bci]);
+                        }
+                        cmd.execute(&handles.queues.lock_gtransfer_queue());
                     }
-                    cmd.execute(&handles.queues.lock_gtransfer_queue());
-                }
-                staging.destroy(&mut handles.vmalloc.lock());
+                    staging.destroy(&mut handles.vmalloc.lock());
 
-                let dchunk = DrawnChunk {
-                    cpos,
-                    last_dirty: voxels.chunks.get(&cpos).unwrap().dirty,
-                    buffer,
-                    istart: v_tot_sz,
-                    vcount,
-                    icount
+                     DrawnChunk {
+                        cpos,
+                        last_dirty: voxels.chunks.get(&cpos).unwrap().dirty,
+                        buffer,
+                        istart: v_tot_sz,
+                        vcount,
+                        icount
+                    }
+                } else {
+                    DrawnChunk {
+                        cpos,
+                        last_dirty: voxels.chunks.get(&cpos).unwrap().dirty,
+                        buffer: OwnedBuffer::new(),
+                        istart: 0,
+                        vcount: 0,
+                        icount: 0,
+                    }
                 };
 
                 if submission
@@ -795,7 +901,9 @@ impl VoxelRenderer {
 
         if let Some(work_receiver) = self.work_receiver.get() {
             for (p, dc) in work_receiver.try_iter() {
-                self.drawn_chunks.insert(p, dc);
+                if let Some(mut ch) = self.drawn_chunks.insert(p, dc) {
+                    ch.destroy(&fctx.rctx.handles);
+                }
             }
         }
 
@@ -860,7 +968,9 @@ impl VoxelRenderer {
         drop(draw_queue);
 
         for cpos in chunks_to_remove.into_iter().take(32) {
-            self.drawn_chunks.remove(&cpos);
+            if let Some(mut ch) = self.drawn_chunks.remove(&cpos) {
+                ch.destroy(&fctx.rctx.handles);
+            }
         }
 
         if new_cmds {

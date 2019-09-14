@@ -244,6 +244,36 @@ pub struct FrameContext<'r, Stage: FrameStage> {
     _phantom: PhantomData<Stage>,
 }
 
+impl<'r, Stage: FrameStage> FrameContext<'r, Stage> {
+    pub fn begin_region<F: FnOnce()->S, S>(&self, color: [f32; 4], name_fn: F) where S: Into<Vec<u8>> {
+        if let Some(ext_debug) = self.rctx.handles.ext_debug.as_ref() {
+            let name_slice = name_fn();
+            let name = CString::new(name_slice).unwrap();
+            let label = vk::DebugUtilsLabelEXT::builder()
+                .color(color)
+                .label_name(name.as_c_str());
+            unsafe{ext_debug.utils.cmd_begin_debug_utils_label(self.cmd, &label);}
+        }
+    }
+
+    pub fn end_region(&self) {
+        if let Some(ext_debug) = self.rctx.handles.ext_debug.as_ref() {
+            unsafe{ext_debug.utils.cmd_end_debug_utils_label(self.cmd);}
+        }
+    }
+
+    pub fn insert_label<F: FnOnce()->S, S>(&self, color: [f32; 4], name_fn: F) where S: Into<Vec<u8>> {
+        if let Some(ext_debug) = self.rctx.handles.ext_debug.as_ref() {
+            let name_slice = name_fn();
+            let name = CString::new(name_slice).unwrap();
+            let label = vk::DebugUtilsLabelEXT::builder()
+                .color(color)
+                .label_name(name.as_c_str());
+            unsafe{ext_debug.utils.cmd_insert_debug_utils_label(self.cmd, &label);}
+        }
+    }
+}
+
 pub type PrePassFrameContext<'r> = FrameContext<'r, PrePassStage>;
 pub type InPassFrameContext<'r> = FrameContext<'r, InPassStage>;
 pub type PostPassFrameContext<'r> = FrameContext<'r, PostPassStage>;
@@ -1109,10 +1139,18 @@ impl RenderingContext {
                 stencil: 0,
             },
         };
+        let area = vk::Rect2D {
+            offset: vk::Offset2D::default(),
+            extent: vk::Extent2D {
+                width: me.swapchain.dynamic_state.viewport.width as u32,
+                height: me.swapchain.dynamic_state.viewport.height as u32
+            }
+        };
         let clears = [clear_color, clear_depth];
         let rpbi = vk::RenderPassBeginInfo::builder()
             .render_pass(me.handles.mainpass)
             .framebuffer(me.swapchain.framebuffers[image_index])
+            .render_area(area)
             .clear_values(&clears);
         unsafe {
             me.handles

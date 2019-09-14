@@ -32,7 +32,7 @@ impl Config {
             performance_load_distance: 4,
             performance_draw_distance: 4,
 
-            debug_logging: true, //cfg!(debug_assertions),
+            debug_logging: true,
             vk_debug_layers: true,
 
             toml_doc: None,
@@ -80,6 +80,14 @@ impl Config {
             .as_integer()
             .map_or(self.performance_draw_distance, |v| v as u32);
 
+        self.debug_logging = toml_doc["debug"]["enable_logging"]
+            .as_bool()
+            .unwrap_or(self.debug_logging);
+
+        self.vk_debug_layers = toml_doc["debug"]["enable_vk_layers"]
+            .as_bool()
+            .unwrap_or(self.vk_debug_layers);
+
         self.toml_doc = Some(toml_doc);
     }
 
@@ -101,6 +109,9 @@ impl Config {
             Item::Value(Value::from(self.performance_load_distance as i64));
         toml_doc["performance"]["draw_distance"] =
             Item::Value(Value::from(self.performance_draw_distance as i64));
+
+        toml_doc["debug"]["enable_logging"] = Item::Value(Value::from(self.debug_logging));
+        toml_doc["debug"]["enable_vk_layers"] = Item::Value(Value::from(self.vk_debug_layers));
 
         self.toml_doc = Some(toml_doc);
         self.toml_doc.as_ref().unwrap().to_string()
