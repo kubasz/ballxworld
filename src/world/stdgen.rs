@@ -82,6 +82,7 @@ struct CellGen {
     elevation_map_gen: SuperSimplex,
     moisture_map_gen: SuperSimplex,
     cell_points: LruCache<Vector2<i32>, CellPointsT>,
+    nearest_buf: Vec<(i32, CellPoint)>,
 }
 
 impl CellGen {
@@ -92,6 +93,7 @@ impl CellGen {
             elevation_map_gen: SuperSimplex::new(),
             moisture_map_gen: SuperSimplex::new(),
             cell_points: LruCache::new(64),
+            nearest_buf: Vec::with_capacity(16),
         };
         s.set_seed(seed);
         s
@@ -143,21 +145,26 @@ impl CellGen {
         pts
     }
 
-    fn find_nearest_cell_points(&mut self, pos: Vector2<i32>, num: usize) -> Vec<(i32, CellPoint)> {
+    fn find_nearest_cell_points(&mut self, pos: Vector2<i32>, num: usize) {
         let cell = pos / SUPERGRID_SIZE;
 
-        let mut pts = Vec::with_capacity(6);
+        type CP = (i32, CellPoint);
+        self.nearest_buf.clear();
         for cdx in -1..=1 {
             for cdy in -1..=1 {
                 for p in self.get_cell_points(cell + vec2(cdx, cdy)).iter() {
                     let dist = distance2(p.pos, pos);
-                    pts.push((dist, *p));
+                    self.nearest_buf.push((dist, *p));
                 }
             }
         }
-        pts.sort_by(|a, b| a.0.cmp(&b.0));
-        pts.resize_with(num, || (0, CellPoint::default()));
-        pts
+        let cmp = |a: &CP, b: &CP| a.0.cmp(&b.0);
+        if num == 1 {
+            self.nearest_buf[0] = self.nearest_buf.iter().copied().min_by(cmp).unwrap();
+        } else {
+            self.nearest_buf.sort_by(cmp);
+        }
+        self.nearest_buf.resize(num, (0, CellPoint::default()));
     }
 
     fn elevation_noise(&self, pos: Vector2<i32>) -> f64 {
@@ -205,7 +212,8 @@ impl CellGen {
     }
 
     fn calc_voxel_params(&mut self, pos: Vector2<i32>) -> VoxelParams {
-        let cp = self.find_nearest_cell_points(pos, 1)[0].1;
+        self.find_nearest_cell_points(pos, 1);
+        let cp = self.nearest_buf[0].1;
         let cec = cp.elevation_class;
         let ec = self.elevation_noise(pos);
 

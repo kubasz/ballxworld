@@ -190,11 +190,13 @@ impl WorldLoadGen {
         // load nearest chunks first
         load_queue.par_sort_by_key(|p| -p.0);
 
+        let req_cpos: HashSet<ChunkPosition> =
+            HashSet::from_iter(req_positions.iter().map(|c| c.1));
         let to_remove: SmallVec<[ChunkPosition; 10]> = SmallVec::from_iter(
             voxels
                 .chunks
                 .keys()
-                .filter(|p| !req_positions.iter().any(|u| u.1 == **p))
+                .filter(|p| !req_cpos.contains(*p))
                 .copied(),
         );
         for cp in to_remove {

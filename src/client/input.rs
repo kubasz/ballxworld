@@ -79,6 +79,7 @@ pub struct InputManager<'i> {
     capturing_input: bool,
 }
 
+#[allow(unused_variables)]
 impl<'i> InputManager<'i> {
     pub fn new(sdl: &'i Sdl) -> Self {
         sdl.mouse().set_relative_mouse_mode(false);

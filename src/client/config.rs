@@ -33,7 +33,7 @@ impl Config {
             performance_draw_distance: 4,
 
             debug_logging: true,
-            vk_debug_layers: true,
+            vk_debug_layers: false,
 
             toml_doc: None,
         }

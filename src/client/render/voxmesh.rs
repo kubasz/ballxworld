@@ -2,7 +2,8 @@ use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
 use crate::math::*;
 use crate::world::registry::VoxelRegistry;
 use crate::world::{
-    blockidx_from_blockpos, ChunkPosition, UncompressedChunk, WVoxels, World, CHUNK_DIM, CHUNK_DIM2,
+    blockidx_from_blockpos, ChunkPosition, UncompressedChunk, VChunkData, VoxelDatum, WVoxels,
+    World, CHUNK_DIM, CHUNK_DIM2,
 };
 use smallvec::SmallVec;
 
@@ -23,6 +24,19 @@ pub fn mesh_from_chunk(
     cpos: ChunkPosition,
 ) -> Option<ChunkBuffers> {
     let registry: &VoxelRegistry = &world.vregistry;
+    {
+        let chk = voxels.chunks.get(&cpos)?;
+        let VChunkData::QuickCompressed { vox } = &chk.data;
+        if vox.len() == 3 && vox[0] == vox[1] {
+            let vdef = registry.get_definition_from_id(VoxelDatum { id: vox[0] });
+            if !vdef.has_mesh {
+                return Some(ChunkBuffers {
+                    indices: Vec::new(),
+                    vertices: Vec::new(),
+                });
+            }
+        }
+    }
     let mut vcache = world.get_vcache();
     let mut chunks: SmallVec<[&UncompressedChunk; 32]> = SmallVec::new();
     for y in -1..=1 {

@@ -1,12 +1,11 @@
 use crate::client::config::Config;
+use crate::client::render::vkhelpers::{cmd_push_struct_constants, make_pipe_depthstencil};
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles};
 use crate::client::render::{InPassFrameContext, RenderingContext};
 use crate::math::*;
-use ash::prelude::*;
 use ash::version::DeviceV1_0;
 use ash::vk;
 use std::ffi::CString;
-use std::sync::Arc;
 
 pub mod shaders {
     #[derive(Copy, Clone, Default)]
@@ -66,14 +65,8 @@ impl AtmosphereRenderer {
             let inpasm = vk::PipelineInputAssemblyStateCreateInfo::builder()
                 .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
                 .primitive_restart_enable(false);
-            let viewport = [rctx.swapchain.dynamic_state.viewport];
-            let scissor = [vk::Rect2D {
-                offset: vk::Offset2D { x: 0, y: 0 },
-                extent: vk::Extent2D {
-                    width: viewport[0].width as u32,
-                    height: viewport[0].height as u32,
-                },
-            }];
+            let viewport = [rctx.swapchain.dynamic_state.get_viewport()];
+            let scissor = [rctx.swapchain.dynamic_state.get_scissor()];
             let vwp_info = vk::PipelineViewportStateCreateInfo::builder()
                 .scissors(&scissor)
                 .viewports(&viewport);
@@ -86,14 +79,7 @@ impl AtmosphereRenderer {
                 .depth_bias_enable(false);
             let multisampling = vk::PipelineMultisampleStateCreateInfo::builder()
                 .rasterization_samples(vk::SampleCountFlags::TYPE_1);
-            let depthstencil = vk::PipelineDepthStencilStateCreateInfo::builder()
-                .depth_test_enable(true)
-                .depth_write_enable(false)
-                .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL)
-                .depth_bounds_test_enable(false)
-                .stencil_test_enable(false)
-                .min_depth_bounds(0.0)
-                .max_depth_bounds(1.0);
+            let depthstencil = make_pipe_depthstencil();
             let blendings = [vk::PipelineColorBlendAttachmentState::builder()
                 .color_write_mask(vk::ColorComponentFlags::all())
                 .blend_enable(false)
@@ -181,29 +167,20 @@ impl AtmosphereRenderer {
         unsafe {
             device.cmd_bind_pipeline(fctx.cmd, vk::PipelineBindPoint::GRAPHICS, self.sky_pipeline);
         }
-        let vwp = fctx.rctx.swapchain.dynamic_state.viewport;
-        unsafe {
-            device.cmd_set_viewport(fctx.cmd, 0, &[vwp]);
-        }
-        let sci = vk::Rect2D {
-            offset: Default::default(),
-            extent: vk::Extent2D {
-                width: vwp.width as u32,
-                height: vwp.height as u32,
-            },
-        };
-        unsafe { device.cmd_set_scissor(fctx.cmd, 0, &[sci]) }
+        fctx.rctx
+            .swapchain
+            .dynamic_state
+            .cmd_update_pipeline(device, fctx.cmd);
 
-        let pc_sz = std::mem::size_of_val(&ubo);
-        let pc_bytes = unsafe { std::slice::from_raw_parts(&ubo as *const _ as *const u8, pc_sz) };
+        cmd_push_struct_constants(
+            device,
+            fctx.cmd,
+            self.sky_pipeline_layout,
+            vk::ShaderStageFlags::VERTEX,
+            0,
+            &ubo,
+        );
         unsafe {
-            device.cmd_push_constants(
-                fctx.cmd,
-                self.sky_pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
-                0,
-                pc_bytes,
-            );
             device.cmd_draw(fctx.cmd, 36, 1, 0, 0);
         }
     }
