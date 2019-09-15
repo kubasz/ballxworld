@@ -125,15 +125,15 @@ pub fn mesh_from_chunk(
         },
     ];
 
-    for side in &SIDES {
-        let ioffset = Vector3::from_row_slice(&side.ioffset);
-        for (vidx, vox) in chunk.blocks_yzx.iter().enumerate() {
-            let vox = *vox;
-            let vdef = registry.get_definition_from_id(vox);
+    for (vidx, vox) in chunk.blocks_yzx.iter().enumerate() {
+        let vox = *vox;
+        let vdef = registry.get_definition_from_id(vox);
 
-            if !vdef.has_mesh {
-                continue;
-            }
+        if !vdef.has_mesh {
+            continue;
+        }
+        for side in &SIDES {
+            let ioffset = Vector3::from_row_slice(&side.ioffset);
 
             let ipos = vec3(
                 (vidx % CHUNK_DIM) as i32,

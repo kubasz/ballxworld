@@ -13,9 +13,9 @@ use crate::world::{blockidx_from_blockpos, chunkpos_from_blockpos, World};
 use crate::world::{ChunkPosition, CHUNK_DIM};
 use ash::version::DeviceV1_0;
 use ash::vk;
+use fnv::{FnvHashMap, FnvHashSet};
 use parking_lot::Mutex;
 use smallvec::SmallVec;
-use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
@@ -158,7 +158,7 @@ pub struct VoxelRenderer {
     texture_array: OwnedImage,
     texture_array_view: vk::ImageView,
     _texture_array_params: TextureArrayParams,
-    texture_name_map: HashMap<String, u32>,
+    texture_name_map: FnvHashMap<String, u32>,
     texture_sampler: vk::Sampler,
     texture_ds: vk::DescriptorSet,
     texture_ds_layout: vk::DescriptorSetLayout,
@@ -169,10 +169,10 @@ pub struct VoxelRenderer {
     pub voxel_pipeline_layout: vk::PipelineLayout,
     pub voxel_pipeline: vk::Pipeline,
     atmosphere_renderer: AtmosphereRenderer,
-    drawn_chunks: HashMap<ChunkPosition, DrawnChunk>,
+    drawn_chunks: FnvHashMap<ChunkPosition, DrawnChunk>,
     pub ubuffer: OwnedBuffer,
     draw_queue: Arc<Mutex<Vec<ChunkPosition>>>,
-    progress_set: Arc<Mutex<HashSet<ChunkPosition>>>,
+    progress_set: Arc<Mutex<FnvHashSet<ChunkPosition>>>,
     worker_threads: Vec<thread::JoinHandle<()>>,
     thread_killer: Arc<AtomicBool>,
     work_receiver: CachedThreadLocal<mpsc::Receiver<ChunkMsg>>,
@@ -490,10 +490,10 @@ impl VoxelRenderer {
             voxel_pipeline_layout: pipeline_layot,
             voxel_pipeline,
             atmosphere_renderer: AtmosphereRenderer::new(cfg, rctx),
-            drawn_chunks: HashMap::new(),
+            drawn_chunks: FnvHashMap::default(),
             ubuffer,
             draw_queue: Arc::new(Mutex::new(Vec::new())),
-            progress_set: Arc::new(Mutex::new(HashSet::new())),
+            progress_set: Arc::new(Mutex::new(FnvHashSet::default())),
             worker_threads: Vec::new(),
             thread_killer: Arc::new(AtomicBool::new(false)),
             work_receiver: CachedThreadLocal::new(),
@@ -561,7 +561,7 @@ impl VoxelRenderer {
         OwnedImage,
         vk::ImageView,
         TextureArrayParams,
-        HashMap<String, u32>,
+        FnvHashMap<String, u32>,
     ) {
         use image::RgbaImage;
         use toml_edit::Document;
@@ -575,7 +575,7 @@ impl VoxelRenderer {
             .as_table()
             .expect("manifest.toml[textures] is not a table");
         let mut memimages = Vec::new();
-        let mut names = HashMap::new();
+        let mut names = FnvHashMap::default();
         let mut idim = (0, 0);
 
         // load all textures into memory
@@ -891,7 +891,7 @@ impl VoxelRenderer {
         handles: RenderingHandles,
         alloc_pool: Arc<AllocatorPool>,
         work_queue: Arc<Mutex<Vec<ChunkPosition>>>,
-        progress_set: Arc<Mutex<HashSet<ChunkPosition>>>,
+        progress_set: Arc<Mutex<FnvHashSet<ChunkPosition>>>,
         submission: mpsc::Sender<ChunkMsg>,
         killswitch: Arc<AtomicBool>,
     ) {
@@ -1134,16 +1134,22 @@ impl VoxelRenderer {
         }
 
         let ref_pos; // TODO: Add velocity-based position prediction
+        let ref_fdir;
         {
             let client = ClientWorld::read(world);
             let entities = world.entities.read();
             let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
             ref_pos = lp_loc.position;
+            let mrot = glm::quat_to_mat3(&-lp_loc.orientation).transpose();
+            ref_fdir = mrot * vec3(0.0, 0.0, 1.0);
         }
         let cposition = chunkpos_from_blockpos(ref_pos.map(|x| x as i32));
         let dist_key = |p: &Vector3<i32>| {
             let d = cposition - p;
-            -(d.x * d.x + d.y * d.y + d.z * d.z)
+            let df = d.map(|c| c as f32);
+            let dflen = df.norm();
+            let fk = -dflen * (4.0 - df.angle(&ref_fdir));
+            (fk * 32.0) as i32
         };
         let mut draw_queue = self.draw_queue.lock();
         let progress_set = self.progress_set.lock();
@@ -1155,9 +1161,9 @@ impl VoxelRenderer {
         }
         drop(progress_set);
         // Load nearest chunks first
-        draw_queue.sort_by_cached_key(&dist_key);
+        draw_queue.sort_unstable_by_key(&dist_key);
         // Unload farthest chunks first
-        chunks_to_remove.sort_by_cached_key(&dist_key);
+        chunks_to_remove.sort_unstable_by_key(&dist_key);
         let new_cmds = !draw_queue.is_empty();
         drop(draw_queue);
 
@@ -1177,11 +1183,13 @@ impl VoxelRenderer {
     #[allow(clippy::cast_ptr_alignment)]
     pub fn inpass_draw(&mut self, fctx: &mut InPassFrameContext) {
         let (mut hichunk, mut hiidx) = (vec3(0, 0, 0), -1);
+        let mut fwd: Vector3<f32> = zero();
+        let mut player_pos = zero();
         let mview = if let Some(world) = &self.world {
             let client = ClientWorld::read(world);
             let entities = world.entities.read();
             let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
-            let player_pos = lp_loc.position;
+            player_pos = lp_loc.position;
             let player_ang = lp_loc.orientation;
             let mview: Matrix4<f32>;
             let mrot: Matrix3<f32>;
@@ -1194,7 +1202,7 @@ impl VoxelRenderer {
 
             let voxels = world.voxels.read();
             use crate::world::raycast;
-            let fwd = mrot.transpose() * vec3(0.0, 0.0, 1.0);
+            fwd = mrot.transpose() * vec3(0.0, 0.0, 1.0);
             let rc = raycast::RaycastQuery::new_directed(
                 player_pos,
                 fwd,
@@ -1277,9 +1285,16 @@ impl VoxelRenderer {
             );
         }
 
+        let always_dist = (CHUNK_DIM * CHUNK_DIM * 5) as f32;
         for (pos, chunk) in self.drawn_chunks.iter().filter(|c| c.1.icount > 0) {
+            let ch_offset = pos.map(|x| (x as f32) * (CHUNK_DIM as f32));
+            let rpos = ch_offset - (player_pos - fwd * (CHUNK_DIM as f32));
+            let ang = fwd.dot(&rpos);
+            if ang < 0.0 && rpos.norm_squared() > always_dist {
+                continue;
+            }
             let pc = vox::VoxelPC {
-                chunk_offset: pos.map(|x| (x as f32) * (CHUNK_DIM as f32)).into(),
+                chunk_offset: ch_offset.into(),
                 highlight_index: if chunk.cpos == hichunk { hiidx } else { -1 },
             };
             cmd_push_struct_constants(

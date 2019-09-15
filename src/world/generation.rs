@@ -2,10 +2,10 @@ use crate::math::*;
 use crate::world::ecs::{CLoadAnchor, CLocation, Component, ECSHandler};
 use crate::world::stdgen::StdGenerator;
 use crate::world::{chunkpos_from_blockpos, ChunkPosition, UncompressedChunk, VChunk, World};
+use fnv::FnvHashSet;
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use smallvec::SmallVec;
-use std::collections::HashSet;
 use std::iter::FromIterator;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -20,7 +20,7 @@ struct ChunkMsg {
 pub struct WorldLoadGen {
     pub world: Arc<World>,
     pub loading_queue: Arc<Mutex<Vec<(i32, ChunkPosition)>>>,
-    pub progress_set: Arc<Mutex<HashSet<ChunkPosition>>>,
+    pub progress_set: Arc<Mutex<FnvHashSet<ChunkPosition>>>,
     pub generator: Arc<StdGenerator>,
     worker_threads: Vec<thread::JoinHandle<()>>,
     thread_killer: Arc<AtomicBool>,
@@ -32,7 +32,7 @@ impl WorldLoadGen {
         let mut wlg = Self {
             world,
             loading_queue: Arc::new(Mutex::new(Vec::new())),
-            progress_set: Arc::new(Mutex::new(HashSet::new())),
+            progress_set: Arc::new(Mutex::new(FnvHashSet::default())),
             generator: Arc::new(StdGenerator::new(seed)),
             worker_threads: Vec::new(),
             thread_killer: Arc::new(AtomicBool::new(false)),
@@ -83,7 +83,7 @@ impl WorldLoadGen {
         world_arc: Arc<World>,
         worldgen_arc: Arc<StdGenerator>,
         load_queue_arc: Arc<Mutex<Vec<(i32, ChunkPosition)>>>,
-        progress_set_arc: Arc<Mutex<HashSet<ChunkPosition>>>,
+        progress_set_arc: Arc<Mutex<FnvHashSet<ChunkPosition>>>,
         submission: mpsc::Sender<ChunkMsg>,
         killswitch: Arc<AtomicBool>,
     ) {
@@ -142,7 +142,7 @@ impl WorldLoadGen {
                 voxels.chunks.insert(cpos, vc.chunk);
             }
         }
-        let mut req_positions: HashSet<(i32, ChunkPosition)> = HashSet::new();
+        let mut req_positions: FnvHashSet<(i32, ChunkPosition)> = FnvHashSet::default();
 
         let ents_o = self.world.entities.read();
         let ents = &ents_o.ecs;
@@ -158,7 +158,7 @@ impl WorldLoadGen {
             for xoff in 0..r {
                 for yoff in 0..r {
                     for zoff in 0..r {
-                        let rr = xoff * xoff + yoff * yoff * 4 + zoff * zoff;
+                        let rr = xoff * xoff + yoff * yoff + zoff * zoff;
                         if rr <= r * r {
                             req_positions.insert((rr, pos + vec3(xoff, yoff, zoff)));
 
@@ -190,8 +190,8 @@ impl WorldLoadGen {
         // load nearest chunks first
         load_queue.par_sort_by_key(|p| -p.0);
 
-        let req_cpos: HashSet<ChunkPosition> =
-            HashSet::from_iter(req_positions.iter().map(|c| c.1));
+        let req_cpos: FnvHashSet<ChunkPosition> =
+            FnvHashSet::from_iter(req_positions.iter().map(|c| c.1));
         let to_remove: SmallVec<[ChunkPosition; 10]> = SmallVec::from_iter(
             voxels
                 .chunks

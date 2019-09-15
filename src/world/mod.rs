@@ -9,11 +9,11 @@ pub mod stdgen;
 use crate::math::*;
 use crate::world::ecs::ECS;
 use divrem::{DivFloor, RemFloor};
+use fnv::FnvHashMap;
 use lru::LruCache;
 use parking_lot::RwLock;
 pub use registry::VoxelRegistry;
 use std::cell::{RefCell, RefMut};
-use std::collections::HashMap;
 use std::sync::Arc;
 use thread_local::ThreadLocal;
 
@@ -431,7 +431,7 @@ type ClientWorld = crate::client::world::ClientWorld;
 
 #[derive(Default)]
 pub struct WVoxels {
-    pub chunks: HashMap<ChunkPosition, VChunk>,
+    pub chunks: FnvHashMap<ChunkPosition, VChunk>,
 }
 
 #[derive(Default)]
