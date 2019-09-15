@@ -22,6 +22,7 @@ pub struct WorldLoadGen {
     pub loading_queue: Arc<Mutex<Vec<(i32, ChunkPosition)>>>,
     pub progress_set: Arc<Mutex<FnvHashSet<ChunkPosition>>>,
     pub generator: Arc<StdGenerator>,
+    prev_anchors: Vec<(i32, ChunkPosition)>,
     worker_threads: Vec<thread::JoinHandle<()>>,
     thread_killer: Arc<AtomicBool>,
     work_receiver: CachedThreadLocal<mpsc::Receiver<ChunkMsg>>,
@@ -34,6 +35,7 @@ impl WorldLoadGen {
             loading_queue: Arc::new(Mutex::new(Vec::new())),
             progress_set: Arc::new(Mutex::new(FnvHashSet::default())),
             generator: Arc::new(StdGenerator::new(seed)),
+            prev_anchors: Vec::new(),
             worker_threads: Vec::new(),
             thread_killer: Arc::new(AtomicBool::new(false)),
             work_receiver: CachedThreadLocal::new(),
@@ -142,10 +144,40 @@ impl WorldLoadGen {
                 voxels.chunks.insert(cpos, vc.chunk);
             }
         }
-        let mut req_positions: FnvHashSet<(i32, ChunkPosition)> = FnvHashSet::default();
 
         let ents_o = self.world.entities.read();
         let ents = &ents_o.ecs;
+        let it = ECSHandler::<CLoadAnchor>::iter(ents);
+        let mut i = 0;
+        let mut changed = false;
+        for anchor in it {
+            let loc: Option<&CLocation> = ents.get_component(anchor.entity_id());
+            if loc.is_none() {
+                continue;
+            }
+            let loc = loc.unwrap();
+            let r = anchor.radius as i32;
+            let pos: Vector3<i32> = chunkpos_from_blockpos(loc.position.map(|c| c as i32));
+            if self.prev_anchors.len() < i + 1 {
+                changed = true;
+                self.prev_anchors.push((r, pos));
+            } else if self.prev_anchors[i] != (r, pos) {
+                changed = true;
+                self.prev_anchors[i] = (r, pos);
+            }
+            i += 1;
+        }
+        if self.prev_anchors.len() > i {
+            changed = true;
+            self.prev_anchors.resize(i, (0, zero()));
+        }
+
+        if !changed {
+            return;
+        }
+
+        let mut req_positions: FnvHashSet<(i32, ChunkPosition)> = FnvHashSet::default();
+
         let it = ECSHandler::<CLoadAnchor>::iter(ents);
         for anchor in it {
             let loc: Option<&CLocation> = ents.get_component(anchor.entity_id());

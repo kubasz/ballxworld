@@ -15,6 +15,7 @@ use ash::version::DeviceV1_0;
 use ash::vk;
 use fnv::{FnvHashMap, FnvHashSet};
 use parking_lot::Mutex;
+use rayon::prelude::*;
 use smallvec::SmallVec;
 use std::ffi::CString;
 use std::fmt::{Debug, Formatter};
@@ -1103,35 +1104,43 @@ impl VoxelRenderer {
             .keys()
             .filter(|p| !voxels.chunks.contains_key(p))
             .for_each(|p| chunks_to_remove.push(*p));
-        let mut chunks_to_add: SmallVec<[ChunkPosition; 16]> = SmallVec::new();
-        for cpos in voxels.chunks.keys() {
-            if !self.drawn_chunks.contains_key(cpos) {
-                chunks_to_add.push(*cpos);
-                continue;
-            }
-        }
-        for (cpos, dch) in self.drawn_chunks.iter() {
-            if let Some(vch) = voxels.chunks.get(cpos) {
-                if dch.last_dirty != vch.dirty {
-                    chunks_to_add.push(*cpos);
-                }
-            }
-        }
-        let mut real_chunks_to_add: SmallVec<[ChunkPosition; 16]> = SmallVec::new();
-        for cpos in chunks_to_add.into_iter() {
-            // check for all neighbors
-            for dx in -1..=1 {
-                for dy in -1..=1 {
-                    for dz in -1..=1 {
-                        let npos = cpos + vec3(dx, dy, dz);
-                        if !voxels.chunks.contains_key(&npos) {
-                            continue;
+        let mut chunks_to_add: Vec<ChunkPosition> = voxels
+            .chunks
+            .par_iter()
+            .map(|(cp, _)| cp)
+            .filter(|cpos| !self.drawn_chunks.contains_key(cpos))
+            .cloned()
+            .collect();
+        chunks_to_add.append(
+            &mut self
+                .drawn_chunks
+                .par_iter()
+                .filter(|(cpos, dch)| {
+                    voxels
+                        .chunks
+                        .get(cpos)
+                        .map_or(false, |vch| dch.last_dirty != vch.dirty)
+                })
+                .map(|(cp, _)| cp)
+                .cloned()
+                .collect(),
+        );
+        let real_chunks_to_add: Vec<ChunkPosition> = chunks_to_add
+            .into_par_iter()
+            .filter(|cpos| {
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        for dz in -1..=1 {
+                            let npos = cpos + vec3(dx, dy, dz);
+                            if !voxels.chunks.contains_key(&npos) {
+                                return false;
+                            }
                         }
                     }
                 }
-            }
-            real_chunks_to_add.push(cpos);
-        }
+                true
+            })
+            .collect();
 
         let ref_pos; // TODO: Add velocity-based position prediction
         let ref_fdir;
