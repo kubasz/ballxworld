@@ -1135,7 +1135,7 @@ impl VoxelRenderer {
         };
         let lod_fn = |p: &Vector3<i32>| {
             let d: f32 = (cposition - p).map(|c| c as f32).norm() * (CHUNK_DIM as f32);
-            ((d / 64.0).log2().max(0.0).floor() as u32).min(4)
+            ((d / 256.0).log2().max(0.0).floor() as u32).min(4)
         };
 
         let voxels = world.voxels.read();

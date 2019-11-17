@@ -2,8 +2,8 @@ use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
 use crate::math::*;
 use crate::world::registry::VoxelRegistry;
 use crate::world::{
-    blockidx_from_blockpos, ChunkPosition, UncompressedChunk, VChunkData, VoxelDatum, WVoxels,
-    World, CHUNK_DIM,
+    blockidx_from_blockpos, chunkpos_from_blockpos, ChunkPosition, UncompressedChunk, VChunkData,
+    VoxelDatum, WVoxels, World, CHUNK_DIM,
 };
 use itertools::iproduct;
 use smallvec::SmallVec;
@@ -55,7 +55,10 @@ pub fn mesh_from_chunk(
     }
     // pos relative to Chunk@cpos
     let get_block = |pos: Vector3<i32>| {
-        let cp = pos.map(|c| (c + 32) / 32);
+        let cp = chunkpos_from_blockpos(pos) + vec3(1, 1, 1);
+        if lod != 0 && cp != vec3(1, 1, 1) {
+            return VoxelDatum::default();
+        }
         let ch: &UncompressedChunk = &chunks[(cp.x + cp.z * 3 + cp.y * 9) as usize];
         ch.blocks_yzx[blockidx_from_blockpos(pos)]
     };
@@ -84,6 +87,7 @@ pub fn mesh_from_chunk(
         };
         for (cell_y, cell_z, cell_x) in iproduct!(0..cells, 0..cells, 0..cells) {
             let (co_y, co_z, co_x) = (cell_y << lod, cell_z << lod, cell_x << lod);
+            let (cf_x, cf_y, cf_z) = (co_x as f32, co_y as f32, co_z as f32);
 
             let ioffset = Vector3::from_row_slice(&side.ioffset);
 
@@ -152,10 +156,12 @@ pub fn mesh_from_chunk(
                     _ => 0.6,
                 };
 
+                let scf = subcells as f32;
+                let hf = if lod == 0 { 0.0 } else { scf / 2.0 };
                 let position: [f32; 4] = [
-                    x + side.verts[t * 3],
-                    y + side.verts[t * 3 + 1],
-                    z + side.verts[t * 3 + 2],
+                    cf_x + hf + scf * side.verts[t * 3],
+                    cf_y + hf + scf * side.verts[t * 3 + 1],
+                    cf_z + hf + scf * side.verts[t * 3 + 2],
                     1.0,
                 ];
                 let texid;
