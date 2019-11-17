@@ -275,12 +275,11 @@ where
     let mut prev = None;
     loop {
         let nopt = di.next();
-        let n;
-        if nopt.is_none() {
-            break;
+        let n = if let Some(n) = nopt {
+            n
         } else {
-            n = nopt.unwrap();
-        }
+            break;
+        };
         let tdat = transform(n.1);
         if ti >= target.len() {
             panic!("{:?} ti={}", n, ti);

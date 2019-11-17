@@ -3,8 +3,9 @@ use crate::math::*;
 use crate::world::registry::VoxelRegistry;
 use crate::world::{
     blockidx_from_blockpos, ChunkPosition, UncompressedChunk, VChunkData, VoxelDatum, WVoxels,
-    World, CHUNK_DIM, CHUNK_DIM2,
+    World, CHUNK_DIM,
 };
+use itertools::iproduct;
 use smallvec::SmallVec;
 
 struct CubeSide {
@@ -18,11 +19,14 @@ struct CubeSide {
     pub texcs: [f32; 2 * 4],
 }
 
+#[allow(clippy::cognitive_complexity)]
 pub fn mesh_from_chunk(
     world: &World,
     voxels: &WVoxels,
     cpos: ChunkPosition,
+    lod: u32,
 ) -> Option<ChunkBuffers> {
+    debug_assert!((1u32 << lod) <= CHUNK_DIM as u32);
     let registry: &VoxelRegistry = &world.vregistry;
     {
         let chk = voxels.chunks.get(&cpos)?;
@@ -39,25 +43,16 @@ pub fn mesh_from_chunk(
     }
     let mut vcache = world.get_vcache();
     let mut chunks: SmallVec<[&UncompressedChunk; 32]> = SmallVec::new();
-    for y in -1..=1 {
-        for z in -1..=1 {
-            for x in -1..=1 {
-                vcache.ensure_newest_cached(voxels, cpos + vec3(x, y, z))?;
-            }
-        }
+    for (y, z, x) in iproduct!(-1..=1, -1..=1, -1..=1) {
+        vcache.ensure_newest_cached(voxels, cpos + vec3(x, y, z))?;
     }
-    for y in -1..=1 {
-        for z in -1..=1 {
-            for x in -1..=1 {
-                chunks.push(
-                    vcache
-                        .peek_uncompressed_chunk(cpos + vec3(x, y, z))
-                        .unwrap(),
-                );
-            }
-        }
+    for (y, z, x) in iproduct!(-1..=1, -1..=1, -1..=1) {
+        chunks.push(
+            vcache
+                .peek_uncompressed_chunk(cpos + vec3(x, y, z))
+                .unwrap(),
+        );
     }
-    let chunk = &chunks[13];
     // pos relative to Chunk@cpos
     let get_block = |pos: Vector3<i32>| {
         let cp = pos.map(|c| (c + 32) / 32);
@@ -68,81 +63,47 @@ pub fn mesh_from_chunk(
     let mut vbuf: Vec<VoxelVertex> = Vec::new();
     let mut ibuf: Vec<u32> = Vec::new();
 
-    const SIDES: [CubeSide; 6] = [
-        // x+ -> "right"
-        CubeSide {
-            verts: [
-                0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5,
-            ],
-            corners: [[1, -1, -1], [1, 1, -1], [1, 1, 1], [1, -1, 1]],
-            ioffset: [1, 0, 0],
-            texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-        },
-        // x- -> "left"
-        CubeSide {
-            verts: [
-                -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5, -0.5, -0.5,
-            ],
-            corners: [[-1, -1, 1], [-1, 1, 1], [-1, 1, -1], [-1, -1, -1]],
-            ioffset: [-1, 0, 0],
-            texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-        },
-        // y+ -> "bottom"
-        CubeSide {
-            verts: [
-                -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5,
-            ],
-            corners: [[-1, 1, -1], [-1, 1, 1], [1, 1, 1], [1, 1, -1]],
-            ioffset: [0, 1, 0],
-            texcs: [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0],
-        },
-        // y- -> "top"
-        CubeSide {
-            verts: [
-                0.5, -0.5, -0.5, 0.5, -0.5, 0.5, -0.5, -0.5, 0.5, -0.5, -0.5, -0.5,
-            ],
-            corners: [[1, -1, 0], [1, -1, 1], [-1, -1, 1], [-1, -1, -1]],
-            ioffset: [0, -1, 0],
-            texcs: [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0],
-        },
-        // z+ -> "back"
-        CubeSide {
-            verts: [
-                0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5,
-            ],
-            corners: [[1, -1, 1], [1, 1, 1], [-1, 1, 1], [-1, -1, 1]],
-            ioffset: [0, 0, 1],
-            texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-        },
-        // z- -> "front"
-        CubeSide {
-            verts: [
-                -0.5, -0.5, -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5,
-            ],
-            corners: [[-1, -1, -1], [-1, 1, -1], [1, 1, -1], [1, -1, -1]],
-            ioffset: [0, 0, -1],
-            texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-        },
-    ];
+    let cells = (CHUNK_DIM >> lod as usize) as u32;
+    let subcells = (1 << lod) as u32;
+    for side in &SIDES {
+        let suborder = {
+            let scs = subcells as i32;
+            let mut svec: Vec<Vector3<i32>> = iproduct!(0..scs, 0..scs, 0..scs)
+                .map(|(x, y, z)| vec3(x, y, z))
+                .collect();
+            let ioff = side.ioffset;
+            let (dim, dval) = if ioff[0] != 0 {
+                (0, ioff[0])
+            } else if ioff[1] != 0 {
+                (1, ioff[1])
+            } else {
+                (2, ioff[2])
+            };
+            svec.sort_by_key(|e| if dval < 0 { e[dim] } else { -e[dim] });
+            svec
+        };
+        for (cell_y, cell_z, cell_x) in iproduct!(0..cells, 0..cells, 0..cells) {
+            let (co_y, co_z, co_x) = (cell_y << lod, cell_z << lod, cell_x << lod);
 
-    for (vidx, vox) in chunk.blocks_yzx.iter().enumerate() {
-        let vox = *vox;
-        let vdef = registry.get_definition_from_id(vox);
-
-        if !vdef.has_mesh {
-            continue;
-        }
-        for side in &SIDES {
             let ioffset = Vector3::from_row_slice(&side.ioffset);
 
-            let ipos = vec3(
-                (vidx % CHUNK_DIM) as i32,
-                ((vidx / CHUNK_DIM2) % CHUNK_DIM) as i32,
-                ((vidx / CHUNK_DIM) % CHUNK_DIM) as i32,
-            );
+            let mut ipos = vec3(co_x as i32, co_y as i32, co_z as i32);
+            'subfinder: for subp in suborder.iter() {
+                ipos = vec3(co_x as i32, co_y as i32, co_z as i32) + subp;
+                if registry.get_definition_from_id(get_block(ipos)).has_mesh {
+                    break 'subfinder;
+                }
+            }
+            let vox = get_block(ipos);
+            let vidx = blockidx_from_blockpos(ipos);
+            let vdef = registry.get_definition_from_id(vox);
             let x = ipos.x as f32;
             let y = ipos.y as f32;
             let z = ipos.z as f32;
+
+            if !vdef.has_mesh {
+                continue;
+            }
 
             // hidden face removal
             let touchpos = ipos + ioffset;
@@ -242,3 +203,60 @@ pub fn mesh_from_chunk(
         indices: ibuf,
     })
 }
+
+const SIDES: [CubeSide; 6] = [
+    // x+ -> "right"
+    CubeSide {
+        verts: [
+            0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5,
+        ],
+        corners: [[1, -1, -1], [1, 1, -1], [1, 1, 1], [1, -1, 1]],
+        ioffset: [1, 0, 0],
+        texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    },
+    // x- -> "left"
+    CubeSide {
+        verts: [
+            -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5, -0.5, -0.5,
+        ],
+        corners: [[-1, -1, 1], [-1, 1, 1], [-1, 1, -1], [-1, -1, -1]],
+        ioffset: [-1, 0, 0],
+        texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    },
+    // y+ -> "bottom"
+    CubeSide {
+        verts: [
+            -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5,
+        ],
+        corners: [[-1, 1, -1], [-1, 1, 1], [1, 1, 1], [1, 1, -1]],
+        ioffset: [0, 1, 0],
+        texcs: [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0],
+    },
+    // y- -> "top"
+    CubeSide {
+        verts: [
+            0.5, -0.5, -0.5, 0.5, -0.5, 0.5, -0.5, -0.5, 0.5, -0.5, -0.5, -0.5,
+        ],
+        corners: [[1, -1, 0], [1, -1, 1], [-1, -1, 1], [-1, -1, -1]],
+        ioffset: [0, -1, 0],
+        texcs: [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0],
+    },
+    // z+ -> "back"
+    CubeSide {
+        verts: [
+            0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5,
+        ],
+        corners: [[1, -1, 1], [1, 1, 1], [-1, 1, 1], [-1, -1, 1]],
+        ioffset: [0, 0, 1],
+        texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    },
+    // z- -> "front"
+    CubeSide {
+        verts: [
+            -0.5, -0.5, -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5,
+        ],
+        corners: [[-1, -1, -1], [-1, 1, -1], [1, 1, -1], [1, -1, -1]],
+        ioffset: [0, 0, -1],
+        texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    },
+];

@@ -693,13 +693,6 @@ impl Swapchain {
         let ext_swapchain = &handles.ext_swapchain;
         let dimensions = window.vulkan_drawable_size();
 
-        if cfg.debug_logging {
-            eprintln!(
-                "Recreating swapchain with size ({}, {})",
-                dimensions.0, dimensions.1
-            );
-        }
-
         let caps = unsafe {
             ext_surface.get_physical_device_surface_capabilities(handles.physical, handles.surface)
         }
@@ -749,6 +742,16 @@ impl Swapchain {
             &[handles.queues.get_primary_family()],
         );
 
+        if cfg.debug_logging {
+            eprintln!(
+                "Recreating swapchain with size ({w}, {h}), {ic} images, {pm:?} present mode",
+                w = extent.width,
+                h = extent.height,
+                ic = image_count,
+                pm = present_mode
+            );
+        }
+
         let sci = vk::SwapchainCreateInfoKHR::builder()
             .surface(handles.surface)
             .min_image_count(image_count)
@@ -762,7 +765,7 @@ impl Swapchain {
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
             .present_mode(present_mode)
             .clipped(true)
-            .old_swapchain(vk::SwapchainKHR::null())
+            .old_swapchain(self.swapchain)
             .image_array_layers(1);
 
         self.swapchain = unsafe { ext_swapchain.create_swapchain(&sci, allocation_cbs()) }

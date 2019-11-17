@@ -6,30 +6,33 @@ edition = "2018"
 
 [dependencies]
 ash = "0.29"
-vk-mem = "0.1"
+vk-mem = "0.2"
 vk-sync = "0.1"
 rand = "0.7"
 toml_edit = "0.1"
 image = "0.22"
-noise = "0.5"
+noise = "0.6"
 thread_local = "1.0"
 rand_xoshiro = "0.4"
-lru = "0.1"
-smallvec = "0.6"
-jemallocator = "0.3"
+lru = "0.4"
+smallvec = "1.0"
 rayon = "1.1"
 parking_lot = "0.9"
 divrem = "0.1"
-nalgebra-glm = "0.4"
+nalgebra-glm = "0.5"
 num-traits = "0.2"
 fnv = "1.0"
+itertools = "0.8"
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+jemallocator = "0.3"
 
 [dependencies.sdl2]
 version = "0.32"
-features = ["image", "mixer"]
+features = ["image", "mixer", "bundled", "static-link"]
 
 [dependencies.nalgebra]
-version = "0.18"
+version = "0.19"
 
 [profile.dev]
 opt-level = 3

@@ -114,6 +114,7 @@ struct DrawnChunk {
     pub cpos: ChunkPosition,
     pub last_dirty: u64,
     pub buffer: OwnedBuffer,
+    pub lod: u32,
     pub istart: usize,
     pub vcount: u32,
     pub icount: u32,
@@ -132,6 +133,21 @@ impl DrawnChunk {
 }
 
 type ChunkMsg = (ChunkPosition, DrawnChunk);
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+struct ChunkRenderRequest {
+    pos: ChunkPosition,
+    lod: u32,
+}
+
+impl Default for ChunkRenderRequest {
+    fn default() -> Self {
+        Self {
+            pos: vec3(0, 0, 0),
+            lod: 0,
+        }
+    }
+}
 
 struct TextureArrayParams {
     _dims: (u32, u32),
@@ -172,8 +188,8 @@ pub struct VoxelRenderer {
     atmosphere_renderer: AtmosphereRenderer,
     drawn_chunks: FnvHashMap<ChunkPosition, DrawnChunk>,
     pub ubuffer: OwnedBuffer,
-    draw_queue: Arc<Mutex<Vec<ChunkPosition>>>,
-    progress_set: Arc<Mutex<FnvHashSet<ChunkPosition>>>,
+    draw_queue: Arc<Mutex<Vec<ChunkRenderRequest>>>,
+    progress_set: Arc<Mutex<FnvHashSet<ChunkRenderRequest>>>,
     worker_threads: Vec<thread::JoinHandle<()>>,
     thread_killer: Arc<AtomicBool>,
     work_receiver: CachedThreadLocal<mpsc::Receiver<ChunkMsg>>,
@@ -186,7 +202,7 @@ impl VoxelRenderer {
             Self::new_texture_atlas(cfg, rctx);
 
         let chunk_pool = {
-            let mut vmalloc = rctx.handles.vmalloc.lock();
+            let vmalloc = rctx.handles.vmalloc.lock();
             let qfs = [rctx.handles.queues.get_primary_family()];
             let ex_bi = vk::BufferCreateInfo::builder()
                 .usage(
@@ -891,8 +907,8 @@ impl VoxelRenderer {
         world_w: Weak<World>,
         handles: RenderingHandles,
         alloc_pool: Arc<AllocatorPool>,
-        work_queue: Arc<Mutex<Vec<ChunkPosition>>>,
-        progress_set: Arc<Mutex<FnvHashSet<ChunkPosition>>>,
+        work_queue: Arc<Mutex<Vec<ChunkRenderRequest>>>,
+        progress_set: Arc<Mutex<FnvHashSet<ChunkRenderRequest>>>,
         submission: mpsc::Sender<ChunkMsg>,
         killswitch: Arc<AtomicBool>,
     ) {
@@ -901,7 +917,7 @@ impl VoxelRenderer {
             .flags(vk::CommandPoolCreateFlags::TRANSIENT);
         let cmd_pool = DroppingCommandPool::new(&handles, &cpci);
         drop(cpci);
-        let mut done_chunks: Vec<Vector3<i32>> = Vec::new();
+        let mut done_chunks: Vec<ChunkRenderRequest> = Vec::new();
         loop {
             if killswitch.load(Ordering::SeqCst) {
                 return;
@@ -932,33 +948,33 @@ impl VoxelRenderer {
             let mut chunks_to_add = Vec::new();
             let len = work_queue.len().min(10);
             for p in work_queue.iter().rev().take(len) {
-                chunks_to_add.push(*p);
-                progress_set.insert(*p);
+                chunks_to_add.push(p.clone());
+                progress_set.insert(p.clone());
             }
             let tgtlen = work_queue.len() - len;
-            work_queue.resize(tgtlen, vec3(0, 0, 0));
+            work_queue.resize(tgtlen, Default::default());
             drop(progress_set);
             drop(work_queue);
 
             let mut chunk_objs_to_add = Vec::new();
             {
                 let voxels = world.voxels.read();
-                for cpos in chunks_to_add.into_iter() {
-                    let chunk_opt = voxels.chunks.get(&cpos);
+                for rr in chunks_to_add.into_iter() {
+                    let chunk_opt = voxels.chunks.get(&rr.pos);
                     if chunk_opt.is_none() {
-                        done_chunks.push(cpos);
+                        done_chunks.push(rr);
                         continue;
                     }
-                    chunk_objs_to_add.push(cpos);
+                    chunk_objs_to_add.push(rr);
                 }
             }
 
-            for cpos in chunk_objs_to_add.into_iter() {
+            for rr in chunk_objs_to_add.into_iter() {
                 // give a chance to release the lock to a writer on each iteration
                 let voxels = world.voxels.read();
-                let mesh = mesh_from_chunk(&world, &voxels, cpos);
+                let mesh = mesh_from_chunk(&world, &voxels, rr.pos, rr.lod);
                 if mesh.is_none() {
-                    done_chunks.push(cpos);
+                    done_chunks.push(rr);
                     continue;
                 }
                 let mesh = mesh.unwrap();
@@ -1006,7 +1022,7 @@ impl VoxelRenderer {
                         OwnedBuffer::from(&mut handles.vmalloc.lock(), &bi, &ai)
                     };
                     buffer.give_name(&handles, || {
-                        format!("chunk({},{},{})", cpos.x, cpos.y, cpos.z)
+                        format!("chunk({},{},{})", rr.pos.x, rr.pos.y, rr.pos.z)
                     });
                     // write to staging
                     {
@@ -1048,28 +1064,30 @@ impl VoxelRenderer {
                     staging.destroy(&mut handles.vmalloc.lock());
 
                     DrawnChunk {
-                        cpos,
-                        last_dirty: voxels.chunks.get(&cpos).unwrap().dirty,
+                        cpos: rr.pos,
+                        last_dirty: voxels.chunks.get(&rr.pos).unwrap().dirty,
                         buffer,
+                        lod: rr.lod,
                         istart: v_tot_sz,
                         vcount,
                         icount,
                     }
                 } else {
                     DrawnChunk {
-                        cpos,
-                        last_dirty: voxels.chunks.get(&cpos).unwrap().dirty,
+                        cpos: rr.pos,
+                        last_dirty: voxels.chunks.get(&rr.pos).unwrap().dirty,
                         buffer: OwnedBuffer::new(),
+                        lod: rr.lod,
                         istart: 0,
                         vcount: 0,
                         icount: 0,
                     }
                 };
 
-                if submission.send((cpos, dchunk)).is_err() {
+                if submission.send((rr.pos, dchunk)).is_err() {
                     return;
                 }
-                done_chunks.push(cpos);
+                done_chunks.push(rr);
             }
         }
     }
@@ -1097,51 +1115,6 @@ impl VoxelRenderer {
             }
         }
 
-        let voxels = world.voxels.read();
-
-        let mut chunks_to_remove: SmallVec<[ChunkPosition; 16]> = SmallVec::new();
-        self.drawn_chunks
-            .keys()
-            .filter(|p| !voxels.chunks.contains_key(p))
-            .for_each(|p| chunks_to_remove.push(*p));
-        let mut chunks_to_add: Vec<ChunkPosition> = voxels
-            .chunks
-            .par_iter()
-            .map(|(cp, _)| cp)
-            .filter(|cpos| !self.drawn_chunks.contains_key(cpos))
-            .cloned()
-            .collect();
-        chunks_to_add.append(
-            &mut self
-                .drawn_chunks
-                .par_iter()
-                .filter(|(cpos, dch)| {
-                    voxels
-                        .chunks
-                        .get(cpos)
-                        .map_or(false, |vch| dch.last_dirty != vch.dirty)
-                })
-                .map(|(cp, _)| cp)
-                .cloned()
-                .collect(),
-        );
-        let real_chunks_to_add: Vec<ChunkPosition> = chunks_to_add
-            .into_par_iter()
-            .filter(|cpos| {
-                for dx in -1..=1 {
-                    for dy in -1..=1 {
-                        for dz in -1..=1 {
-                            let npos = cpos + vec3(dx, dy, dz);
-                            if !voxels.chunks.contains_key(&npos) {
-                                return false;
-                            }
-                        }
-                    }
-                }
-                true
-            })
-            .collect();
-
         let ref_pos; // TODO: Add velocity-based position prediction
         let ref_fdir;
         {
@@ -1158,8 +1131,62 @@ impl VoxelRenderer {
             let df = d.map(|c| c as f32);
             let dflen = df.norm();
             let fk = -dflen * (4.0 - df.angle(&ref_fdir));
-            (fk * 32.0) as i32
+            (fk * (CHUNK_DIM as f32)) as i32
         };
+        let lod_fn = |p: &Vector3<i32>| {
+            let d: f32 = (cposition - p).map(|c| c as f32).norm() * (CHUNK_DIM as f32);
+            ((d / 64.0).log2().max(0.0).floor() as u32).min(4)
+        };
+
+        let voxels = world.voxels.read();
+
+        let mut chunks_to_remove: SmallVec<[ChunkPosition; 16]> = SmallVec::new();
+        self.drawn_chunks
+            .keys()
+            .filter(|p| !voxels.chunks.contains_key(p))
+            .for_each(|p| chunks_to_remove.push(*p));
+        let mut chunks_to_add: Vec<ChunkRenderRequest> = voxels
+            .chunks
+            .par_iter()
+            .map(|(cp, _)| cp)
+            .filter(|cpos| !self.drawn_chunks.contains_key(cpos))
+            .map(|pos| ChunkRenderRequest {
+                pos: *pos,
+                lod: lod_fn(pos),
+            })
+            .collect();
+        chunks_to_add.append(
+            &mut self
+                .drawn_chunks
+                .par_iter()
+                .filter(|(cpos, dch)| {
+                    voxels.chunks.get(cpos).map_or(false, |vch| {
+                        dch.last_dirty != vch.dirty || dch.lod != lod_fn(cpos)
+                    })
+                })
+                .map(|(pos, _)| ChunkRenderRequest {
+                    pos: *pos,
+                    lod: lod_fn(pos),
+                })
+                .collect(),
+        );
+        let real_chunks_to_add: Vec<ChunkRenderRequest> = chunks_to_add
+            .into_par_iter()
+            .filter(|rr| {
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        for dz in -1..=1 {
+                            let npos = rr.pos + vec3(dx, dy, dz);
+                            if !voxels.chunks.contains_key(&npos) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                true
+            })
+            .collect();
+
         let mut draw_queue = self.draw_queue.lock();
         let progress_set = self.progress_set.lock();
         draw_queue.clear();
@@ -1170,7 +1197,7 @@ impl VoxelRenderer {
         }
         drop(progress_set);
         // Load nearest chunks first
-        draw_queue.sort_unstable_by_key(&dist_key);
+        draw_queue.sort_unstable_by_key(|d| dist_key(&d.pos));
         // Unload farthest chunks first
         chunks_to_remove.sort_unstable_by_key(&dist_key);
         let new_cmds = !draw_queue.is_empty();
