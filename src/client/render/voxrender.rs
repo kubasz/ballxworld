@@ -93,6 +93,14 @@ pub mod vox {
         pub proj: [[f32; 4]; 4],
     }
 
+    impl VoxelUBO {
+        pub fn aligned_size(limits: &vk::PhysicalDeviceLimits) -> u32 {
+            let real_sz = mem::size_of::<Self>() as u32;
+            let alignment = limits.min_uniform_buffer_offset_alignment as u32;
+            (real_sz + alignment - 1) / alignment * alignment
+        }
+    }
+
     #[derive(Copy, Clone, Default)]
     #[repr(C)]
     pub struct VoxelPC {
@@ -193,6 +201,7 @@ pub struct VoxelRenderer {
     worker_threads: Vec<thread::JoinHandle<()>>,
     thread_killer: Arc<AtomicBool>,
     work_receiver: CachedThreadLocal<mpsc::Receiver<ChunkMsg>>,
+    chunk_drop_queue: Vec<Vec<DrawnChunk>>,
 }
 
 impl VoxelRenderer {
@@ -338,7 +347,7 @@ impl VoxelRenderer {
             }
         }
 
-        let ubo_sz = std::mem::size_of::<vox::VoxelUBO>() as u64;
+        let ubo_sz = vox::VoxelUBO::aligned_size(&rctx.handles.physical_limits) as u64;
 
         let ubuffer = {
             let mut vmalloc = rctx.handles.vmalloc.lock();
@@ -491,6 +500,11 @@ impl VoxelRenderer {
             pipeline
         };
 
+        let mut chunk_drop_queue = Vec::with_capacity(INFLIGHT_FRAMES as usize);
+        for _ in 0..INFLIGHT_FRAMES {
+            chunk_drop_queue.push(Vec::new());
+        }
+
         Self {
             chunk_pool,
             texture_array,
@@ -514,6 +528,7 @@ impl VoxelRenderer {
             worker_threads: Vec::new(),
             thread_killer: Arc::new(AtomicBool::new(false)),
             work_receiver: CachedThreadLocal::new(),
+            chunk_drop_queue,
         }
     }
 
@@ -1100,20 +1115,33 @@ impl VoxelRenderer {
         self.progress_set.lock().len()
     }
 
+    fn drop_chunk(
+        chunk_drop_queue: &mut Vec<Vec<DrawnChunk>>,
+        ch: DrawnChunk,
+        inflight_index: usize,
+    ) {
+        let idx = (inflight_index as u32 + INFLIGHT_FRAMES - 1) % INFLIGHT_FRAMES;
+        chunk_drop_queue[idx as usize].push(ch);
+    }
+
     pub fn prepass_draw(&mut self, fctx: &mut PrePassFrameContext) {
+        for mut ch in self.chunk_drop_queue[fctx.inflight_index].drain(..) {
+            ch.destroy(&fctx.rctx.handles);
+        }
+
+        if let Some(work_receiver) = self.work_receiver.get() {
+            for (p, dc) in work_receiver.try_iter() {
+                if let Some(ch) = self.drawn_chunks.insert(p, dc) {
+                    Self::drop_chunk(&mut self.chunk_drop_queue, ch, fctx.inflight_index);
+                }
+            }
+        }
+
         if self.world.is_none() {
             self.drawn_chunks.clear();
             return;
         }
         let world = self.world.as_ref().unwrap();
-
-        if let Some(work_receiver) = self.work_receiver.get() {
-            for (p, dc) in work_receiver.try_iter() {
-                if let Some(mut ch) = self.drawn_chunks.insert(p, dc) {
-                    ch.destroy(&fctx.rctx.handles);
-                }
-            }
-        }
 
         let ref_pos; // TODO: Add velocity-based position prediction
         let ref_fdir;
@@ -1186,6 +1214,7 @@ impl VoxelRenderer {
                 true
             })
             .collect();
+        drop(voxels);
 
         let mut draw_queue = self.draw_queue.lock();
         let progress_set = self.progress_set.lock();
@@ -1204,8 +1233,8 @@ impl VoxelRenderer {
         drop(draw_queue);
 
         for cpos in chunks_to_remove.into_iter().take(32) {
-            if let Some(mut ch) = self.drawn_chunks.remove(&cpos) {
-                ch.destroy(&fctx.rctx.handles);
+            if let Some(ch) = self.drawn_chunks.remove(&cpos) {
+                Self::drop_chunk(&mut self.chunk_drop_queue, ch, fctx.inflight_index);
             }
         }
 
@@ -1280,7 +1309,9 @@ impl VoxelRenderer {
             };
             ubo.proj = mproj.into();
             let ubo_sz = std::mem::size_of::<vox::VoxelUBO>();
-            let ubo_start = ubo_sz * fctx.inflight_index;
+            let ubo_stride =
+                vox::VoxelUBO::aligned_size(&fctx.rctx.handles.physical_limits) as usize;
+            let ubo_start = ubo_stride * fctx.inflight_index;
             let ai = self.ubuffer.allocation.as_ref().unwrap();
             unsafe {
                 std::ptr::write(

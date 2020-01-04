@@ -64,7 +64,7 @@ impl Queues {
     }
 }
 
-pub const INFLIGHT_FRAMES: u32 = 1;
+pub const INFLIGHT_FRAMES: u32 = 2;
 
 #[derive(Clone)]
 pub struct DebugExts {
@@ -82,6 +82,7 @@ pub struct RenderingHandles {
     pub surface: vk::SurfaceKHR,
     pub surface_format: vk::SurfaceFormatKHR,
     pub physical: vk::PhysicalDevice,
+    pub physical_limits: vk::PhysicalDeviceLimits,
     pub device: ash::Device,
     pub queues: Arc<Queues>,
     pub vmalloc: Arc<Mutex<vma::Allocator>>,
@@ -249,6 +250,7 @@ impl RenderingHandles {
             .next()
             .expect("no device available");
         let pprop = unsafe { instance.get_physical_device_properties(physical) };
+        let physical_limits = pprop.limits;
         let pname = unsafe { CStr::from_ptr(pprop.device_name.as_ptr()) }.to_string_lossy();
 
         println!("Choosing device {}", pname);
@@ -440,6 +442,7 @@ impl RenderingHandles {
                 surface,
                 surface_format,
                 physical,
+                physical_limits,
                 device,
                 queues: Arc::new(queues),
                 vmalloc: Arc::new(Mutex::new(vmalloc)),
