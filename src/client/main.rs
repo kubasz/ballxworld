@@ -62,8 +62,7 @@ pub fn client_main() {
 
     let mut vxreg = world::registry::VoxelRegistry::new();
     register_standard_blocks(&mut vxreg, Some(&vctx)); //FIXME
-    let vxreg = Arc::new(vxreg);
-    let world = ClientWorld::new_world("world".to_owned(), vxreg.clone());
+    let world = ClientWorld::new_world("world".to_owned(), Arc::new(vxreg));
     let world = Arc::new(world);
     {
         let client = ClientWorld::read(&world);

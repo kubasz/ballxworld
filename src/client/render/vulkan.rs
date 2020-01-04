@@ -965,6 +965,7 @@ impl RenderingContext {
     }
 
     /// Returns None if e.g. swapchain is in the process of being recreated
+    #[allow(clippy::modulo_one)] // There may only be one inflight frame configured
     pub fn frame_begin_prepass(
         &mut self,
         cfg: &Config,
