@@ -101,9 +101,9 @@ pub fn mesh_from_chunk(
             let vox = get_block(ipos);
             let vidx = blockidx_from_blockpos(ipos);
             let vdef = registry.get_definition_from_id(vox);
-            let x = ipos.x as f32;
-            let y = ipos.y as f32;
-            let z = ipos.z as f32;
+            //let x = ipos.x as f32;
+            //let y = ipos.y as f32;
+            //let z = ipos.z as f32;
 
             if !vdef.has_mesh {
                 continue;
