@@ -1,7 +1,7 @@
 use crate::client::config::Config;
 use crate::client::render::vkhelpers::{
-    cmd_push_struct_constants, identity_components, make_pipe_depthstencil, DroppingCommandPool,
-    OnetimeCmdGuard, OwnedBuffer, OwnedImage,
+    cmd_push_struct_constants, make_pipe_depthstencil, DroppingCommandPool, OnetimeCmdGuard,
+    OwnedBuffer, OwnedImage,
 };
 use crate::client::render::voxmesh::mesh_from_chunk;
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles, INFLIGHT_FRAMES};
@@ -181,7 +181,6 @@ impl Clone for AllocatorPool {
 pub struct VoxelRenderer {
     chunk_pool: Arc<AllocatorPool>,
     texture_array: OwnedImage,
-    texture_array_view: vk::ImageView,
     _texture_array_params: TextureArrayParams,
     texture_name_map: FnvHashMap<String, u32>,
     texture_sampler: vk::Sampler,
@@ -207,7 +206,7 @@ pub struct VoxelRenderer {
 impl VoxelRenderer {
     pub fn new(cfg: &Config, rctx: &mut RenderingContext) -> Self {
         // load textures
-        let (texture_array, texture_array_view, texture_array_params, texture_name_map) =
+        let (texture_array, texture_array_params, texture_name_map) =
             Self::new_texture_atlas(cfg, rctx);
 
         let chunk_pool = {
@@ -333,7 +332,7 @@ impl VoxelRenderer {
         {
             let ii = [vk::DescriptorImageInfo::builder()
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .image_view(texture_array_view)
+                .image_view(texture_array.image_view)
                 .build()];
             let dw = [vk::WriteDescriptorSet::builder()
                 .dst_set(texture_ds)
@@ -508,7 +507,6 @@ impl VoxelRenderer {
         Self {
             chunk_pool,
             texture_array,
-            texture_array_view,
             _texture_array_params: texture_array_params,
             texture_name_map,
             texture_sampler,
@@ -564,10 +562,8 @@ impl VoxelRenderer {
                 .device
                 .destroy_sampler(self.texture_sampler, allocation_cbs());
             self.texture_name_map.clear();
-            handles
-                .device
-                .destroy_image_view(self.texture_array_view, allocation_cbs());
-            self.texture_array.destroy(&mut handles.vmalloc.lock());
+            self.texture_array
+                .destroy(&mut handles.vmalloc.lock(), handles);
             self.ubuffer.destroy(&mut handles.vmalloc.lock());
         }
     }
@@ -589,12 +585,7 @@ impl VoxelRenderer {
     fn new_texture_atlas(
         cfg: &Config,
         rctx: &mut RenderingContext,
-    ) -> (
-        OwnedImage,
-        vk::ImageView,
-        TextureArrayParams,
-        FnvHashMap<String, u32>,
-    ) {
+    ) -> (OwnedImage, TextureArrayParams, FnvHashMap<String, u32>) {
         use image::RgbaImage;
         use toml_edit::Document;
 
@@ -679,7 +670,14 @@ impl VoxelRenderer {
                 ..Default::default()
             };
 
-            OwnedImage::from(&mut vmalloc, &ici, &aci)
+            OwnedImage::from(
+                &mut vmalloc,
+                &rctx.handles,
+                &ici,
+                &aci,
+                vk::ImageViewType::TYPE_2D_ARRAY,
+                vk::ImageAspectFlags::COLOR,
+            )
         };
         // upload main level
         let whole_img = vk::ImageSubresourceRange {
@@ -691,28 +689,7 @@ impl VoxelRenderer {
         };
         let queue = rctx.handles.queues.lock_primary_queue();
         {
-            let bci = vk::BufferCreateInfo::builder()
-                .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                .queue_family_indices(&qfis)
-                .usage(vk::BufferUsageFlags::TRANSFER_SRC)
-                .size(u64::from(idim.0 * idim.1 * numimages * 4));
-            let aci = vma::AllocationCreateInfo {
-                usage: vma::MemoryUsage::CpuOnly,
-                flags: vma::AllocationCreateFlags::DEDICATED_MEMORY
-                    | vma::AllocationCreateFlags::MAPPED,
-                ..Default::default()
-            };
-            let mut buf = OwnedBuffer::from(&mut vmalloc, &bci, &aci);
-            let ba = buf.allocation.as_ref().unwrap();
-            assert!(ba.1.get_size() >= rawdata.len());
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    rawdata.as_ptr(),
-                    ba.1.get_mapped_data(),
-                    rawdata.len(),
-                );
-            }
-            vmalloc.flush_allocation(&ba.0, 0, rawdata.len()).unwrap();
+            let mut buf = OwnedBuffer::new_single_upload(&mut vmalloc, &rawdata);
             //
             let cmd = OnetimeCmdGuard::new(&rctx.handles, None);
             vk_sync::cmd::pipeline_barrier(
@@ -853,24 +830,8 @@ impl VoxelRenderer {
 
         img.give_name(&rctx.handles, || "voxel texture array");
 
-        let img_view = {
-            let ivci = vk::ImageViewCreateInfo::builder()
-                .view_type(vk::ImageViewType::TYPE_2D_ARRAY)
-                .format(vk::Format::R8G8B8A8_SRGB)
-                .components(identity_components())
-                .subresource_range(whole_img)
-                .image(img.image);
-            unsafe {
-                rctx.handles
-                    .device
-                    .create_image_view(&ivci, allocation_cbs())
-            }
-            .expect("Couldn't create voxel texture array view")
-        };
-
         (
             img,
-            img_view,
             TextureArrayParams {
                 _dims: idim,
                 mip_levels: mip_lvls,

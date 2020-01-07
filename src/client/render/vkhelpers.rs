@@ -8,7 +8,7 @@ use std::ffi::CString;
 use std::mem::ManuallyDrop;
 use vk_mem as vma;
 
-pub fn name_vk_object<F: FnOnce() -> S, S>(
+pub fn name_vk_object<F: Fn() -> S, S>(
     handles: &RenderingHandles,
     name_fn: F,
     raw_handle: u64,
@@ -35,6 +35,8 @@ pub fn name_vk_object<F: FnOnce() -> S, S>(
 #[derive(Default)]
 pub struct OwnedImage {
     pub image: vk::Image,
+    pub image_view: vk::ImageView,
+    /// The identity view for the whole image
     pub allocation: Option<(vma::Allocation, vma::AllocationInfo)>,
 }
 
@@ -45,33 +47,73 @@ impl OwnedImage {
 
     pub fn from(
         vmalloc: &mut vma::Allocator,
+        handles: &RenderingHandles,
         img_info: &vk::ImageCreateInfo,
         mem_info: &vma::AllocationCreateInfo,
+        iv_type: vk::ImageViewType,
+        iv_aspect: vk::ImageAspectFlags,
     ) -> Self {
         let r = vmalloc
             .create_image(img_info, mem_info)
             .expect("Could not create Vulkan image");
+        let ivci = vk::ImageViewCreateInfo::builder()
+            .image(r.0)
+            .view_type(iv_type)
+            .format(img_info.format)
+            .components(identity_components())
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: iv_aspect,
+                base_array_layer: 0,
+                base_mip_level: 0,
+                layer_count: img_info.array_layers,
+                level_count: img_info.mip_levels,
+            });
+        let iv = unsafe { handles.device.create_image_view(&ivci, allocation_cbs()) }
+            .expect("Couldn't create Vulkan image view");
         Self {
             image: r.0,
+            image_view: iv,
             allocation: Some((r.1, r.2)),
         }
     }
 
-    pub fn give_name<F: FnOnce() -> S, S>(&self, handles: &RenderingHandles, name_fn: F)
+    pub fn give_name<F: Fn() -> S, S>(&self, handles: &RenderingHandles, name_fn: F)
     where
         S: Into<Vec<u8>>,
     {
-        name_vk_object(handles, name_fn, self.image.as_raw(), vk::ObjectType::IMAGE);
+        name_vk_object(
+            handles,
+            &name_fn,
+            self.image.as_raw(),
+            vk::ObjectType::IMAGE,
+        );
+        name_vk_object(
+            handles,
+            name_fn,
+            self.image_view.as_raw(),
+            vk::ObjectType::IMAGE_VIEW,
+        );
     }
 
-    pub fn destroy(&mut self, vmalloc: &mut vma::Allocator) {
+    pub fn destroy(&mut self, vmalloc: &mut vma::Allocator, handles: &RenderingHandles) {
         if self.allocation.is_some() {
+            unsafe {
+                handles
+                    .device
+                    .destroy_image_view(self.image_view, allocation_cbs());
+            }
             vmalloc
                 .destroy_image(self.image, &self.allocation.take().unwrap().0)
                 .unwrap();
             self.image = vk::Image::null();
         }
     }
+}
+
+fn byte_slice_from<T: Sized>(data: &[T]) -> &[u8] {
+    let bytes_len = data.len() * std::mem::size_of::<T>();
+    let start_ptr = data.as_ptr();
+    unsafe { std::slice::from_raw_parts(start_ptr as *const u8, bytes_len) }
 }
 
 #[derive(Default)]
@@ -99,7 +141,34 @@ impl OwnedBuffer {
         }
     }
 
-    pub fn give_name<F: FnOnce() -> S, S>(&self, handles: &RenderingHandles, name_fn: F)
+    /// Returns a cpu-only, mapped buffer (for one-off uploads) with given contents
+    pub fn new_single_upload<T: Sized>(vmalloc: &mut vma::Allocator, data: &[T]) -> Self {
+        let data_bytes = byte_slice_from(data);
+        let bci = vk::BufferCreateInfo::builder()
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+            .size(data_bytes.len() as u64);
+        let aci = vma::AllocationCreateInfo {
+            usage: vma::MemoryUsage::CpuOnly,
+            flags: vma::AllocationCreateFlags::DEDICATED_MEMORY
+                | vma::AllocationCreateFlags::MAPPED,
+            ..Default::default()
+        };
+        let buf = Self::from(vmalloc, &bci, &aci);
+        let (al, ai) = buf.allocation.as_ref().unwrap();
+        assert_ne!(ai.get_mapped_data(), std::ptr::null_mut());
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                data_bytes.as_ptr(),
+                ai.get_mapped_data(),
+                data_bytes.len(),
+            );
+        }
+        vmalloc.flush_allocation(al, 0, data_bytes.len()).unwrap();
+        buf
+    }
+
+    pub fn give_name<F: Fn() -> S, S>(&self, handles: &RenderingHandles, name_fn: F)
     where
         S: Into<Vec<u8>>,
     {

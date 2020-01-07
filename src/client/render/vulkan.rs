@@ -96,7 +96,6 @@ pub struct Swapchain {
     pub swapimages: Vec<vk::Image>,
     pub swapimageviews: Vec<vk::ImageView>,
     pub depth_image: OwnedImage,
-    pub depth_view: vk::ImageView,
     pub inflight_render_finished_semaphores: Vec<vk::Semaphore>,
     pub inflight_image_available_semaphores: Vec<vk::Semaphore>,
     pub inflight_fences: Vec<vk::Fence>,
@@ -614,7 +613,6 @@ impl Swapchain {
             swapimages: Vec::new(),
             swapimageviews: Vec::new(),
             depth_image: OwnedImage::new(),
-            depth_view: Default::default(),
             inflight_render_finished_semaphores: Vec::new(),
             inflight_image_available_semaphores: Vec::new(),
             inflight_fences: Vec::new(),
@@ -672,14 +670,8 @@ impl Swapchain {
                 }
             }
         }
-        if self.depth_view != vk::ImageView::null() {
-            unsafe {
-                handles
-                    .device
-                    .destroy_image_view(self.depth_view, allocation_cbs());
-            }
-        }
-        self.depth_image.destroy(&mut handles.vmalloc.lock());
+        self.depth_image
+            .destroy(&mut handles.vmalloc.lock(), handles);
         if destroy_swapchain && self.swapchain != vk::SwapchainKHR::null() {
             unsafe {
                 handles
@@ -829,30 +821,20 @@ impl Swapchain {
                 flags: vma::AllocationCreateFlags::DEDICATED_MEMORY,
                 ..Default::default()
             };
-            OwnedImage::from(&mut handles.vmalloc.lock(), &ici, &aci)
+            OwnedImage::from(
+                &mut handles.vmalloc.lock(),
+                handles,
+                &ici,
+                &aci,
+                vk::ImageViewType::TYPE_2D,
+                vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
+            )
         };
         self.depth_image
             .give_name(&handles, || "swapchain.depth_image");
 
-        self.depth_view = {
-            let ivci = vk::ImageViewCreateInfo::builder()
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .format(vk::Format::D32_SFLOAT_S8_UINT)
-                .components(identity_components())
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-                .image(self.depth_image.image);
-            unsafe { handles.device.create_image_view(&ivci, allocation_cbs()) }
-                .expect("Failed to create depth imageview")
-        };
-
         for img in self.swapimageviews.iter() {
-            let attachs = [*img, self.depth_view];
+            let attachs = [*img, self.depth_image.image_view];
             let fci = vk::FramebufferCreateInfo::builder()
                 .render_pass(handles.mainpass)
                 .attachments(&attachs)
