@@ -88,6 +88,7 @@ pub struct RenderingHandles {
     pub surface_format: vk::SurfaceFormatKHR,
     pub physical: vk::PhysicalDevice,
     pub physical_limits: vk::PhysicalDeviceLimits,
+    pub sample_count: vk::SampleCountFlags,
     pub device: ash::Device,
     pub queues: Arc<Queues>,
     pub vmalloc: Arc<Mutex<vma::Allocator>>,
@@ -103,6 +104,7 @@ pub struct Swapchain {
     pub swapimages: Vec<vk::Image>,
     pub swapimageviews: Vec<vk::ImageView>,
     pub depth_image: OwnedImage,
+    pub color_image: OwnedImage,
     pub inflight_render_finished_semaphores: Vec<vk::Semaphore>,
     pub inflight_image_available_semaphores: Vec<vk::Semaphore>,
     pub inflight_fences: Vec<vk::Fence>,
@@ -298,7 +300,9 @@ impl RenderingHandles {
                     );
                 }
             }
-            let features = vk::PhysicalDeviceFeatures::builder().sampler_anisotropy(true);
+            let features = vk::PhysicalDeviceFeatures::builder()
+                .sampler_anisotropy(true)
+                .sample_rate_shading(true);
 
             queue_cnt = queue_family.1.queue_count.min(2);
             let priorities: Vec<f32> = if queue_cnt == 1 {
@@ -372,26 +376,62 @@ impl RenderingHandles {
             })
             .unwrap_or(&formats[0]);
 
+        let sample_count = {
+            let target = cfg.render_samples;
+            let mut samples = vk::SampleCountFlags::TYPE_1;
+            let lim = physical_limits.framebuffer_color_sample_counts
+                & physical_limits.sampled_image_depth_sample_counts;
+            if target >= 64 && lim.contains(vk::SampleCountFlags::TYPE_64) {
+                samples = vk::SampleCountFlags::TYPE_64;
+            }
+            if target >= 32 && lim.contains(vk::SampleCountFlags::TYPE_32) {
+                samples = vk::SampleCountFlags::TYPE_32;
+            }
+            if target >= 16 && lim.contains(vk::SampleCountFlags::TYPE_16) {
+                samples = vk::SampleCountFlags::TYPE_16;
+            }
+            if target >= 8 && lim.contains(vk::SampleCountFlags::TYPE_8) {
+                samples = vk::SampleCountFlags::TYPE_8;
+            }
+            if target >= 4 && lim.contains(vk::SampleCountFlags::TYPE_4) {
+                samples = vk::SampleCountFlags::TYPE_4;
+            }
+            if target >= 2 && lim.contains(vk::SampleCountFlags::TYPE_2) {
+                samples = vk::SampleCountFlags::TYPE_2;
+            }
+            samples
+        };
+
         let mainpass = {
             let color_at = vk::AttachmentDescription::builder()
                 .format(surface_format.format)
-                .samples(vk::SampleCountFlags::TYPE_1)
+                .samples(sample_count)
                 .load_op(vk::AttachmentLoadOp::CLEAR)
                 .store_op(vk::AttachmentStoreOp::STORE)
                 .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                 .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
                 .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .build();
             let depth_at = vk::AttachmentDescription::builder()
                 .format(vk::Format::D32_SFLOAT_S8_UINT)
-                .samples(vk::SampleCountFlags::TYPE_1)
+                .samples(sample_count)
                 .load_op(vk::AttachmentLoadOp::CLEAR)
                 .store_op(vk::AttachmentStoreOp::DONT_CARE)
                 .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                 .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
                 .initial_layout(vk::ImageLayout::UNDEFINED)
                 .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                .build();
+            let resolve_at = vk::AttachmentDescription::builder()
+                .format(surface_format.format)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
                 .build();
             let color_ref = vk::AttachmentReference::builder()
                 .attachment(0)
@@ -401,8 +441,13 @@ impl RenderingHandles {
                 .attachment(1)
                 .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
                 .build();
+            let resolve_ref = vk::AttachmentReference::builder()
+                .attachment(2)
+                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .build();
             let color_refs = [color_ref];
-            let ats = [color_at, depth_at];
+            let resolve_refs = [resolve_ref];
+            let ats = [color_at, depth_at, resolve_at];
             let deps = [vk::SubpassDependency::builder()
                 .src_subpass(vk::SUBPASS_EXTERNAL)
                 .dst_subpass(0)
@@ -418,6 +463,7 @@ impl RenderingHandles {
                 .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
                 .color_attachments(&color_refs)
                 .depth_stencil_attachment(&depth_ref)
+                .resolve_attachments(&resolve_refs)
                 .build();
             let subpasses = [subpass];
             let rpci = vk::RenderPassCreateInfo::builder()
@@ -451,6 +497,7 @@ impl RenderingHandles {
                 surface_format,
                 physical,
                 physical_limits,
+                sample_count,
                 device,
                 queues: Arc::new(queues),
                 vmalloc: Arc::new(Mutex::new(vmalloc)),
@@ -636,6 +683,7 @@ impl Swapchain {
             swapimages: Vec::new(),
             swapimageviews: Vec::new(),
             depth_image: OwnedImage::new(),
+            color_image: OwnedImage::new(),
             inflight_render_finished_semaphores: Vec::new(),
             inflight_image_available_semaphores: Vec::new(),
             inflight_fences: Vec::new(),
@@ -693,6 +741,8 @@ impl Swapchain {
             }
         }
         self.depth_image
+            .destroy(&mut handles.vmalloc.lock(), handles);
+        self.color_image
             .destroy(&mut handles.vmalloc.lock(), handles);
         if destroy_swapchain && self.swapchain != vk::SwapchainKHR::null() {
             unsafe {
@@ -832,7 +882,7 @@ impl Swapchain {
                 })
                 .mip_levels(1)
                 .array_layers(1)
-                .samples(vk::SampleCountFlags::TYPE_1)
+                .samples(handles.sample_count)
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -855,8 +905,50 @@ impl Swapchain {
         self.depth_image
             .give_name(&handles, || "swapchain.depth_image");
 
+        self.color_image = {
+            let qfis = [handles.queues.get_primary_family()];
+            let ici = vk::ImageCreateInfo::builder()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(vk::Format::R8G8B8A8_SRGB)
+                .extent(vk::Extent3D {
+                    width: extent.width,
+                    height: extent.height,
+                    depth: 1,
+                })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(handles.sample_count)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(
+                    vk::ImageUsageFlags::COLOR_ATTACHMENT
+                        | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+                )
+                .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                .queue_family_indices(&qfis)
+                .initial_layout(vk::ImageLayout::UNDEFINED);
+            let aci = vma::AllocationCreateInfo {
+                usage: vma::MemoryUsage::GpuOnly,
+                flags: vma::AllocationCreateFlags::DEDICATED_MEMORY,
+                ..Default::default()
+            };
+            OwnedImage::from(
+                &mut handles.vmalloc.lock(),
+                handles,
+                &ici,
+                &aci,
+                vk::ImageViewType::TYPE_2D,
+                vk::ImageAspectFlags::COLOR,
+            )
+        };
+        self.depth_image
+            .give_name(&handles, || "swapchain.depth_image");
+
         for img in self.swapimageviews.iter() {
-            let attachs = [*img, self.depth_image.image_view];
+            let attachs = [
+                self.color_image.image_view,
+                self.depth_image.image_view,
+                *img,
+            ];
             let fci = vk::FramebufferCreateInfo::builder()
                 .render_pass(handles.mainpass)
                 .attachments(&attachs)

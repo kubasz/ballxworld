@@ -159,7 +159,7 @@ impl Default for ChunkRenderRequest {
 }
 
 struct TextureArrayParams {
-    _dims: (u32, u32),
+    dims: (u32, u32),
     mip_levels: u32,
 }
 
@@ -182,7 +182,7 @@ impl Clone for AllocatorPool {
 pub struct VoxelRenderer {
     chunk_pool: Arc<AllocatorPool>,
     texture_array: OwnedImage,
-    _texture_array_params: TextureArrayParams,
+    texture_array_params: TextureArrayParams,
     texture_name_map: FnvHashMap<String, u32>,
     texture_sampler: vk::Sampler,
     texture_ds: vk::DescriptorSet,
@@ -252,8 +252,8 @@ impl VoxelRenderer {
                 .min_lod(0.0)
                 .max_lod(texture_array_params.mip_levels as f32)
                 .mip_lod_bias(0.0)
-                .address_mode_u(vk::SamplerAddressMode::REPEAT)
-                .address_mode_v(vk::SamplerAddressMode::REPEAT)
+                .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                 .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                 .unnormalized_coordinates(false)
                 .anisotropy_enable(true)
@@ -448,7 +448,9 @@ impl VoxelRenderer {
                 .front_face(vk::FrontFace::CLOCKWISE)
                 .depth_bias_enable(false);
             let multisampling = vk::PipelineMultisampleStateCreateInfo::builder()
-                .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+                .rasterization_samples(rctx.handles.sample_count)
+                .sample_shading_enable(true)
+                .min_sample_shading(0.2);
             let depthstencil = make_pipe_depthstencil();
             let blendings = [vk::PipelineColorBlendAttachmentState::builder()
                 .color_write_mask(vk::ColorComponentFlags::all())
@@ -502,7 +504,7 @@ impl VoxelRenderer {
         Self {
             chunk_pool,
             texture_array,
-            _texture_array_params: texture_array_params,
+            texture_array_params,
             texture_name_map,
             texture_sampler,
             texture_ds,
@@ -827,7 +829,7 @@ impl VoxelRenderer {
         (
             img,
             TextureArrayParams {
-                _dims: idim,
+                dims: idim,
                 mip_levels: mip_lvls,
             },
             names,
@@ -854,6 +856,7 @@ impl VoxelRenderer {
             let work_queue = self.draw_queue.clone();
             let progress_set = self.progress_set.clone();
             let killswitch = self.thread_killer.clone();
+            let texture_dim = self.texture_array_params.dims;
             let thr = tb
                 .spawn(move || {
                     Self::vox_worker(
@@ -864,6 +867,7 @@ impl VoxelRenderer {
                         progress_set,
                         ttx,
                         killswitch,
+                        texture_dim,
                     )
                 })
                 .expect("Could not create voxrender worker thread");
@@ -881,6 +885,7 @@ impl VoxelRenderer {
         progress_set: Arc<Mutex<FnvHashSet<ChunkRenderRequest>>>,
         submission: mpsc::Sender<ChunkMsg>,
         killswitch: Arc<AtomicBool>,
+        texture_dim: (u32, u32),
     ) {
         let cpci = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(handles.queues.get_gtransfer_family())
@@ -942,7 +947,7 @@ impl VoxelRenderer {
             for rr in chunk_objs_to_add.into_iter() {
                 // give a chance to release the lock to a writer on each iteration
                 let voxels = world.voxels.read();
-                let mesh = mesh_from_chunk(&world, &voxels, rr.pos, rr.lod);
+                let mesh = mesh_from_chunk(&world, &voxels, rr.pos, rr.lod, texture_dim);
                 if mesh.is_none() {
                     done_chunks.push(rr);
                     continue;

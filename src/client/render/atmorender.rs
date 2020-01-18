@@ -78,7 +78,9 @@ impl AtmosphereRenderer {
                 .front_face(vk::FrontFace::CLOCKWISE)
                 .depth_bias_enable(false);
             let multisampling = vk::PipelineMultisampleStateCreateInfo::builder()
-                .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+                .rasterization_samples(rctx.handles.sample_count)
+                .sample_shading_enable(true)
+                .min_sample_shading(0.2);
             let depthstencil = make_pipe_depthstencil();
             let blendings = [vk::PipelineColorBlendAttachmentState::builder()
                 .color_write_mask(vk::ColorComponentFlags::all())
