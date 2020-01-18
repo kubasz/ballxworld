@@ -1,5 +1,7 @@
 use crate::client::config::Config;
-use crate::client::render::vkhelpers::{identity_components, DynamicState, OwnedImage};
+use crate::client::render::vkhelpers::{
+    identity_components, DynamicState, OwnedImage, VulkanDeviceObject,
+};
 use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::vk;
 use ash::vk::Handle;
@@ -670,8 +672,7 @@ impl Swapchain {
                 }
             }
         }
-        self.depth_image
-            .destroy(&mut handles.vmalloc.lock(), handles);
+        self.depth_image.reset(&mut handles.vmalloc.lock(), handles);
         if destroy_swapchain && self.swapchain != vk::SwapchainKHR::null() {
             unsafe {
                 handles

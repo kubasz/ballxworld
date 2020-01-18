@@ -1,7 +1,7 @@
 use crate::client::config::Config;
 use crate::client::render::vkhelpers::{
     cmd_push_struct_constants, make_pipe_depthstencil, DroppingCommandPool, OnetimeCmdGuard,
-    OwnedBuffer, OwnedImage,
+    OwnedBuffer, OwnedImage, VulkanDeviceObject,
 };
 use crate::client::render::voxmesh::mesh_from_chunk;
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles, INFLIGHT_FRAMES};
@@ -135,8 +135,8 @@ impl Debug for DrawnChunk {
 }
 
 impl DrawnChunk {
-    fn destroy(&mut self, handles: &RenderingHandles) {
-        self.buffer.destroy(&mut handles.vmalloc.lock());
+    fn destroy(self, handles: &RenderingHandles) {
+        self.buffer.destroy(&mut handles.vmalloc.lock(), handles);
     }
 }
 
@@ -530,15 +530,15 @@ impl VoxelRenderer {
         }
     }
 
-    pub fn destroy(&mut self, handles: &RenderingHandles) {
+    pub fn destroy(mut self, handles: &RenderingHandles) {
         self.kill_threads();
         unsafe {
             handles.device.device_wait_idle().unwrap();
         }
-        for mut ch in self.work_receiver.get().unwrap().try_iter() {
+        for ch in self.work_receiver.get().unwrap().try_iter() {
             ch.1.destroy(handles);
         }
-        for (_cpos, mut ch) in self.drawn_chunks.drain() {
+        for (_cpos, ch) in self.drawn_chunks.drain() {
             ch.destroy(handles);
         }
         unsafe {
@@ -562,9 +562,9 @@ impl VoxelRenderer {
                 .device
                 .destroy_sampler(self.texture_sampler, allocation_cbs());
             self.texture_name_map.clear();
-            self.texture_array
-                .destroy(&mut handles.vmalloc.lock(), handles);
-            self.ubuffer.destroy(&mut handles.vmalloc.lock());
+            let mut vmalloc = handles.vmalloc.lock();
+            self.texture_array.reset(&mut vmalloc, handles);
+            self.ubuffer.reset(&mut vmalloc, handles);
         }
     }
 
@@ -689,7 +689,7 @@ impl VoxelRenderer {
         };
         let queue = rctx.handles.queues.lock_primary_queue();
         {
-            let mut buf = OwnedBuffer::new_single_upload(&mut vmalloc, &rawdata);
+            let buf = OwnedBuffer::new_single_upload(&mut vmalloc, &rawdata);
             //
             let cmd = OnetimeCmdGuard::new(&rctx.handles, None);
             vk_sync::cmd::pipeline_barrier(
@@ -825,7 +825,7 @@ impl VoxelRenderer {
                 }],
             );
             cmd.execute(&queue);
-            buf.destroy(&mut vmalloc);
+            buf.destroy(&mut vmalloc, &rctx.handles);
         }
 
         img.give_name(&rctx.handles, || "voxel texture array");
@@ -964,7 +964,7 @@ impl VoxelRenderer {
 
                 let dchunk = if tot_sz > 0 {
                     let qfs = [handles.queues.get_primary_family()];
-                    let mut staging = {
+                    let staging = {
                         let bi = vk::BufferCreateInfo::builder()
                             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
                             .size(tot_sz as u64)
@@ -1037,7 +1037,7 @@ impl VoxelRenderer {
                         }
                         cmd.execute(&handles.queues.lock_gtransfer_queue());
                     }
-                    staging.destroy(&mut handles.vmalloc.lock());
+                    staging.destroy(&mut handles.vmalloc.lock(), &handles);
 
                     DrawnChunk {
                         cpos: rr.pos,
@@ -1086,7 +1086,7 @@ impl VoxelRenderer {
     }
 
     pub fn prepass_draw(&mut self, fctx: &mut PrePassFrameContext) {
-        for mut ch in self.chunk_drop_queue[fctx.inflight_index].drain(..) {
+        for ch in self.chunk_drop_queue[fctx.inflight_index].drain(..) {
             ch.destroy(&fctx.rctx.handles);
         }
 
