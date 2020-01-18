@@ -135,8 +135,9 @@ impl Debug for DrawnChunk {
 }
 
 impl DrawnChunk {
-    fn destroy(self, handles: &RenderingHandles) {
-        self.buffer.destroy(&mut handles.vmalloc.lock(), handles);
+    fn enqueue_destroy(self, handles: &RenderingHandles) {
+        let Self { buffer, .. } = self;
+        handles.enqueue_destroy(Box::new(buffer));
     }
 }
 
@@ -200,7 +201,6 @@ pub struct VoxelRenderer {
     worker_threads: Vec<thread::JoinHandle<()>>,
     thread_killer: Arc<AtomicBool>,
     work_receiver: CachedThreadLocal<mpsc::Receiver<ChunkMsg>>,
-    chunk_drop_queue: Vec<Vec<DrawnChunk>>,
 }
 
 impl VoxelRenderer {
@@ -499,11 +499,6 @@ impl VoxelRenderer {
             pipeline
         };
 
-        let mut chunk_drop_queue = Vec::with_capacity(INFLIGHT_FRAMES as usize);
-        for _ in 0..INFLIGHT_FRAMES {
-            chunk_drop_queue.push(Vec::new());
-        }
-
         Self {
             chunk_pool,
             texture_array,
@@ -526,7 +521,6 @@ impl VoxelRenderer {
             worker_threads: Vec::new(),
             thread_killer: Arc::new(AtomicBool::new(false)),
             work_receiver: CachedThreadLocal::new(),
-            chunk_drop_queue,
         }
     }
 
@@ -536,10 +530,10 @@ impl VoxelRenderer {
             handles.device.device_wait_idle().unwrap();
         }
         for ch in self.work_receiver.get().unwrap().try_iter() {
-            ch.1.destroy(handles);
+            ch.1.enqueue_destroy(handles);
         }
         for (_cpos, ch) in self.drawn_chunks.drain() {
-            ch.destroy(handles);
+            ch.enqueue_destroy(handles);
         }
         unsafe {
             handles
@@ -563,8 +557,8 @@ impl VoxelRenderer {
                 .destroy_sampler(self.texture_sampler, allocation_cbs());
             self.texture_name_map.clear();
             let mut vmalloc = handles.vmalloc.lock();
-            self.texture_array.reset(&mut vmalloc, handles);
-            self.ubuffer.reset(&mut vmalloc, handles);
+            self.texture_array.destroy(&mut vmalloc, handles);
+            self.ubuffer.destroy(&mut vmalloc, handles);
         }
     }
 
@@ -689,7 +683,7 @@ impl VoxelRenderer {
         };
         let queue = rctx.handles.queues.lock_primary_queue();
         {
-            let buf = OwnedBuffer::new_single_upload(&mut vmalloc, &rawdata);
+            let mut buf = OwnedBuffer::new_single_upload(&mut vmalloc, &rawdata);
             //
             let cmd = OnetimeCmdGuard::new(&rctx.handles, None);
             vk_sync::cmd::pipeline_barrier(
@@ -964,7 +958,7 @@ impl VoxelRenderer {
 
                 let dchunk = if tot_sz > 0 {
                     let qfs = [handles.queues.get_primary_family()];
-                    let staging = {
+                    let mut staging = {
                         let bi = vk::BufferCreateInfo::builder()
                             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
                             .size(tot_sz as u64)
@@ -1076,24 +1070,11 @@ impl VoxelRenderer {
         self.progress_set.lock().len()
     }
 
-    fn drop_chunk(
-        chunk_drop_queue: &mut Vec<Vec<DrawnChunk>>,
-        ch: DrawnChunk,
-        inflight_index: usize,
-    ) {
-        let idx = (inflight_index as u32 + INFLIGHT_FRAMES - 1) % INFLIGHT_FRAMES;
-        chunk_drop_queue[idx as usize].push(ch);
-    }
-
     pub fn prepass_draw(&mut self, fctx: &mut PrePassFrameContext) {
-        for ch in self.chunk_drop_queue[fctx.inflight_index].drain(..) {
-            ch.destroy(&fctx.rctx.handles);
-        }
-
         if let Some(work_receiver) = self.work_receiver.get() {
             for (p, dc) in work_receiver.try_iter() {
                 if let Some(ch) = self.drawn_chunks.insert(p, dc) {
-                    Self::drop_chunk(&mut self.chunk_drop_queue, ch, fctx.inflight_index);
+                    ch.enqueue_destroy(&fctx.rctx.handles);
                 }
             }
         }
@@ -1195,7 +1176,7 @@ impl VoxelRenderer {
 
         for cpos in chunks_to_remove.into_iter().take(32) {
             if let Some(ch) = self.drawn_chunks.remove(&cpos) {
-                Self::drop_chunk(&mut self.chunk_drop_queue, ch, fctx.inflight_index);
+                ch.enqueue_destroy(&fctx.rctx.handles);
             }
         }
 

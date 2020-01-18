@@ -74,6 +74,9 @@ pub struct DebugExts {
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
 }
 
+/// Vector of queues for object destruction, one per inflight frame
+pub type VDODestroyQueue = Vec<Vec<Box<dyn VulkanDeviceObject + Send>>>;
+
 #[derive(Clone)]
 pub struct RenderingHandles {
     pub entry: ash::Entry,
@@ -90,6 +93,8 @@ pub struct RenderingHandles {
     pub vmalloc: Arc<Mutex<vma::Allocator>>,
     pub mainpass: vk::RenderPass,
     pub oneoff_cmd_pool: Arc<Mutex<vk::CommandPool>>,
+    pub inflight_index: u32,
+    pub destroy_queue: Arc<Mutex<VDODestroyQueue>>,
 }
 
 pub struct Swapchain {
@@ -101,7 +106,6 @@ pub struct Swapchain {
     pub inflight_render_finished_semaphores: Vec<vk::Semaphore>,
     pub inflight_image_available_semaphores: Vec<vk::Semaphore>,
     pub inflight_fences: Vec<vk::Fence>,
-    pub inflight_index: u32,
     pub outdated: bool,
     pub dynamic_state: DynamicState,
     pub framebuffers: Vec<vk::Framebuffer>,
@@ -432,6 +436,9 @@ impl RenderingHandles {
                 .expect("Couldn't create one-off command pool")
         };
 
+        let mut destroy_queue: VDODestroyQueue = Default::default();
+        destroy_queue.resize_with(INFLIGHT_FRAMES as usize, Default::default);
+
         (
             window,
             Self {
@@ -449,6 +456,8 @@ impl RenderingHandles {
                 vmalloc: Arc::new(Mutex::new(vmalloc)),
                 mainpass,
                 oneoff_cmd_pool: Arc::new(Mutex::new(oneoff_cmd_pool)),
+                inflight_index: 0,
+                destroy_queue: Arc::new(Mutex::new(destroy_queue)),
             },
         )
     }
@@ -561,7 +570,18 @@ impl RenderingHandles {
         Ok(sm)
     }
 
+    pub fn enqueue_destroy(&self, vdo: Box<dyn VulkanDeviceObject + Send>) {
+        self.destroy_queue.lock()[self.inflight_index as usize].push(vdo);
+    }
+
     pub fn destroy(self) {
+        let mut vmalloc = self.vmalloc.lock();
+        for queue in self.destroy_queue.lock().iter_mut() {
+            for mut vdo in queue.drain(..) {
+                vdo.destroy(&mut vmalloc, &self);
+            }
+        }
+        drop(vmalloc);
         let Self {
             instance,
             ext_surface,
@@ -581,6 +601,7 @@ impl RenderingHandles {
         let mut vmalloc = Arc::try_unwrap(vmalloc)
             .unwrap_or_else(|_| panic!("Multiple references to vmalloc"))
             .into_inner();
+
         vmalloc.destroy();
         unsafe {
             ext_surface.destroy_surface(surface, allocation_cbs());
@@ -618,7 +639,6 @@ impl Swapchain {
             inflight_render_finished_semaphores: Vec::new(),
             inflight_image_available_semaphores: Vec::new(),
             inflight_fences: Vec::new(),
-            inflight_index: 0,
             outdated: false,
             dynamic_state: DynamicState::default(),
             framebuffers: Vec::new(),
@@ -672,7 +692,8 @@ impl Swapchain {
                 }
             }
         }
-        self.depth_image.reset(&mut handles.vmalloc.lock(), handles);
+        self.depth_image
+            .destroy(&mut handles.vmalloc.lock(), handles);
         if destroy_swapchain && self.swapchain != vk::SwapchainKHR::null() {
             unsafe {
                 handles
@@ -958,19 +979,21 @@ impl RenderingContext {
         delta_time: f64,
     ) -> Option<PrePassFrameContext> {
         let device = &self.handles.device;
-        let inflight_index = self.swapchain.inflight_index as usize;
-        self.swapchain.inflight_index = (self.swapchain.inflight_index + 1) % INFLIGHT_FRAMES;
+        let old_inflight_index = self.handles.inflight_index;
+        self.handles.inflight_index = (self.handles.inflight_index + 1) % INFLIGHT_FRAMES;
+        let inflight_index = self.handles.inflight_index as usize;
         let inflight_fence = self.swapchain.inflight_fences[inflight_index];
         unsafe { device.wait_for_fences(&[inflight_fence], true, u64::max_value()) }
             .expect("Failed waiting for fence");
         unsafe { device.reset_fences(&[inflight_fence]) }.expect("Couldn't reset fence");
 
-        self.handles
-            .vmalloc
-            .lock()
-            .set_current_frame_index(self.frame_index)
-            .unwrap();
-        self.frame_index += 1;
+        let mut vmalloc = self.handles.vmalloc.lock();
+        for mut vdo in self.handles.destroy_queue.lock()[old_inflight_index as usize].drain(..) {
+            vdo.destroy(&mut vmalloc, &self.handles);
+        }
+        vmalloc.set_current_frame_index(self.frame_index).unwrap();
+        drop(vmalloc);
+        self.frame_index = self.frame_index.wrapping_add(1);
 
         let dims = {
             let d = self.window.vulkan_drawable_size();

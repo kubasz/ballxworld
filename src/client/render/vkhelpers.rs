@@ -32,13 +32,8 @@ pub fn name_vk_object<F: Fn() -> S, S>(
     }
 }
 
-pub trait VulkanDeviceObject: Default {
-    type Handle;
-    fn destroy(self, vmalloc: &mut vma::Allocator, handles: &RenderingHandles);
-
-    fn reset(&mut self, vmalloc: &mut vma::Allocator, handles: &RenderingHandles) {
-        std::mem::replace(self, Self::default()).destroy(vmalloc, handles);
-    }
+pub trait VulkanDeviceObject {
+    fn destroy(&mut self, vmalloc: &mut vma::Allocator, handles: &RenderingHandles);
 }
 
 #[derive(Default)]
@@ -106,9 +101,7 @@ impl OwnedImage {
 }
 
 impl VulkanDeviceObject for OwnedImage {
-    type Handle = vk::Image;
-
-    fn destroy(mut self, vmalloc: &mut vma::Allocator, handles: &RenderingHandles) {
+    fn destroy(&mut self, vmalloc: &mut vma::Allocator, handles: &RenderingHandles) {
         if self.allocation.is_some() {
             unsafe {
                 handles
@@ -119,7 +112,7 @@ impl VulkanDeviceObject for OwnedImage {
                 .destroy_image(self.image, &self.allocation.take().unwrap().0)
                 .unwrap();
         }
-        std::mem::forget(self);
+        *self = Self::default();
     }
 }
 
@@ -195,14 +188,13 @@ impl OwnedBuffer {
 }
 
 impl VulkanDeviceObject for OwnedBuffer {
-    type Handle = vk::Buffer;
-
-    fn destroy(mut self, vmalloc: &mut vma::Allocator, _handles: &RenderingHandles) {
+    fn destroy(&mut self, vmalloc: &mut vma::Allocator, _handles: &RenderingHandles) {
         if self.allocation.is_some() {
             vmalloc
                 .destroy_buffer(self.buffer, &self.allocation.take().unwrap().0)
                 .unwrap();
         }
+        *self = Self::default();
     }
 }
 
