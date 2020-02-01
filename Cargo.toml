@@ -29,8 +29,8 @@ wren-sys = { path = "wren" }
 jemallocator = "0.3"
 
 [dependencies.sdl2]
-version = "0.32"
-features = ["image", "mixer", "bundled", "static-link"]
+version = "0.33"
+features = ["bundled", "static-link"]
 
 [dependencies.nalgebra]
 version = "0.19"

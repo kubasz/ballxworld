@@ -28,8 +28,7 @@ fn main() {
         builder.include(d);
     }
     let build = builder
-        .files(src.iter())
-        .flag("-Wno-unused-parameter");
+        .files(src.iter());
     build.compile("wren");
 
     // The bindgen::Builder is the main entry point
