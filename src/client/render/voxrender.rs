@@ -628,7 +628,7 @@ impl VoxelRenderer {
         let mut rawdata = Vec::new();
         for mut img in memimages.into_iter() {
             if img.dimensions() != idim {
-                img = image::imageops::resize(&img, idim.0, idim.1, image::Nearest);
+                img = image::imageops::resize(&img, idim.0, idim.1, image::imageops::Nearest);
             }
             debug_assert_eq!(img.dimensions(), idim);
             rawdata.append(&mut img.into_raw());
