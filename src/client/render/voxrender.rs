@@ -26,6 +26,7 @@ use std::sync::{mpsc, Weak};
 use std::thread;
 use thread_local::CachedThreadLocal;
 use vk_mem as vma;
+use crate::client::render::resources::RenderingResources;
 
 pub mod vox {
     use crate::offset_of;
@@ -181,10 +182,7 @@ impl Clone for AllocatorPool {
 
 pub struct VoxelRenderer {
     chunk_pool: Arc<AllocatorPool>,
-    texture_array: OwnedImage,
-    texture_array_params: TextureArrayParams,
-    texture_name_map: FnvHashMap<String, u32>,
-    texture_sampler: vk::Sampler,
+    resources: Arc<RenderingResources>,
     texture_ds: vk::DescriptorSet,
     texture_ds_layout: vk::DescriptorSetLayout,
     uniform_ds_layout: vk::DescriptorSetLayout,
@@ -204,10 +202,7 @@ pub struct VoxelRenderer {
 }
 
 impl VoxelRenderer {
-    pub fn new(cfg: &Config, rctx: &mut RenderingContext) -> Self {
-        // load textures
-        let (texture_array, texture_array_params, texture_name_map) =
-            Self::new_texture_atlas(cfg, rctx);
+    pub fn new(cfg: &Config, rctx: &mut RenderingContext, res: Arc<RenderingResources>) -> Self {
 
         let chunk_pool = {
             let vmalloc = rctx.handles.vmalloc.lock();
@@ -244,26 +239,8 @@ impl VoxelRenderer {
             Arc::new(AllocatorPool(pool))
         };
 
-        let texture_sampler = {
-            let sci = vk::SamplerCreateInfo::builder()
-                .min_filter(vk::Filter::LINEAR)
-                .mag_filter(vk::Filter::LINEAR)
-                .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
-                .min_lod(0.0)
-                .max_lod(texture_array_params.mip_levels as f32)
-                .mip_lod_bias(0.0)
-                .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                .unnormalized_coordinates(false)
-                .anisotropy_enable(true)
-                .max_anisotropy(4.0);
-            unsafe { rctx.handles.device.create_sampler(&sci, allocation_cbs()) }
-                .expect("Could not create voxel texture sampler")
-        };
-
         let texture_ds_layout = {
-            let samplers = [texture_sampler];
+            let samplers = [res.voxel_texture_sampler];
             let binds = [vk::DescriptorSetLayoutBinding::builder()
                 .binding(0)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT)
@@ -332,7 +309,7 @@ impl VoxelRenderer {
         {
             let ii = [vk::DescriptorImageInfo::builder()
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .image_view(texture_array.image_view)
+                .image_view(res.voxel_texture_array.image_view)
                 .build()];
             let dw = [vk::WriteDescriptorSet::builder()
                 .dst_set(texture_ds)
@@ -503,10 +480,7 @@ impl VoxelRenderer {
 
         Self {
             chunk_pool,
-            texture_array,
-            texture_array_params,
-            texture_name_map,
-            texture_sampler,
+            resources: res,
             texture_ds,
             texture_ds_layout,
             uniform_ds_layout,
@@ -554,12 +528,7 @@ impl VoxelRenderer {
             handles
                 .device
                 .destroy_descriptor_set_layout(self.uniform_ds_layout, allocation_cbs());
-            handles
-                .device
-                .destroy_sampler(self.texture_sampler, allocation_cbs());
-            self.texture_name_map.clear();
             let mut vmalloc = handles.vmalloc.lock();
-            self.texture_array.destroy(&mut vmalloc, handles);
             self.ubuffer.destroy(&mut vmalloc, handles);
         }
     }
@@ -575,265 +544,7 @@ impl VoxelRenderer {
     }
 
     pub fn get_texture_id(&self, name: &str) -> u32 {
-        self.texture_name_map.get(name).copied().unwrap_or(0)
-    }
-
-    fn new_texture_atlas(
-        cfg: &Config,
-        rctx: &mut RenderingContext,
-    ) -> (OwnedImage, TextureArrayParams, FnvHashMap<String, u32>) {
-        use image::RgbaImage;
-        use toml_edit::Document;
-
-        let mf_str =
-            std::fs::read_to_string("res/manifest.toml").expect("Couldn't read resource manifest");
-        let manifest = mf_str
-            .parse::<Document>()
-            .expect("Invalid configuration TOML.");
-        let tkey = manifest["textures"]
-            .as_table()
-            .expect("manifest.toml[textures] is not a table");
-        let mut memimages = Vec::new();
-        let mut names = FnvHashMap::default();
-        let mut idim = (0, 0);
-
-        // load all textures into memory
-        for (nm, path) in tkey.iter() {
-            let path: PathBuf = [
-                "res",
-                "textures",
-                path.as_str()
-                    .expect("manifest.toml[textures][item] is not a path"),
-            ]
-            .iter()
-            .collect();
-            if !(path.exists() && path.is_file()) {
-                panic!("Could not find texture file: `{:?}`", &path);
-            }
-            let img = image::open(&path)
-                .unwrap_or_else(|e| panic!("Could not load image from {:?}: {}", path, e));
-            let img: RgbaImage = img.to_rgba();
-            names.insert(nm.to_owned(), memimages.len() as u32);
-            let dim1 = img.dimensions();
-            idim.0 = idim.0.max(dim1.0);
-            idim.1 = idim.1.max(dim1.1);
-            memimages.push(img);
-            if cfg.debug_logging {
-                eprintln!("Loaded {} from {:?}", nm, path);
-            }
-        }
-        let numimages = memimages.len() as u32;
-
-        // resize all images to max size and put the pixels into a buffer
-        let mut rawdata = Vec::new();
-        for mut img in memimages.into_iter() {
-            if img.dimensions() != idim {
-                img = image::imageops::resize(&img, idim.0, idim.1, image::imageops::Nearest);
-            }
-            debug_assert_eq!(img.dimensions(), idim);
-            rawdata.append(&mut img.into_raw());
-        }
-
-        // create vulkan image array
-        let mut vmalloc = rctx.handles.vmalloc.lock();
-        let qfis = [rctx.handles.queues.get_primary_family()];
-        let mip_lvls = (f64::from(idim.0.min(idim.1)).log2().floor() as u32).max(1);
-        let img_extent = vk::Extent3D {
-            width: idim.0,
-            height: idim.1,
-            depth: 1,
-        };
-        let img = {
-            let ici = vk::ImageCreateInfo::builder()
-                .image_type(vk::ImageType::TYPE_2D)
-                .format(vk::Format::R8G8B8A8_SRGB)
-                .extent(img_extent)
-                .mip_levels(mip_lvls)
-                .array_layers(numimages)
-                .samples(vk::SampleCountFlags::TYPE_1)
-                .tiling(vk::ImageTiling::OPTIMAL)
-                .usage(
-                    vk::ImageUsageFlags::SAMPLED
-                        | vk::ImageUsageFlags::TRANSFER_DST
-                        | vk::ImageUsageFlags::TRANSFER_SRC,
-                )
-                .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                .queue_family_indices(&qfis)
-                .initial_layout(vk::ImageLayout::UNDEFINED);
-            let aci = vma::AllocationCreateInfo {
-                usage: vma::MemoryUsage::GpuOnly,
-                flags: vma::AllocationCreateFlags::DEDICATED_MEMORY,
-                ..Default::default()
-            };
-
-            OwnedImage::from(
-                &mut vmalloc,
-                &rctx.handles,
-                &ici,
-                &aci,
-                vk::ImageViewType::TYPE_2D_ARRAY,
-                vk::ImageAspectFlags::COLOR,
-            )
-        };
-        // upload main level
-        let whole_img = vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: mip_lvls,
-            base_array_layer: 0,
-            layer_count: numimages,
-        };
-        let queue = rctx.handles.queues.lock_primary_queue();
-        {
-            let mut buf = OwnedBuffer::new_single_upload(&mut vmalloc, &rawdata);
-            //
-            let cmd = OnetimeCmdGuard::new(&rctx.handles, None);
-            vk_sync::cmd::pipeline_barrier(
-                rctx.handles.device.fp_v1_0(),
-                cmd.handle(),
-                None,
-                &[],
-                &[vk_sync::ImageBarrier {
-                    previous_accesses: &[vk_sync::AccessType::Nothing],
-                    next_accesses: &[vk_sync::AccessType::TransferWrite],
-                    previous_layout: vk_sync::ImageLayout::Optimal,
-                    next_layout: vk_sync::ImageLayout::Optimal,
-                    discard_contents: false,
-                    src_queue_family_index: qfis[0],
-                    dst_queue_family_index: qfis[0],
-                    image: img.image,
-                    range: whole_img,
-                }],
-            );
-            let whole_mip0 = vk::ImageSubresourceLayers {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_level: 0,
-                base_array_layer: 0,
-                layer_count: numimages,
-            };
-            let whole_copy = [vk::BufferImageCopy {
-                buffer_offset: 0,
-                buffer_row_length: 0,
-                buffer_image_height: 0,
-                image_subresource: whole_mip0,
-                image_offset: Default::default(),
-                image_extent: img_extent,
-            }];
-            unsafe {
-                rctx.handles.device.cmd_copy_buffer_to_image(
-                    cmd.handle(),
-                    buf.buffer,
-                    img.image,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    &whole_copy,
-                );
-            }
-            let ibarrier = vk_sync::ImageBarrier {
-                previous_accesses: &[vk_sync::AccessType::TransferWrite],
-                next_accesses: &[vk_sync::AccessType::TransferRead],
-                previous_layout: vk_sync::ImageLayout::Optimal,
-                next_layout: vk_sync::ImageLayout::Optimal,
-                discard_contents: false,
-                src_queue_family_index: qfis[0],
-                dst_queue_family_index: qfis[0],
-                image: img.image,
-                range: vk::ImageSubresourceRange {
-                    base_mip_level: 0,
-                    level_count: 1,
-                    ..whole_img
-                },
-            };
-            vk_sync::cmd::pipeline_barrier(
-                rctx.handles.device.fp_v1_0(),
-                cmd.handle(),
-                None,
-                &[],
-                &[ibarrier.clone()],
-            );
-            for mip in 1..mip_lvls {
-                let prev_mip = mip - 1;
-                let prev_sz = (idim.0 >> prev_mip, idim.1 >> prev_mip);
-                let now_sz = (idim.0 >> mip, idim.1 >> mip);
-                let img_blit = [vk::ImageBlit {
-                    src_subresource: vk::ImageSubresourceLayers {
-                        mip_level: prev_mip,
-                        ..whole_mip0
-                    },
-                    src_offsets: [
-                        vk::Offset3D::default(),
-                        vk::Offset3D {
-                            x: prev_sz.0 as i32,
-                            y: prev_sz.1 as i32,
-                            z: 1,
-                        },
-                    ],
-                    dst_subresource: vk::ImageSubresourceLayers {
-                        mip_level: mip,
-                        ..whole_mip0
-                    },
-                    dst_offsets: [
-                        vk::Offset3D::default(),
-                        vk::Offset3D {
-                            x: now_sz.0 as i32,
-                            y: now_sz.1 as i32,
-                            z: 1,
-                        },
-                    ],
-                }];
-                unsafe {
-                    rctx.handles.device.cmd_blit_image(
-                        cmd.handle(),
-                        img.image,
-                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                        img.image,
-                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                        &img_blit,
-                        vk::Filter::LINEAR,
-                    );
-                    vk_sync::cmd::pipeline_barrier(
-                        rctx.handles.device.fp_v1_0(),
-                        cmd.handle(),
-                        None,
-                        &[],
-                        &[vk_sync::ImageBarrier {
-                            range: vk::ImageSubresourceRange {
-                                base_mip_level: mip,
-                                level_count: 1,
-                                ..whole_img
-                            },
-                            ..ibarrier.clone()
-                        }],
-                    );
-                }
-            }
-            vk_sync::cmd::pipeline_barrier(
-                rctx.handles.device.fp_v1_0(),
-                cmd.handle(),
-                None,
-                &[],
-                &[vk_sync::ImageBarrier {
-                    previous_accesses: &[vk_sync::AccessType::TransferRead],
-                    next_accesses: &[
-                        vk_sync::AccessType::FragmentShaderReadSampledImageOrUniformTexelBuffer,
-                    ],
-                    range: whole_img,
-                    ..ibarrier.clone()
-                }],
-            );
-            cmd.execute(&queue);
-            buf.destroy(&mut vmalloc, &rctx.handles);
-        }
-
-        img.give_name(&rctx.handles, || "voxel texture array");
-
-        (
-            img,
-            TextureArrayParams {
-                dims: idim,
-                mip_levels: mip_lvls,
-            },
-            names,
-        )
+        self.resources.voxel_texture_name_map.get(name).copied().unwrap_or(0)
     }
 
     pub fn set_world(&mut self, world: Arc<World>, rctx: &RenderingContext) {
@@ -856,7 +567,7 @@ impl VoxelRenderer {
             let work_queue = self.draw_queue.clone();
             let progress_set = self.progress_set.clone();
             let killswitch = self.thread_killer.clone();
-            let texture_dim = self.texture_array_params.dims;
+            let texture_dim = self.resources.voxel_texture_array_params.dims;
             let thr = tb
                 .spawn(move || {
                     Self::vox_worker(

@@ -6,6 +6,8 @@ use crate::math::*;
 use ash::version::DeviceV1_0;
 use ash::vk;
 use std::ffi::CString;
+use crate::client::render::resources::RenderingResources;
+use std::sync::Arc;
 
 pub mod shaders {
     use crate::offset_of;
@@ -62,11 +64,8 @@ pub mod shaders {
     }
 }
 
-pub struct AtmosphereRenderer {
-    gui_atlas: OwnedImage,
-    gui_sampler: vk::Sampler,
-    font_atlas: OwnedImage,
-    font_sampler: vk::Sampler,
+pub struct GuiRenderer {
+    resources: Arc<RenderingResources>,
     texture_ds: vk::DescriptorSet,
     texture_ds_layout: vk::DescriptorSetLayout,
     ds_pool: vk::DescriptorPool,
@@ -74,8 +73,8 @@ pub struct AtmosphereRenderer {
     pub pipeline: vk::Pipeline,
 }
 
-impl AtmosphereRenderer {
-    pub fn new(_cfg: &Config, rctx: &mut RenderingContext) -> Self {
+impl GuiRenderer {
+    pub fn new(_cfg: &Config, rctx: &mut RenderingContext, resources: Arc<RenderingResources>) -> Self {
         let pipeline_layot = {
             let pc = [];
             let dsls = [];
@@ -91,15 +90,15 @@ impl AtmosphereRenderer {
         };
 
         // create pipeline
-        let sky_pipeline = {
+        let gui_pipeline = {
             let vs = rctx
                 .handles
-                .load_shader_module("res/shaders/atmosphere.vert.spv")
-                .expect("Couldn't load vertex atmosphere shader");
+                .load_shader_module("res/shaders/ui.vert.spv")
+                .expect("Couldn't load vertex GUI shader");
             let fs = rctx
                 .handles
-                .load_shader_module("res/shaders/atmosphere.frag.spv")
-                .expect("Couldn't load fragment atmosphere shader");
+                .load_shader_module("res/shaders/ui.frag.spv")
+                .expect("Couldn't load fragment GUI shader");
             //
             let cmain = CString::new("main").unwrap();
             let vss = vk::PipelineShaderStageCreateInfo::builder()
@@ -113,8 +112,8 @@ impl AtmosphereRenderer {
             let shaders = [vss.build(), fss.build()];
             let vtxinp = vk::PipelineVertexInputStateCreateInfo::builder();
             let inpasm = vk::PipelineInputAssemblyStateCreateInfo::builder()
-                .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
-                .primitive_restart_enable(false);
+                .topology(vk::PrimitiveTopology::TRIANGLE_STRIP)
+                .primitive_restart_enable(true);
             let viewport = [rctx.swapchain.dynamic_state.get_viewport()];
             let scissor = [rctx.swapchain.dynamic_state.get_scissor()];
             let vwp_info = vk::PipelineViewportStateCreateInfo::builder()
@@ -124,17 +123,24 @@ impl AtmosphereRenderer {
                 .depth_clamp_enable(false)
                 .polygon_mode(vk::PolygonMode::FILL)
                 .line_width(1.0)
-                .cull_mode(vk::CullModeFlags::BACK)
+                .cull_mode(vk::CullModeFlags::NONE)
                 .front_face(vk::FrontFace::CLOCKWISE)
                 .depth_bias_enable(false);
             let multisampling = vk::PipelineMultisampleStateCreateInfo::builder()
                 .rasterization_samples(rctx.handles.sample_count)
-                .sample_shading_enable(true)
-                .min_sample_shading(0.2);
-            let depthstencil = make_pipe_depthstencil();
+                .sample_shading_enable(false);
+            let mut depthstencil = make_pipe_depthstencil();
+            depthstencil.depth_test_enable = vk::FALSE;
+            depthstencil.depth_write_enable = vk::FALSE;
             let blendings = [vk::PipelineColorBlendAttachmentState::builder()
                 .color_write_mask(vk::ColorComponentFlags::all())
-                .blend_enable(false)
+                .blend_enable(true)
+                .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+                .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+                .color_blend_op(vk::BlendOp::ADD)
+                .src_alpha_blend_factor(vk::BlendFactor::ONE)
+                .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
+                .alpha_blend_op(vk::BlendOp::ADD)
                 .build()];
             let blending = vk::PipelineColorBlendStateCreateInfo::builder()
                 .logic_op_enable(false)
@@ -182,19 +188,25 @@ impl AtmosphereRenderer {
         };
 
         Self {
-            sky_pipeline_layout: pipeline_layot,
-            sky_pipeline,
+            resources,
+            texture_ds: Default::default(),
+            texture_ds_layout: Default::default(),
+            ds_pool: Default::default(),
+            pipeline_layout,
+            pipeline
         }
     }
 
-    pub fn destroy(&self, handles: &RenderingHandles) {
+    pub fn destroy(mut self, handles: &RenderingHandles) {
         unsafe {
             handles
                 .device
-                .destroy_pipeline(self.sky_pipeline, allocation_cbs());
+                .destroy_pipeline(self.pipeline, allocation_cbs());
             handles
                 .device
-                .destroy_pipeline_layout(self.sky_pipeline_layout, allocation_cbs());
+                .destroy_pipeline_layout(self.pipeline_layout, allocation_cbs());
+            handles.device.destroy_descriptor_pool(self.ds_pool, allocation_cbs());
+            handles.device.destroy_descriptor_set_layout(self.texture_ds_layout, allocation_cbs());
         }
     }
 

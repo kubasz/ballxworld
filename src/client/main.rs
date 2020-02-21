@@ -14,6 +14,7 @@ use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::io::{Read, Write};
 use std::sync::Arc;
+use crate::client::render::resources::RenderingResources;
 
 const PHYSICS_FRAME_TIME: f64 = 1.0 / 60.0;
 
@@ -55,7 +56,8 @@ pub fn client_main() {
     }
 
     let mut rctx = RenderingContext::new(&sdl_vid, &cfg);
-    let mut vctx = VoxelRenderer::new(&cfg, &mut rctx);
+    let rres = Arc::new(RenderingResources::load(&cfg, &mut rctx));
+    let mut vctx = VoxelRenderer::new(&cfg, &mut rctx, rres.clone());
 
     let mut frametimes = VecDeque::new();
     let frametime_count: usize = 100;
