@@ -1,13 +1,15 @@
 use crate::client::config::Config;
 use crate::client::render::resources::RenderingResources;
-use crate::client::render::vkhelpers::make_pipe_depthstencil;
-use crate::client::render::vulkan::{allocation_cbs, RenderingHandles};
-use crate::client::render::{InPassFrameContext, RenderingContext};
+use crate::client::render::vkhelpers::{make_pipe_depthstencil, OwnedBuffer, VulkanDeviceObject};
+use crate::client::render::vulkan::{allocation_cbs, RenderingHandles, INFLIGHT_FRAMES};
+use crate::client::render::{InPassFrameContext, PrePassFrameContext, RenderingContext};
 use crate::math::*;
 use ash::version::DeviceV1_0;
 use ash::vk;
+use rayon::prelude::*;
 use std::ffi::CString;
 use std::sync::Arc;
+use vk_mem as vma;
 
 pub mod z {
     pub const GUI_Z_OFFSET_BG: i32 = 0;
@@ -35,25 +37,25 @@ pub enum GuiControlStyle {
     FullButtonBg,
     FullWindowBg,
     FullBlack,
-    FullWhite
+    FullWhite,
 }
 
 /// A single gui coordinate with relative and absolute positioning parts
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Default, Debug, PartialEq)]
 pub struct GuiCoord(f32, i32);
 
 /// A gui 2D position/size vector
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Default, Debug, PartialEq)]
 pub struct GuiVec2(GuiCoord, GuiCoord);
 
 /// A gui 2D position/size vector
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Default, Debug, PartialEq)]
 pub struct GuiRect {
     top_left: GuiVec2,
     bottom_right: GuiVec2,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct GuiColor([f32; 4]);
 
 impl Default for GuiColor {
@@ -65,23 +67,45 @@ impl Default for GuiColor {
 pub const GUI_WHITE: GuiColor = GuiColor([1.0, 1.0, 1.0, 1.0]);
 pub const GUI_BLACK: GuiColor = GuiColor([0.0, 0.0, 0.0, 1.0]);
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub enum GuiCmd {
     Rectangle {
         style: GuiControlStyle,
         rect: GuiRect,
-    }
+    },
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct GuiOrderedCmd {
     pub cmd: GuiCmd,
     pub z_index: i32,
     pub color: GuiColor,
 }
 
+#[derive(Debug, Default)]
 pub struct GuiFrame {
+    cmd_list: Vec<GuiOrderedCmd>,
+    total_indices: u32,
+}
 
+impl GuiFrame {
+    pub fn new() -> GuiFrame {
+        Default::default()
+    }
+
+    pub fn reset(&mut self) {
+        self.cmd_list.clear();
+        self.total_indices = 0;
+    }
+
+    pub fn sort(&mut self) {
+        self.cmd_list
+            .par_sort_by(|a, b| Ord::cmp(&a.z_index, &b.z_index));
+    }
+
+    pub fn push_cmd(&mut self, cmd: GuiOrderedCmd) {
+        self.cmd_list.push(cmd);
+    }
 }
 
 pub struct GuiRenderer {
@@ -91,6 +115,8 @@ pub struct GuiRenderer {
     ds_pool: vk::DescriptorPool,
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
+    pub gui_frame_pool: Vec<GuiFrame>,
+    pub gui_buffers: Vec<(OwnedBuffer, OwnedBuffer)>,
 }
 
 impl GuiRenderer {
@@ -306,6 +332,14 @@ impl GuiRenderer {
             pipeline
         };
 
+        let mut gui_frame_pool = Vec::with_capacity(INFLIGHT_FRAMES as usize);
+        let mut gui_buffers = Vec::with_capacity(INFLIGHT_FRAMES as usize);
+
+        for _ in 0..INFLIGHT_FRAMES {
+            gui_frame_pool.push(GuiFrame::new());
+            gui_buffers.push(Self::new_buffers(rctx, 16 * 1024));
+        }
+
         Self {
             resources,
             texture_ds,
@@ -313,7 +347,33 @@ impl GuiRenderer {
             ds_pool,
             pipeline_layout,
             pipeline,
+            gui_frame_pool,
+            gui_buffers,
         }
+    }
+
+    fn new_buffers(rctx: &RenderingContext, num_squares: usize) -> (OwnedBuffer, OwnedBuffer) {
+        let qfs = [rctx.handles.queues.get_primary_family()];
+        let vbi = vk::BufferCreateInfo::builder()
+            .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
+            .size((num_squares * 4 * std::mem::size_of::<shaders::UiVertex>()) as u64)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .queue_family_indices(&qfs)
+            .build();
+        let ibi = vk::BufferCreateInfo {
+            usage: vk::BufferUsageFlags::INDEX_BUFFER,
+            size: (num_squares * 5 * std::mem::size_of::<u32>()) as u64,
+            ..vbi
+        };
+        let ai = vma::AllocationCreateInfo {
+            usage: vma::MemoryUsage::CpuToGpu,
+            flags: vma::AllocationCreateFlags::MAPPED,
+            ..Default::default()
+        };
+        let mut vmalloc = rctx.handles.vmalloc.lock();
+        let vb = OwnedBuffer::from(&mut vmalloc, &vbi, &ai);
+        let ib = OwnedBuffer::from(&mut vmalloc, &ibi, &ai);
+        (vb, ib)
     }
 
     pub fn destroy(mut self, handles: &RenderingHandles) {
@@ -330,11 +390,29 @@ impl GuiRenderer {
             handles
                 .device
                 .destroy_descriptor_set_layout(self.texture_ds_layout, allocation_cbs());
+            let mut vmalloc = handles.vmalloc.lock();
+            for (mut b1, mut b2) in self.gui_buffers.drain(..) {
+                b1.destroy(&mut vmalloc, handles);
+                b2.destroy(&mut vmalloc, handles);
+            }
         }
+    }
+
+    pub fn prepass_draw(&mut self, fctx: &mut PrePassFrameContext) {
+        let frame = &mut self.gui_frame_pool[fctx.inflight_index];
+        frame.reset();
     }
 
     #[allow(clippy::cast_ptr_alignment)]
     pub fn inpass_draw(&mut self, fctx: &mut InPassFrameContext) {
+        let frame = &self.gui_frame_pool[fctx.inflight_index];
+
+        if frame.total_indices == 0 {
+            return;
+        }
+
+        let (vbuf, ibuf) = &self.gui_buffers[fctx.inflight_index];
+
         let device = &fctx.rctx.handles.device;
 
         unsafe {
@@ -344,6 +422,19 @@ impl GuiRenderer {
             .swapchain
             .dynamic_state
             .cmd_update_pipeline(device, fctx.cmd);
+        unsafe {
+            device.cmd_bind_descriptor_sets(
+                fctx.cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipeline_layout,
+                0,
+                &[self.texture_ds],
+                &[],
+            );
+            device.cmd_bind_vertex_buffers(fctx.cmd, 0, &[vbuf.buffer], &[0]);
+            device.cmd_bind_index_buffer(fctx.cmd, ibuf.buffer, 0, vk::IndexType::UINT32);
+            device.cmd_draw_indexed(fctx.cmd, frame.total_indices, 1, 0, 0, 0);
+        }
     }
 }
 

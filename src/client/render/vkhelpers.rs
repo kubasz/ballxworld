@@ -138,6 +138,7 @@ fn byte_slice_from<T: Sized>(data: &[T]) -> &[u8] {
 pub struct OwnedBuffer {
     pub buffer: vk::Buffer,
     pub allocation: Option<(vma::Allocation, vma::AllocationInfo)>,
+    pub size: u64,
 }
 
 impl OwnedBuffer {
@@ -156,6 +157,7 @@ impl OwnedBuffer {
         Self {
             buffer: r.0,
             allocation: Some((r.1, r.2)),
+            size: buf_info.size,
         }
     }
 

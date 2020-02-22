@@ -3,7 +3,7 @@ use crate::world::ecs::{CLoadAnchor, CLocation, Component, ECSHandler};
 use crate::world::stdgen::StdGenerator;
 use crate::world::{chunkpos_from_blockpos, ChunkPosition, UncompressedChunk, VChunk, World};
 use fnv::FnvHashSet;
-use parking_lot::{Mutex, RwLockReadGuard, RwLockUpgradableReadGuard};
+use parking_lot::{Mutex, RwLockUpgradableReadGuard};
 use rayon::prelude::*;
 use smallvec::SmallVec;
 use std::iter::FromIterator;
