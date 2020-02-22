@@ -13,6 +13,7 @@ pub struct RenderingResources {
     pub gui_atlas: OwnedImage,
     pub font_atlas: OwnedImage,
     pub gui_sampler: vk::Sampler,
+    pub font_sampler: vk::Sampler,
     pub voxel_texture_array: OwnedImage,
     pub voxel_texture_array_params: TextureArrayParams,
     pub voxel_texture_name_map: FnvHashMap<String, u32>,
@@ -51,15 +52,32 @@ impl RenderingResources {
         };
         let gui_sampler = {
             let sci = vk::SamplerCreateInfo::builder()
+                .min_filter(vk::Filter::NEAREST)
+                .mag_filter(vk::Filter::NEAREST)
+                .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+                .min_lod(0.0)
+                .max_lod(0.0)
+                .mip_lod_bias(0.0)
+                .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .unnormalized_coordinates(false)
+                .anisotropy_enable(false)
+                .max_anisotropy(0.0);
+            unsafe { rctx.handles.device.create_sampler(&sci, allocation_cbs()) }
+                .expect("Could not create voxel texture sampler")
+        };
+        let font_sampler = {
+            let sci = vk::SamplerCreateInfo::builder()
                 .min_filter(vk::Filter::LINEAR)
                 .mag_filter(vk::Filter::LINEAR)
                 .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
                 .min_lod(0.0)
                 .max_lod(0.0)
                 .mip_lod_bias(0.0)
-                .address_mode_u(vk::SamplerAddressMode::REPEAT)
-                .address_mode_v(vk::SamplerAddressMode::REPEAT)
-                .address_mode_w(vk::SamplerAddressMode::REPEAT)
+                .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                 .unnormalized_coordinates(false)
                 .anisotropy_enable(false)
                 .max_anisotropy(0.0);
@@ -70,6 +88,7 @@ impl RenderingResources {
             gui_atlas,
             font_atlas,
             gui_sampler,
+            font_sampler,
             voxel_texture_array,
             voxel_texture_array_params,
             voxel_texture_name_map,
@@ -82,6 +101,12 @@ impl RenderingResources {
             handles
                 .device
                 .destroy_sampler(self.voxel_texture_sampler, allocation_cbs());
+            handles
+                .device
+                .destroy_sampler(self.font_sampler, allocation_cbs());
+            handles
+                .device
+                .destroy_sampler(self.gui_sampler, allocation_cbs());
         }
         self.voxel_texture_name_map.clear();
         let mut vmalloc = handles.vmalloc.lock();

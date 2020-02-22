@@ -16,7 +16,7 @@ pub fn name_vk_object<F: Fn() -> S, S>(
 ) where
     S: Into<Vec<u8>>,
 {
-    if let Some(ext_debug) = handles.ext_debug.as_ref() {
+    if let Some(ext_debug) = handles.debug_utils.as_ref() {
         let name_slice = name_fn();
         let name = CString::new(name_slice).unwrap();
         let ni = vk::DebugUtilsObjectNameInfoEXT::builder()
@@ -25,7 +25,6 @@ pub fn name_vk_object<F: Fn() -> S, S>(
             .object_name(name.as_c_str());
         unsafe {
             ext_debug
-                .utils
                 .debug_utils_set_object_name(handles.device.handle(), &ni)
         }
         .unwrap();
@@ -230,7 +229,7 @@ impl<'h> FenceGuard<'h> {
         });
         let fence = unsafe { handles.device.create_fence(&fci, allocation_cbs()) }
             .expect("Couldn't create Vulkan fence");
-        if let Some(ext_debug) = handles.ext_debug.as_ref() {
+        if let Some(ext_debug) = handles.debug_utils.as_ref() {
             let name_slice = name_fn();
             let name = CString::new(name_slice).unwrap();
             let ni = vk::DebugUtilsObjectNameInfoEXT::builder()
@@ -239,7 +238,6 @@ impl<'h> FenceGuard<'h> {
                 .object_name(name.as_c_str());
             unsafe {
                 ext_debug
-                    .utils
                     .debug_utils_set_object_name(handles.device.handle(), &ni)
             }
             .unwrap();

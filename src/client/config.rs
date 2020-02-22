@@ -12,9 +12,11 @@ pub struct Config {
     pub performance_load_distance: u32,
     pub performance_draw_distance: u32,
 
-    /// not in TOML
     pub debug_logging: bool,
     pub vk_debug_layers: bool,
+
+    /// not in TOML
+    pub dbg_renderdoc: bool,
 
     toml_doc: Option<toml_edit::Document>,
 }
@@ -36,6 +38,8 @@ impl Config {
 
             debug_logging: true,
             vk_debug_layers: false,
+
+            dbg_renderdoc: false,
 
             toml_doc: None,
         }

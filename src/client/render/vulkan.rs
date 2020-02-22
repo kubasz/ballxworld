@@ -70,7 +70,6 @@ pub const INFLIGHT_FRAMES: u32 = 2;
 
 #[derive(Clone)]
 pub struct DebugExts {
-    pub utils: ash::extensions::ext::DebugUtils,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
 }
 
@@ -83,6 +82,7 @@ pub struct RenderingHandles {
     pub instance: ash::Instance,
     pub ext_surface: ash::extensions::khr::Surface,
     pub ext_swapchain: ash::extensions::khr::Swapchain,
+    pub debug_utils: Option<ash::extensions::ext::DebugUtils>,
     pub ext_debug: Option<DebugExts>,
     pub surface: vk::SurfaceKHR,
     pub surface_format: vk::SurfaceFormatKHR,
@@ -156,7 +156,7 @@ impl<'r, Stage: FrameStage> FrameContext<'r, Stage> {
     where
         S: Into<Vec<u8>>,
     {
-        if let Some(ext_debug) = self.rctx.handles.ext_debug.as_ref() {
+        if let Some(ext_debug) = self.rctx.handles.debug_utils.as_ref() {
             let name_slice = name_fn();
             let name = CString::new(name_slice).unwrap();
             let label = vk::DebugUtilsLabelEXT::builder()
@@ -164,16 +164,15 @@ impl<'r, Stage: FrameStage> FrameContext<'r, Stage> {
                 .label_name(name.as_c_str());
             unsafe {
                 ext_debug
-                    .utils
                     .cmd_begin_debug_utils_label(self.cmd, &label);
             }
         }
     }
 
     pub fn end_region(&self) {
-        if let Some(ext_debug) = self.rctx.handles.ext_debug.as_ref() {
+        if let Some(ext_debug) = self.rctx.handles.debug_utils.as_ref() {
             unsafe {
-                ext_debug.utils.cmd_end_debug_utils_label(self.cmd);
+                ext_debug.cmd_end_debug_utils_label(self.cmd);
             }
         }
     }
@@ -182,7 +181,7 @@ impl<'r, Stage: FrameStage> FrameContext<'r, Stage> {
     where
         S: Into<Vec<u8>>,
     {
-        if let Some(ext_debug) = self.rctx.handles.ext_debug.as_ref() {
+        if let Some(ext_debug) = self.rctx.handles.debug_utils.as_ref() {
             let name_slice = name_fn();
             let name = CString::new(name_slice).unwrap();
             let label = vk::DebugUtilsLabelEXT::builder()
@@ -190,7 +189,6 @@ impl<'r, Stage: FrameStage> FrameContext<'r, Stage> {
                 .label_name(name.as_c_str());
             unsafe {
                 ext_debug
-                    .utils
                     .cmd_insert_debug_utils_label(self.cmd, &label);
             }
         }
@@ -242,7 +240,7 @@ impl RenderingHandles {
         }
         let window = window.build().expect("Failed to create the game window");
         let entry = ash::Entry::new().expect("Can't load Vulkan system library entrypoints");
-        let (instance, ext_debug) = Self::create_instance(&entry, &window, cfg);
+        let (instance, debug_utils, ext_debug) = Self::create_instance(&entry, &window, cfg);
         let ext_surface = ash::extensions::khr::Surface::new(&entry, &instance);
         let surface = {
             let sdlvki = instance.handle().as_raw() as sdl2::video::VkInstance;
@@ -492,6 +490,7 @@ impl RenderingHandles {
                 instance,
                 ext_surface,
                 ext_swapchain,
+                debug_utils,
                 ext_debug,
                 surface,
                 surface_format,
@@ -513,7 +512,7 @@ impl RenderingHandles {
         entry: &ash::Entry,
         window: &Window,
         cfg: &Config,
-    ) -> (ash::Instance, Option<DebugExts>) {
+    ) -> (ash::Instance, Option<ash::extensions::ext::DebugUtils>, Option<DebugExts>) {
         let app_name = CString::new("BallX World").unwrap();
         let engine_name = CString::new("BallX World Engine").unwrap();
 
@@ -551,15 +550,17 @@ impl RenderingHandles {
         let mut raw_layers: Vec<CString> = Vec::new();
 
         let mut has_debug = false;
-        if cfg.vk_debug_layers {
+        if cfg.vk_debug_layers || cfg.dbg_renderdoc {
             let duname = ash::extensions::ext::DebugUtils::name();
             if avail_enames.contains(&duname) {
                 raw_exts.push(duname.to_owned());
                 has_debug = true;
             }
-            let lname = CString::new("VK_LAYER_KHRONOS_validation").unwrap();
-            if avail_lnames.contains(&lname.as_c_str()) {
-                raw_layers.push(lname);
+            if !cfg.dbg_renderdoc {
+                let lname = CString::new("VK_LAYER_KHRONOS_validation").unwrap();
+                if avail_lnames.contains(&lname.as_c_str()) {
+                    raw_layers.push(lname);
+                }
             }
         }
 
@@ -581,20 +582,22 @@ impl RenderingHandles {
 
         if has_debug {
             let utils = ash::extensions::ext::DebugUtils::new(entry, &instance);
-            let mci = vk::DebugUtilsMessengerCreateInfoEXT::builder()
-                .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
-                .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
-                .pfn_user_callback(Some(debug_msg_callback));
-            let msg = unsafe { utils.create_debug_utils_messenger(&mci, allocation_cbs()) }
-                .expect("Couldn't create debug messenger");
-            eprintln!("Created Vulkan debug messenger");
-            let ext_debug = DebugExts {
-                utils,
-                debug_messenger: msg,
-            };
-            (instance, Some(ext_debug))
+            let mut ext_debug = None;
+            if !cfg.dbg_renderdoc {
+                let mci = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+                    .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
+                    .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
+                    .pfn_user_callback(Some(debug_msg_callback));
+                let msg = unsafe { utils.create_debug_utils_messenger(&mci, allocation_cbs()) }
+                    .expect("Couldn't create debug messenger");
+                eprintln!("Created Vulkan debug messenger");
+                ext_debug = Some(DebugExts {
+                    debug_messenger: msg,
+                });
+            }
+            (instance, Some(utils), ext_debug)
         } else {
-            (instance, None)
+            (instance, None, None)
         }
     }
 
@@ -632,6 +635,7 @@ impl RenderingHandles {
         let Self {
             instance,
             ext_surface,
+            debug_utils,
             ext_debug,
             surface,
             device,
@@ -664,8 +668,7 @@ impl RenderingHandles {
         }
         if let Some(ext_debug) = ext_debug {
             unsafe {
-                ext_debug
-                    .utils
+                debug_utils.unwrap()
                     .destroy_debug_utils_messenger(ext_debug.debug_messenger, allocation_cbs());
             }
         }

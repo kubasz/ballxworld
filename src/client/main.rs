@@ -3,7 +3,7 @@
 use crate::client::config::Config;
 use crate::client::input::InputManager;
 use crate::client::render::resources::RenderingResources;
-use crate::client::render::ui::GuiRenderer;
+use crate::client::render::ui::{GuiRenderer, GuiOrderedCmd, GUI_WHITE, GuiCmd, GuiControlStyle, GuiRect};
 use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::client::world::{CameraSettings, ClientWorld};
 use crate::math::*;
@@ -16,6 +16,7 @@ use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::io::{Read, Write};
 use std::sync::Arc;
+use crate::client::render::ui::z::GUI_Z_LAYER_BACKGROUND;
 
 const PHYSICS_FRAME_TIME: f64 = 1.0 / 60.0;
 
@@ -54,6 +55,11 @@ pub fn client_main() {
             .expect("Couldn't open settings.toml for writing")
             .write_all(cfg_text.as_bytes())
             .expect("Couldn't write to settings.toml");
+    }
+    if std::env::args().any(|a| a == "-renderdoc") {
+        cfg.dbg_renderdoc = true;
+        cfg.vk_debug_layers = false;
+        eprintln!("Adjusting settings for renderdoc");
     }
 
     let mut rctx = RenderingContext::new(&sdl_vid, &cfg);
@@ -181,13 +187,27 @@ pub fn client_main() {
         if let Some(mut fc) = rctx.frame_begin_prepass(&cfg, frame_delta_time) {
             fc.begin_region([0.7, 0.7, 0.1, 1.0], || "vctx.prepass_draw");
             vctx.prepass_draw(&mut fc);
-            guictx.prepass_draw(&mut fc);
+            fc.end_region();
+            fc.begin_region([0.5, 0.5, 0.5, 1.0], || "gui.prepass_draw");
+            let gui = guictx.prepass_draw(&mut fc);
+            gui.push_cmd(GuiOrderedCmd{
+                z_index: GUI_Z_LAYER_BACKGROUND,
+                color: GUI_WHITE,
+                cmd: GuiCmd::Rectangle {
+                    style: GuiControlStyle::Window,
+                    rect: GuiRect::from_xywh((0.0, 5.0), (0.0, 5.0), (0.4, -5.0), (0.4, -5.0)),
+                }
+            });
             fc.end_region();
             let mut fc = RenderingContext::frame_goto_pass(fc);
             fc.begin_region([0.3, 0.3, 0.8, 1.0], || "vctx.inpass_draw");
             vctx.inpass_draw(&mut fc);
+            fc.end_region();
+
+            fc.begin_region([0.5, 0.5, 0.5, 1.0], || "gui.inpass_draw");
             guictx.inpass_draw(&mut fc);
             fc.end_region();
+
             let fc = RenderingContext::frame_goto_postpass(fc);
             fc.insert_label([0.1, 0.8, 0.1, 1.0], || "frame_finish");
             RenderingContext::frame_finish(fc);
