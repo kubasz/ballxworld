@@ -7,8 +7,11 @@ use crate::client::render::{InPassFrameContext, PrePassFrameContext, RenderingCo
 use crate::math::*;
 use ash::version::DeviceV1_0;
 use ash::vk;
+use itertools::zip;
 use rayon::prelude::*;
+use std::borrow::Cow;
 use std::ffi::CString;
+use std::ops::Add;
 use std::sync::Arc;
 use vk_mem as vma;
 
@@ -33,6 +36,10 @@ pub mod z {
 pub enum GuiControlStyle {
     Window,
     Button,
+    XButton,
+    Cursor,
+    Crosshair,
+    Typing,
     FullDark,
     FullBorder,
     FullButtonBg,
@@ -45,13 +52,33 @@ pub enum GuiControlStyle {
 enum ControlStyleRenderInfo {
     /// A simple left,right,top,bottom textured rectangle
     LRTB([f32; 4]),
+    /// A "9-box" render: left, left-mid, right-mid, right, top, top-mid, bot-mid, bottom, midpoint locs in pixels
+    Box9([f32; 8], [i32; 4]),
 }
 
 impl GuiControlStyle {
     fn render_info(self) -> ControlStyleRenderInfo {
         let p = |x| (x as f32) / 128.0;
+        let p4 = |a, b, c, d| ControlStyleRenderInfo::LRTB([p(a), p(b), p(c), p(d)]);
+        let p8 = |a, b, c, d, e, f, g, h| {
+            ControlStyleRenderInfo::Box9(
+                [p(a), p(b), p(c), p(d), p(e), p(f), p(g), p(h)],
+                [b - a + 1, d - c + 1, f - e + 1, h - g + 1],
+            )
+        };
         match self {
-            _ => ControlStyleRenderInfo::LRTB([p(48), p(80), p(0), p(32)]),
+            GuiControlStyle::FullBlack => p4(2, 6, 4, 8),
+            GuiControlStyle::FullWhite => p4(6, 6, 8, 8),
+            GuiControlStyle::FullDark => p4(2, 2, 4, 4),
+            GuiControlStyle::FullBorder => p4(4, 2, 6, 4),
+            GuiControlStyle::FullButtonBg => p4(10, 2, 12, 4),
+            GuiControlStyle::FullWindowBg => p4(14, 2, 16, 4),
+            GuiControlStyle::XButton => p4(0, 9, 33, 42),
+            GuiControlStyle::Cursor => p4(10, 19, 34, 46),
+            GuiControlStyle::Crosshair => p4(20, 35, 33, 48),
+            GuiControlStyle::Typing => p4(36, 39, 33, 49),
+            GuiControlStyle::Button => p8(17, 22, 44, 49, 0, 5, 27, 32),
+            GuiControlStyle::Window => p8(50, 59, 73, 82, 0, 9, 23, 32),
         }
     }
 }
@@ -72,6 +99,17 @@ impl GuiCoord {
 /// A gui 2D position/size vector
 #[derive(Copy, Clone, Default, Debug, PartialEq)]
 pub struct GuiVec2(GuiCoord, GuiCoord);
+
+impl Add for GuiVec2 {
+    type Output = GuiVec2;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        GuiVec2(
+            GuiCoord(self.0 .0 + rhs.0 .0, self.0 .1 + rhs.0 .1),
+            GuiCoord(self.1 .0 + rhs.1 .0, self.1 .1 + rhs.1 .1),
+        )
+    }
+}
 
 impl GuiVec2 {
     pub fn to_absolute_from_dim(self, dimensions: (u32, u32)) -> Vector2<f32> {
@@ -139,6 +177,11 @@ pub enum GuiCmd {
         style: GuiControlStyle,
         rect: GuiRect,
     },
+    FreeText {
+        text: Cow<'static, str>,
+        scale: f32,
+        start_at: GuiVec2,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +208,7 @@ impl GuiVtxWriter {
         self.indxs.clear();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn put_rect(
         &mut self,
         top_left: Vector2<f32>,
@@ -214,9 +258,13 @@ const TEXSELECT_FONT: i32 = 1;
 const TEXSELECT_VOX: i32 = 2;
 
 impl GuiOrderedCmd {
-    fn handle(&self, writer: &mut GuiVtxWriter, rctx: &RenderingContext) {
+    fn handle(&self, writer: &mut GuiVtxWriter, res: &RenderingResources, rctx: &RenderingContext) {
         let color = self.color.0;
-        match self.cmd {
+        let (sw, sh) = (
+            rctx.swapchain.swapimage_size.width as f32,
+            rctx.swapchain.swapimage_size.height as f32,
+        );
+        match &self.cmd {
             GuiCmd::Rectangle { style, rect } => {
                 let absrect = rect.to_absolute_from_rctx(rctx);
                 match style.render_info() {
@@ -231,7 +279,71 @@ impl GuiOrderedCmd {
                             color,
                         );
                     }
+                    ControlStyleRenderInfo::Box9(tc, ic) => {
+                        let dim = rctx.swapchain.swapimage_size;
+                        let dim = [2.0 / dim.width as f32, 2.0 / dim.height as f32];
+                        let ic = [
+                            ic[0] as f32 * dim[0],
+                            ic[1] as f32 * dim[0],
+                            ic[2] as f32 * dim[1],
+                            ic[3] as f32 * dim[1],
+                        ];
+                        let idx = writer.verts.len() as u32;
+                        for (ty, iy) in zip(
+                            &[tc[4], tc[5], tc[6], tc[7]],
+                            &[
+                                absrect.0.y,
+                                absrect.0.y + ic[2],
+                                absrect.1.y - ic[3],
+                                absrect.1.y,
+                            ],
+                        ) {
+                            for (tx, ix) in zip(
+                                &[tc[0], tc[1], tc[2], tc[3]],
+                                &[
+                                    absrect.0.x,
+                                    absrect.0.x + ic[0],
+                                    absrect.1.x - ic[1],
+                                    absrect.1.x,
+                                ],
+                            ) {
+                                writer.verts.push(UiVertex {
+                                    position: [*ix, *iy],
+                                    color,
+                                    texcoord: [*tx, *ty, 0.0],
+                                    texselect: TEXSELECT_GUI,
+                                });
+                            }
+                        }
+                        #[rustfmt::skip]
+                        writer.indxs.extend(
+                            [0, 4, 1, 5, 2, 6, 3, 7, u32::max_value(),
+                                4, 8, 5, 9, 6, 10, 7, 11, u32::max_value(),
+                                8, 12, 9, 13, 10, 14, 11, 15, u32::max_value(),
+                            ]
+                            .iter()
+                            .map(|x| x.saturating_add(idx)),
+                        );
+                    }
                 }
+            }
+            GuiCmd::FreeText {
+                text,
+                scale,
+                start_at,
+            } => {
+                let start = start_at.to_absolute_from_rctx(rctx);
+                res.font.text_op(text, *scale, |p| {
+                    writer.put_rect(
+                        start + vec2(2.0 * p.x / sw, 2.0 * p.y / sh),
+                        start + vec2(2.0 * (p.x + p.w) / sw, 2.0 * (p.y + p.h) / sh),
+                        vec2(p.bmchar.x, p.bmchar.y),
+                        vec2(p.bmchar.rightx, p.bmchar.bottomy),
+                        0.0,
+                        TEXSELECT_FONT,
+                        color,
+                    );
+                });
             }
         }
     }
@@ -564,7 +676,7 @@ impl GuiRenderer {
         self.gui_vtx_write.reset();
         frame.sort();
         for cmd in frame.cmd_list.iter() {
-            cmd.handle(&mut self.gui_vtx_write, fctx.rctx);
+            cmd.handle(&mut self.gui_vtx_write, &self.resources, fctx.rctx);
         }
         if self.gui_vtx_write.indxs.is_empty() {
             return;

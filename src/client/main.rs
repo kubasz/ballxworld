@@ -3,9 +3,9 @@
 use crate::client::config::Config;
 use crate::client::input::InputManager;
 use crate::client::render::resources::RenderingResources;
-use crate::client::render::ui::z::GUI_Z_LAYER_BACKGROUND;
+use crate::client::render::ui::z::{GUI_Z_LAYER_BACKGROUND, GUI_Z_OFFSET_CONTROL};
 use crate::client::render::ui::{
-    GuiCmd, GuiControlStyle, GuiOrderedCmd, GuiRect, GuiRenderer, GUI_WHITE,
+    gv2, GuiCmd, GuiControlStyle, GuiOrderedCmd, GuiRect, GuiRenderer, GUI_BLACK, GUI_WHITE,
 };
 use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::client::world::{CameraSettings, ClientWorld};
@@ -15,6 +15,7 @@ use crate::world::blocks::register_standard_blocks;
 use crate::world::ecs::{CLoadAnchor, CLocation, ECSHandler};
 use crate::world::generation::WorldLoadGen;
 use crate::world::{blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition};
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::io::{Read, Write};
@@ -197,7 +198,25 @@ pub fn client_main() {
                 color: GUI_WHITE,
                 cmd: GuiCmd::Rectangle {
                     style: GuiControlStyle::Window,
-                    rect: GuiRect::from_xywh((0.0, 5.0), (0.0, 5.0), (0.0, 32.0), (0.0, 32.0)),
+                    rect: GuiRect::from_xywh((0.0, 5.0), (0.0, 5.0), (0.0, 200.0), (0.0, 50.0)),
+                },
+            });
+            gui.push_cmd(GuiOrderedCmd {
+                z_index: GUI_Z_LAYER_BACKGROUND + GUI_Z_OFFSET_CONTROL,
+                color: GUI_BLACK,
+                cmd: GuiCmd::FreeText {
+                    text: Cow::from("Hello, BXW!"),
+                    scale: 0.5,
+                    start_at: gv2((0.0, 10.0), (0.0, 10.0)),
+                },
+            });
+            gui.push_cmd(GuiOrderedCmd {
+                z_index: GUI_Z_LAYER_BACKGROUND + GUI_Z_OFFSET_CONTROL,
+                color: GUI_BLACK,
+                cmd: GuiCmd::FreeText {
+                    text: Cow::from(format!("FPS: {:.1}", 1.0 / frame_delta_time)),
+                    scale: 0.5,
+                    start_at: gv2((0.0, 10.0), (0.0, 30.0)),
                 },
             });
             fc.end_region();

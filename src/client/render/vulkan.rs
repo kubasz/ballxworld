@@ -584,8 +584,7 @@ impl RenderingHandles {
 
         if has_debug {
             let utils = ash::extensions::ext::DebugUtils::new(entry, &instance);
-            let mut ext_debug = None;
-            if !cfg.dbg_renderdoc {
+            let ext_debug = if !cfg.dbg_renderdoc {
                 let mci = vk::DebugUtilsMessengerCreateInfoEXT::builder()
                     .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
                     .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
@@ -593,10 +592,12 @@ impl RenderingHandles {
                 let msg = unsafe { utils.create_debug_utils_messenger(&mci, allocation_cbs()) }
                     .expect("Couldn't create debug messenger");
                 eprintln!("Created Vulkan debug messenger");
-                ext_debug = Some(DebugExts {
+                Some(DebugExts {
                     debug_messenger: msg,
-                });
-            }
+                })
+            } else {
+                None
+            };
             (instance, Some(utils), ext_debug)
         } else {
             (instance, None, None)

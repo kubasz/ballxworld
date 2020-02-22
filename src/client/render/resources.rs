@@ -2,10 +2,12 @@ use crate::client::config::Config;
 use crate::client::render::vkhelpers::*;
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles};
 use crate::client::render::RenderingContext;
+use crate::math::*;
 use ash::version::DeviceV1_0;
 use ash::vk;
 use fnv::FnvHashMap;
 use image::RgbaImage;
+use regex::{Match, Regex};
 use std::path::{Path, PathBuf};
 use vk_mem as vma;
 
@@ -14,10 +16,35 @@ pub struct RenderingResources {
     pub font_atlas: OwnedImage,
     pub gui_sampler: vk::Sampler,
     pub font_sampler: vk::Sampler,
+    pub font: Box<BMFont>,
     pub voxel_texture_array: OwnedImage,
     pub voxel_texture_array_params: TextureArrayParams,
     pub voxel_texture_name_map: FnvHashMap<String, u32>,
     pub voxel_texture_sampler: vk::Sampler,
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct BMChar {
+    pub x: f32,
+    pub y: f32,
+    pub rightx: f32,
+    pub bottomy: f32,
+    pub width: i32,
+    pub height: i32,
+    pub xoffset: i32,
+    pub yoffset: i32,
+    pub xadvance: i32,
+}
+
+#[derive(Clone, Default)]
+pub struct BMFont {
+    pub line_height: i32,
+    pub base: i32,
+    pub scale_w: i32,
+    pub scale_h: i32,
+    pub low_present: Vec<bool>,
+    pub low_chars: Vec<BMChar>,
+    pub high_chars: FnvHashMap<u32, BMChar>,
 }
 
 pub struct TextureArrayParams {
@@ -84,11 +111,15 @@ impl RenderingResources {
             unsafe { rctx.handles.device.create_sampler(&sci, allocation_cbs()) }
                 .expect("Could not create voxel texture sampler")
         };
+        let font_desc = std::fs::read_to_string("res/fonts/cascadia.fnt")
+            .expect("Couldn't read res/fonts/cascadia.fnt");
+        let font = BMFont::parse(&font_desc);
         Self {
             gui_atlas,
             font_atlas,
             gui_sampler,
             font_sampler,
+            font,
             voxel_texture_array,
             voxel_texture_array_params,
             voxel_texture_name_map,
@@ -492,4 +523,142 @@ fn rgba_to_owned_image(rgba: &RgbaImage, rctx: &RenderingContext) -> OwnedImage 
     cmd.execute(&queue);
     buf.destroy(&mut vmalloc, &rctx.handles);
     img
+}
+
+#[derive(Copy, Clone)]
+pub struct TextOpParams<'f> {
+    pub bmchar: &'f BMChar,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct TextMeasurement {
+    pub minx: f32,
+    pub miny: f32,
+    pub maxx: f32,
+    pub maxy: f32,
+}
+
+impl TextMeasurement {
+    pub fn min(&self) -> Vector2<f32> {
+        vec2(self.minx, self.miny)
+    }
+
+    pub fn max(&self) -> Vector2<f32> {
+        vec2(self.maxx, self.maxy)
+    }
+}
+
+impl BMFont {
+    pub fn parse(desc: &str) -> Box<Self> {
+        let common_re = Regex::new(r#"^common lineHeight=(?P<lh>\d+) base=(?P<b>\d+) scaleW=(?P<sw>\d+) scaleH=(?P<sh>\d+)"#).unwrap();
+        let char_re = Regex::new(r#"^char\s+id=(?P<id>[0-9-]+)\s+x=(?P<x>[0-9-]+)\s+y=(?P<y>[0-9-]+)\s+width=(?P<w>[0-9-]+)\s+height=(?P<h>[0-9-]+)\s+xoffset=(?P<xo>[0-9-]+)\s+yoffset=(?P<yo>[0-9-]+)\s+xadvance=(?P<xa>[0-9-]+)"#).unwrap();
+        let mut font: Box<BMFont> = Box::default();
+        font.low_chars.resize_with(256, Default::default);
+        font.low_present.resize(256, false);
+        let mi32 = |m: Option<Match>| -> i32 { m.unwrap().as_str().parse().unwrap() };
+        let mut scale: Option<(f32, f32)> = None;
+        for line in desc.lines() {
+            let line = line.trim();
+            if line.starts_with("common ") {
+                let m = common_re.captures(line).expect("Invalid font common");
+                font.line_height = mi32(m.name("lh"));
+                font.base = mi32(m.name("b"));
+                font.scale_w = mi32(m.name("sw"));
+                font.scale_h = mi32(m.name("sh"));
+                scale = Some((1.0 / font.scale_w as f32, 1.0 / font.scale_h as f32));
+            } else if line.starts_with("char id") {
+                let capt = char_re.captures(line).expect("Invalid font char");
+                let id = mi32(capt.name("id")).max(0) as u32;
+                let x = mi32(capt.name("x"));
+                let y = mi32(capt.name("y"));
+                let w = mi32(capt.name("w"));
+                let h = mi32(capt.name("h"));
+                let xoff = mi32(capt.name("xo"));
+                let yoff = mi32(capt.name("yo"));
+                let xadv = mi32(capt.name("xa"));
+                let chr = BMChar {
+                    x: x as f32 * scale.unwrap().0,
+                    y: y as f32 * scale.unwrap().0,
+                    rightx: (x + w) as f32 * scale.unwrap().0,
+                    bottomy: (y + h) as f32 * scale.unwrap().0,
+                    width: w,
+                    height: h,
+                    xoffset: xoff,
+                    yoffset: yoff,
+                    xadvance: xadv,
+                };
+                if id < 256 {
+                    font.low_present[id as usize] = true;
+                    font.low_chars[id as usize] = chr;
+                } else {
+                    font.high_chars.insert(id, chr);
+                }
+            }
+        }
+        assert_ne!(font.line_height, 0);
+        font
+    }
+
+    pub fn get_char(&self, chr: char) -> &BMChar {
+        let cid = chr as u32;
+        if cid < 256 {
+            if self.low_present[cid as usize] {
+                &self.low_chars[cid as usize]
+            } else {
+                &self.low_chars[0]
+            }
+        } else {
+            self.high_chars.get(&cid).unwrap_or(&self.low_chars[0])
+        }
+    }
+
+    pub fn text_op<'f, F: FnMut(TextOpParams<'f>) -> ()>(
+        &'f self,
+        text: &str,
+        scale: f32,
+        mut op: F,
+    ) {
+        let s = |x: i32| x as f32 * scale;
+        let mut x = 0.0f32;
+        let mut y = 0.0f32;
+        for c in text.chars() {
+            if c == '\r' {
+                continue;
+            }
+            if c == '\n' {
+                y += s(self.line_height);
+                continue;
+            }
+            let bmchar = self.get_char(c);
+            let cx = x + s(bmchar.xoffset);
+            let cy = y + s(bmchar.yoffset);
+            let cw = s(bmchar.width);
+            let ch = s(bmchar.height);
+            op(TextOpParams {
+                bmchar,
+                x: cx,
+                y: cy,
+                w: cw,
+                h: ch,
+            });
+            x += s(bmchar.xadvance);
+        }
+    }
+
+    pub fn measure_text(&self, text: &str, scale: f32) -> TextMeasurement {
+        let mut m: TextMeasurement = Default::default();
+        m.maxy = self.line_height as f32 * scale;
+        m.maxx = scale;
+        self.text_op(text, scale, |p| {
+            m.minx = m.minx.min(p.x);
+            m.miny = m.miny.min(p.y);
+            m.maxx = m.maxx.max(p.x + p.w);
+            m.maxy = m.maxy.max(p.y + p.h);
+        });
+        m
+    }
 }
