@@ -9,59 +9,79 @@ use ash::vk;
 use std::ffi::CString;
 use std::sync::Arc;
 
-pub mod shaders {
-    use crate::offset_of;
-    use ash::vk;
-    use std::mem;
+pub mod z {
+    pub const GUI_Z_OFFSET_BG: i32 = 0;
+    pub const GUI_Z_OFFSET_CONTROL: i32 = 4;
+    pub const GUI_Z_OFFSET_FG: i32 = 8;
 
-    #[derive(Copy, Clone, Default)]
-    #[repr(C)]
-    pub struct UiVertex {
-        pub position: [f32; 2],
-        pub color: [f32; 4],
-        pub texcoord: [f32; 3],
-        pub texselect: i32,
-    }
+    pub const GUI_ZFACTOR_LAYER: i32 = 64;
 
-    impl UiVertex {
-        pub fn description() -> (
-            [vk::VertexInputBindingDescription; 1],
-            [vk::VertexInputAttributeDescription; 4],
-        ) {
-            let bind_dsc = [vk::VertexInputBindingDescription::builder()
-                .binding(0)
-                .stride(mem::size_of::<Self>() as u32)
-                .input_rate(vk::VertexInputRate::VERTEX)
-                .build()];
-            let attr_dsc = [
-                vk::VertexInputAttributeDescription {
-                    binding: 0,
-                    location: 0,
-                    format: vk::Format::R32G32_SFLOAT,
-                    offset: offset_of!(Self, position) as u32,
-                },
-                vk::VertexInputAttributeDescription {
-                    binding: 0,
-                    location: 1,
-                    format: vk::Format::R32G32B32A32_SFLOAT,
-                    offset: offset_of!(Self, color) as u32,
-                },
-                vk::VertexInputAttributeDescription {
-                    binding: 0,
-                    location: 2,
-                    format: vk::Format::R32G32B32_SFLOAT,
-                    offset: offset_of!(Self, texcoord) as u32,
-                },
-                vk::VertexInputAttributeDescription {
-                    binding: 0,
-                    location: 3,
-                    format: vk::Format::R32_SINT,
-                    offset: offset_of!(Self, texselect) as u32,
-                },
-            ];
-            (bind_dsc, attr_dsc)
-        }
+    pub const GUI_Z_LAYER_BACKGROUND: i32 = -1024;
+    pub const GUI_Z_LAYER_HUD: i32 = GUI_Z_LAYER_BACKGROUND + GUI_ZFACTOR_LAYER;
+    pub const GUI_Z_LAYER_UI_LOW: i32 = GUI_Z_LAYER_HUD + GUI_ZFACTOR_LAYER;
+    pub const GUI_Z_LAYER_UI_MEDIUM: i32 = GUI_Z_LAYER_UI_LOW + GUI_ZFACTOR_LAYER;
+    pub const GUI_Z_LAYER_UI_HIGH: i32 = GUI_Z_LAYER_UI_MEDIUM + GUI_ZFACTOR_LAYER;
+    pub const GUI_Z_LAYER_UI_POPUP: i32 = GUI_Z_LAYER_UI_HIGH + GUI_ZFACTOR_LAYER;
+    pub const GUI_Z_LAYER_OVERLAY: i32 = GUI_Z_LAYER_UI_POPUP + GUI_ZFACTOR_LAYER;
+    pub const GUI_Z_LAYER_CURSOR: i32 = i32::max_value() - GUI_ZFACTOR_LAYER;
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum GuiControlStyle {
+    Window,
+    Button,
+    FullDark,
+    FullBorder,
+    FullButtonBg,
+    FullWindowBg,
+    FullBlack,
+    FullWhite
+}
+
+/// A single gui coordinate with relative and absolute positioning parts
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
+pub struct GuiCoord(f32, i32);
+
+/// A gui 2D position/size vector
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
+pub struct GuiVec2(GuiCoord, GuiCoord);
+
+/// A gui 2D position/size vector
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, Hash)]
+pub struct GuiRect {
+    top_left: GuiVec2,
+    bottom_right: GuiVec2,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct GuiColor([f32; 4]);
+
+impl Default for GuiColor {
+    fn default() -> Self {
+        Self([1.0, 1.0, 1.0, 1.0])
     }
+}
+
+pub const GUI_WHITE: GuiColor = GuiColor([1.0, 1.0, 1.0, 1.0]);
+pub const GUI_BLACK: GuiColor = GuiColor([0.0, 0.0, 0.0, 1.0]);
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum GuiCmd {
+    Rectangle {
+        style: GuiControlStyle,
+        rect: GuiRect,
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct GuiOrderedCmd {
+    pub cmd: GuiCmd,
+    pub z_index: i32,
+    pub color: GuiColor,
+}
+
+pub struct GuiFrame {
+
 }
 
 pub struct GuiRenderer {
@@ -324,5 +344,60 @@ impl GuiRenderer {
             .swapchain
             .dynamic_state
             .cmd_update_pipeline(device, fctx.cmd);
+    }
+}
+
+pub mod shaders {
+    use crate::offset_of;
+    use ash::vk;
+    use std::mem;
+
+    #[derive(Copy, Clone, Default)]
+    #[repr(C)]
+    pub struct UiVertex {
+        pub position: [f32; 2],
+        pub color: [f32; 4],
+        pub texcoord: [f32; 3],
+        pub texselect: i32,
+    }
+
+    impl UiVertex {
+        pub fn description() -> (
+            [vk::VertexInputBindingDescription; 1],
+            [vk::VertexInputAttributeDescription; 4],
+        ) {
+            let bind_dsc = [vk::VertexInputBindingDescription::builder()
+                .binding(0)
+                .stride(mem::size_of::<Self>() as u32)
+                .input_rate(vk::VertexInputRate::VERTEX)
+                .build()];
+            let attr_dsc = [
+                vk::VertexInputAttributeDescription {
+                    binding: 0,
+                    location: 0,
+                    format: vk::Format::R32G32_SFLOAT,
+                    offset: offset_of!(Self, position) as u32,
+                },
+                vk::VertexInputAttributeDescription {
+                    binding: 0,
+                    location: 1,
+                    format: vk::Format::R32G32B32A32_SFLOAT,
+                    offset: offset_of!(Self, color) as u32,
+                },
+                vk::VertexInputAttributeDescription {
+                    binding: 0,
+                    location: 2,
+                    format: vk::Format::R32G32B32_SFLOAT,
+                    offset: offset_of!(Self, texcoord) as u32,
+                },
+                vk::VertexInputAttributeDescription {
+                    binding: 0,
+                    location: 3,
+                    format: vk::Format::R32_SINT,
+                    offset: offset_of!(Self, texselect) as u32,
+                },
+            ];
+            (bind_dsc, attr_dsc)
+        }
     }
 }
