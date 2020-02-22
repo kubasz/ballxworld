@@ -1,7 +1,8 @@
 use crate::client::config::Config;
+use crate::client::render::resources::RenderingResources;
 use crate::client::render::vkhelpers::{
     cmd_push_struct_constants, make_pipe_depthstencil, DroppingCommandPool, OnetimeCmdGuard,
-    OwnedBuffer, OwnedImage, VulkanDeviceObject,
+    OwnedBuffer, VulkanDeviceObject,
 };
 use crate::client::render::voxmesh::mesh_from_chunk;
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles, INFLIGHT_FRAMES};
@@ -19,14 +20,12 @@ use rayon::prelude::*;
 use smallvec::SmallVec;
 use std::ffi::CString;
 use std::fmt::{Debug, Formatter};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::{mpsc, Weak};
 use std::thread;
 use thread_local::CachedThreadLocal;
 use vk_mem as vma;
-use crate::client::render::resources::RenderingResources;
 
 pub mod vox {
     use crate::offset_of;
@@ -159,11 +158,6 @@ impl Default for ChunkRenderRequest {
     }
 }
 
-struct TextureArrayParams {
-    dims: (u32, u32),
-    mip_levels: u32,
-}
-
 struct AllocatorPool(vma::AllocatorPool);
 
 unsafe impl Send for AllocatorPool {}
@@ -201,9 +195,19 @@ pub struct VoxelRenderer {
     work_receiver: CachedThreadLocal<mpsc::Receiver<ChunkMsg>>,
 }
 
+struct VoxWorkerParams {
+    world_w: Weak<World>,
+    handles: RenderingHandles,
+    alloc_pool: Arc<AllocatorPool>,
+    work_queue: Arc<Mutex<Vec<ChunkRenderRequest>>>,
+    progress_set: Arc<Mutex<FnvHashSet<ChunkRenderRequest>>>,
+    submission: mpsc::Sender<ChunkMsg>,
+    killswitch: Arc<AtomicBool>,
+    texture_dim: (u32, u32),
+}
+
 impl VoxelRenderer {
     pub fn new(cfg: &Config, rctx: &mut RenderingContext, res: Arc<RenderingResources>) -> Self {
-
         let chunk_pool = {
             let vmalloc = rctx.handles.vmalloc.lock();
             let qfs = [rctx.handles.queues.get_primary_family()];
@@ -544,7 +548,11 @@ impl VoxelRenderer {
     }
 
     pub fn get_texture_id(&self, name: &str) -> u32 {
-        self.resources.voxel_texture_name_map.get(name).copied().unwrap_or(0)
+        self.resources
+            .voxel_texture_name_map
+            .get(name)
+            .copied()
+            .unwrap_or(0)
     }
 
     pub fn set_world(&mut self, world: Arc<World>, rctx: &RenderingContext) {
@@ -560,27 +568,19 @@ impl VoxelRenderer {
             let tb = thread::Builder::new()
                 .name("bxw-voxrender".to_owned())
                 .stack_size(STACK_SIZE);
-            let tworld = Arc::downgrade(&world);
             let ttx = tx.clone();
-            let handles = rctx.handles.clone();
-            let alloc_pool = self.chunk_pool.clone();
-            let work_queue = self.draw_queue.clone();
-            let progress_set = self.progress_set.clone();
-            let killswitch = self.thread_killer.clone();
-            let texture_dim = self.resources.voxel_texture_array_params.dims;
+            let vwparams = VoxWorkerParams {
+                world_w: Arc::downgrade(&world),
+                handles: rctx.handles.clone(),
+                alloc_pool: self.chunk_pool.clone(),
+                work_queue: self.draw_queue.clone(),
+                progress_set: self.progress_set.clone(),
+                submission: ttx,
+                killswitch: self.thread_killer.clone(),
+                texture_dim: self.resources.voxel_texture_array_params.dims,
+            };
             let thr = tb
-                .spawn(move || {
-                    Self::vox_worker(
-                        tworld,
-                        handles,
-                        alloc_pool,
-                        work_queue,
-                        progress_set,
-                        ttx,
-                        killswitch,
-                        texture_dim,
-                    )
-                })
+                .spawn(move || Self::vox_worker(vwparams))
                 .expect("Could not create voxrender worker thread");
             self.worker_threads.push(thr);
         }
@@ -588,16 +588,17 @@ impl VoxelRenderer {
     }
 
     #[allow(clippy::cast_ptr_alignment)]
-    fn vox_worker(
-        world_w: Weak<World>,
-        handles: RenderingHandles,
-        alloc_pool: Arc<AllocatorPool>,
-        work_queue: Arc<Mutex<Vec<ChunkRenderRequest>>>,
-        progress_set: Arc<Mutex<FnvHashSet<ChunkRenderRequest>>>,
-        submission: mpsc::Sender<ChunkMsg>,
-        killswitch: Arc<AtomicBool>,
-        texture_dim: (u32, u32),
-    ) {
+    fn vox_worker(params: VoxWorkerParams) {
+        let VoxWorkerParams {
+            world_w,
+            handles,
+            alloc_pool,
+            work_queue,
+            progress_set,
+            submission,
+            killswitch,
+            texture_dim,
+        } = params;
         let cpci = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(handles.queues.get_gtransfer_family())
             .flags(vk::CommandPoolCreateFlags::TRANSIENT);

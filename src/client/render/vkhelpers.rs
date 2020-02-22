@@ -40,6 +40,10 @@ pub trait VulkanDeviceObject {
 pub struct OwnedImage {
     pub image: vk::Image,
     pub image_view: vk::ImageView,
+    pub format: vk::Format,
+    pub extent: vk::Extent3D,
+    pub mip_levels: u32,
+    pub array_layers: u32,
     /// The identity view for the whole image
     pub allocation: Option<(vma::Allocation, vma::AllocationInfo)>,
 }
@@ -57,6 +61,10 @@ impl OwnedImage {
         iv_type: vk::ImageViewType,
         iv_aspect: vk::ImageAspectFlags,
     ) -> Self {
+        let format = img_info.format;
+        let extent = img_info.extent;
+        let mip_levels = img_info.mip_levels;
+        let array_layers = img_info.array_layers;
         let r = vmalloc
             .create_image(img_info, mem_info)
             .expect("Could not create Vulkan image");
@@ -69,14 +77,18 @@ impl OwnedImage {
                 aspect_mask: iv_aspect,
                 base_array_layer: 0,
                 base_mip_level: 0,
-                layer_count: img_info.array_layers,
-                level_count: img_info.mip_levels,
+                layer_count: array_layers,
+                level_count: mip_levels,
             });
         let iv = unsafe { handles.device.create_image_view(&ivci, allocation_cbs()) }
             .expect("Couldn't create Vulkan image view");
         Self {
             image: r.0,
             image_view: iv,
+            format,
+            extent,
+            mip_levels,
+            array_layers,
             allocation: Some((r.1, r.2)),
         }
     }

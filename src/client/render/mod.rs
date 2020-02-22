@@ -1,6 +1,6 @@
 pub mod atmorender;
 pub mod resources;
-pub mod ui;
+//pub mod ui;
 pub mod vkhelpers;
 pub mod voxmesh;
 pub mod voxrender;

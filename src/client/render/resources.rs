@@ -1,10 +1,13 @@
-use crate::client::render::vkhelpers::{OwnedImage, VulkanDeviceObject};
-use fnv::FnvHashMap;
-use ash::vk;
 use crate::client::config::Config;
+use crate::client::render::vkhelpers::*;
+use crate::client::render::vulkan::{allocation_cbs, RenderingHandles};
 use crate::client::render::RenderingContext;
-use crate::client::render::vulkan::{RenderingHandles, allocation_cbs};
 use ash::version::DeviceV1_0;
+use ash::vk;
+use fnv::FnvHashMap;
+use image::RgbaImage;
+use std::path::{Path, PathBuf};
+use vk_mem as vma;
 
 pub struct RenderingResources {
     pub gui_atlas: OwnedImage,
@@ -14,6 +17,11 @@ pub struct RenderingResources {
     pub voxel_texture_array_params: TextureArrayParams,
     pub voxel_texture_name_map: FnvHashMap<String, u32>,
     pub voxel_texture_sampler: vk::Sampler,
+}
+
+pub struct TextureArrayParams {
+    pub dims: (u32, u32),
+    pub mip_levels: u32,
 }
 
 impl RenderingResources {
@@ -26,7 +34,7 @@ impl RenderingResources {
                 .mag_filter(vk::Filter::LINEAR)
                 .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
                 .min_lod(0.0)
-                .max_lod(texture_array_params.mip_levels as f32)
+                .max_lod(voxel_texture_array_params.mip_levels as f32)
                 .mip_lod_bias(0.0)
                 .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                 .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
@@ -55,6 +63,8 @@ impl RenderingResources {
                 .expect("Could not create voxel texture sampler")
         };
         Self {
+            gui_atlas: Default::default(),
+            font_atlas: Default::default(),
             gui_sampler,
             voxel_texture_array,
             voxel_texture_array_params,
@@ -64,18 +74,20 @@ impl RenderingResources {
     }
 
     pub fn destroy(mut self, handles: &RenderingHandles) {
-        unsafe {handles
-            .device
-            .destroy_sampler(self.voxel_texture_sampler, allocation_cbs());}
+        unsafe {
+            handles
+                .device
+                .destroy_sampler(self.voxel_texture_sampler, allocation_cbs());
+        }
         self.voxel_texture_name_map.clear();
-        self.voxel_texture_array.destroy(&mut handles.vmalloc.lock(), handles);
+        self.voxel_texture_array
+            .destroy(&mut handles.vmalloc.lock(), handles);
     }
 
     fn new_texture_atlas(
         cfg: &Config,
         rctx: &mut RenderingContext,
     ) -> (OwnedImage, TextureArrayParams, FnvHashMap<String, u32>) {
-        use image::RgbaImage;
         use toml_edit::Document;
 
         let mf_str =
@@ -98,14 +110,9 @@ impl RenderingResources {
                 path.as_str()
                     .expect("manifest.toml[textures][item] is not a path"),
             ]
-                .iter()
-                .collect();
-            if !(path.exists() && path.is_file()) {
-                panic!("Could not find texture file: `{:?}`", &path);
-            }
-            let img = image::open(&path)
-                .unwrap_or_else(|e| panic!("Could not load image from {:?}: {}", path, e));
-            let img: RgbaImage = img.to_rgba();
+            .iter()
+            .collect();
+            let img = load_rgba(&path);
             names.insert(nm.to_owned(), memimages.len() as u32);
             let dim1 = img.dimensions();
             idim.0 = idim.0.max(dim1.0);
@@ -328,4 +335,13 @@ impl RenderingResources {
             names,
         )
     }
+}
+
+fn load_rgba(path: &Path) -> RgbaImage {
+    if !(path.exists() && path.is_file()) {
+        panic!("Could not find texture file: `{:?}`", &path);
+    }
+    let img = image::open(&path)
+        .unwrap_or_else(|e| panic!("Could not load image from {:?}: {}", path, e));
+    img.to_rgba()
 }

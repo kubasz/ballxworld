@@ -2,6 +2,7 @@
 #![deny(unused_must_use)]
 use crate::client::config::Config;
 use crate::client::input::InputManager;
+use crate::client::render::resources::RenderingResources;
 use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::client::world::{CameraSettings, ClientWorld};
 use crate::math::*;
@@ -14,7 +15,6 @@ use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::io::{Read, Write};
 use std::sync::Arc;
-use crate::client::render::resources::RenderingResources;
 
 const PHYSICS_FRAME_TIME: f64 = 1.0 / 60.0;
 
@@ -257,4 +257,7 @@ pub fn client_main() {
     }
 
     vctx.destroy(&rctx.handles);
+    Arc::try_unwrap(rres)
+        .unwrap_or_else(|_| panic!("Handle still held to resource manager"))
+        .destroy(&rctx.handles);
 }
