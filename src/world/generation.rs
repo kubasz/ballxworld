@@ -3,7 +3,7 @@ use crate::world::ecs::{CLoadAnchor, CLocation, Component, ECSHandler};
 use crate::world::stdgen::StdGenerator;
 use crate::world::{chunkpos_from_blockpos, ChunkPosition, UncompressedChunk, VChunk, World};
 use fnv::FnvHashSet;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLockReadGuard, RwLockUpgradableReadGuard};
 use rayon::prelude::*;
 use smallvec::SmallVec;
 use std::iter::FromIterator;
@@ -90,6 +90,7 @@ impl WorldLoadGen {
         killswitch: Arc<AtomicBool>,
     ) {
         let mut done_chunks: Vec<Vector3<i32>> = Vec::new();
+        let mut pos_to_load = Vec::new();
         loop {
             let mut load_queue = load_queue_arc.lock();
             let mut progress_set = progress_set_arc.lock();
@@ -109,7 +110,7 @@ impl WorldLoadGen {
                 continue;
             }
 
-            let mut pos_to_load = Vec::new();
+            pos_to_load.clear();
             let len = load_queue.len().min(10);
             for p in load_queue.iter().rev().take(len) {
                 pos_to_load.push(p.1);
@@ -120,7 +121,7 @@ impl WorldLoadGen {
             drop(progress_set);
             drop(load_queue);
 
-            for p in pos_to_load.into_iter() {
+            for p in pos_to_load.drain(..) {
                 let mut chunk = VChunk::new();
                 chunk.position = p;
                 let mut ucchunk = UncompressedChunk::new();
@@ -144,6 +145,7 @@ impl WorldLoadGen {
                 voxels.chunks.insert(cpos, vc.chunk);
             }
         }
+        drop(voxels);
 
         let ents_o = self.world.entities.read();
         let ents = &ents_o.ecs;
@@ -213,6 +215,7 @@ impl WorldLoadGen {
         let progress_set = self.progress_set.lock();
         load_queue.clear();
 
+        let voxels = self.world.voxels.upgradable_read();
         req_positions
             .iter()
             .filter(|p| !(voxels.chunks.contains_key(&p.1) || progress_set.contains(&p.1)))
@@ -231,9 +234,11 @@ impl WorldLoadGen {
                 .filter(|p| !req_cpos.contains(*p))
                 .copied(),
         );
+        let mut voxels = RwLockUpgradableReadGuard::upgrade(voxels);
         for cp in to_remove {
             voxels.chunks.remove(&cp);
         }
+        drop(voxels);
 
         let has_loads = !load_queue.is_empty();
         drop(progress_set);

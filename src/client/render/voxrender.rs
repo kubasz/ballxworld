@@ -605,6 +605,8 @@ impl VoxelRenderer {
         let cmd_pool = DroppingCommandPool::new(&handles, &cpci);
         drop(cpci);
         let mut done_chunks: Vec<ChunkRenderRequest> = Vec::new();
+        let mut chunks_to_add = Vec::new();
+        let mut chunk_objs_to_add = Vec::new();
         loop {
             if killswitch.load(Ordering::SeqCst) {
                 return;
@@ -632,7 +634,7 @@ impl VoxelRenderer {
                 continue;
             }
 
-            let mut chunks_to_add = Vec::new();
+            chunks_to_add.clear();
             let len = work_queue.len().min(10);
             for p in work_queue.iter().rev().take(len) {
                 chunks_to_add.push(p.clone());
@@ -643,10 +645,10 @@ impl VoxelRenderer {
             drop(progress_set);
             drop(work_queue);
 
-            let mut chunk_objs_to_add = Vec::new();
+            chunk_objs_to_add.clear();
             {
                 let voxels = world.voxels.read();
-                for rr in chunks_to_add.into_iter() {
+                for rr in chunks_to_add.drain(..) {
                     let chunk_opt = voxels.chunks.get(&rr.pos);
                     if chunk_opt.is_none() {
                         done_chunks.push(rr);
@@ -656,7 +658,7 @@ impl VoxelRenderer {
                 }
             }
 
-            for rr in chunk_objs_to_add.into_iter() {
+            for rr in chunk_objs_to_add.drain(..) {
                 // give a chance to release the lock to a writer on each iteration
                 let voxels = world.voxels.read();
                 let mesh = mesh_from_chunk(&world, &voxels, rr.pos, rr.lod, texture_dim);
