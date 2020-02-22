@@ -28,6 +28,10 @@ impl RenderingResources {
     pub fn load(cfg: &Config, rctx: &mut RenderingContext) -> Self {
         let (voxel_texture_array, voxel_texture_array_params, voxel_texture_name_map) =
             Self::new_texture_atlas(cfg, rctx);
+        let gui_atlas = load_owned_image("res/ui.png", rctx);
+        gui_atlas.give_name(&rctx.handles, || "gui atlas");
+        let font_atlas = load_owned_image("res/fonts/cascadia_0.png", rctx);
+        font_atlas.give_name(&rctx.handles, || "font atlas");
         let voxel_texture_sampler = {
             let sci = vk::SamplerCreateInfo::builder()
                 .min_filter(vk::Filter::LINEAR)
@@ -63,8 +67,8 @@ impl RenderingResources {
                 .expect("Could not create voxel texture sampler")
         };
         Self {
-            gui_atlas: Default::default(),
-            font_atlas: Default::default(),
+            gui_atlas,
+            font_atlas,
             gui_sampler,
             voxel_texture_array,
             voxel_texture_array_params,
@@ -80,8 +84,10 @@ impl RenderingResources {
                 .destroy_sampler(self.voxel_texture_sampler, allocation_cbs());
         }
         self.voxel_texture_name_map.clear();
-        self.voxel_texture_array
-            .destroy(&mut handles.vmalloc.lock(), handles);
+        let mut vmalloc = handles.vmalloc.lock();
+        self.voxel_texture_array.destroy(&mut vmalloc, handles);
+        self.gui_atlas.destroy(&mut vmalloc, handles);
+        self.font_atlas.destroy(&mut vmalloc, handles);
     }
 
     fn new_texture_atlas(
@@ -337,11 +343,128 @@ impl RenderingResources {
     }
 }
 
-fn load_rgba(path: &Path) -> RgbaImage {
+fn load_rgba<P: AsRef<Path>>(path: P) -> RgbaImage {
+    let path: &Path = path.as_ref();
     if !(path.exists() && path.is_file()) {
         panic!("Could not find texture file: `{:?}`", &path);
     }
     let img = image::open(&path)
         .unwrap_or_else(|e| panic!("Could not load image from {:?}: {}", path, e));
     img.to_rgba()
+}
+
+fn load_owned_image<P: AsRef<Path>>(path: P, rctx: &RenderingContext) -> OwnedImage {
+    let rgba = load_rgba(path);
+    rgba_to_owned_image(&rgba, rctx)
+}
+
+fn rgba_to_owned_image(rgba: &RgbaImage, rctx: &RenderingContext) -> OwnedImage {
+    let mut vmalloc = rctx.handles.vmalloc.lock();
+    let qfis = [rctx.handles.queues.get_primary_family()];
+    let img_extent = vk::Extent3D {
+        width: rgba.dimensions().0,
+        height: rgba.dimensions().1,
+        depth: 1,
+    };
+    let img = {
+        let ici = vk::ImageCreateInfo::builder()
+            .image_type(vk::ImageType::TYPE_2D)
+            .format(vk::Format::R8G8B8A8_SRGB)
+            .extent(img_extent)
+            .mip_levels(1)
+            .array_layers(1)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .queue_family_indices(&qfis)
+            .initial_layout(vk::ImageLayout::UNDEFINED);
+        let aci = vma::AllocationCreateInfo {
+            usage: vma::MemoryUsage::GpuOnly,
+            flags: vma::AllocationCreateFlags::DEDICATED_MEMORY,
+            ..Default::default()
+        };
+
+        OwnedImage::from(
+            &mut vmalloc,
+            &rctx.handles,
+            &ici,
+            &aci,
+            vk::ImageViewType::TYPE_2D,
+            vk::ImageAspectFlags::COLOR,
+        )
+    };
+    // upload main level
+    let whole_img = vk::ImageSubresourceRange {
+        aspect_mask: vk::ImageAspectFlags::COLOR,
+        base_mip_level: 0,
+        level_count: 1,
+        base_array_layer: 0,
+        layer_count: 1,
+    };
+    let queue = rctx.handles.queues.lock_primary_queue();
+    let mut buf = OwnedBuffer::new_single_upload(&mut vmalloc, rgba.as_ref());
+    //
+    let cmd = OnetimeCmdGuard::new(&rctx.handles, None);
+    vk_sync::cmd::pipeline_barrier(
+        rctx.handles.device.fp_v1_0(),
+        cmd.handle(),
+        None,
+        &[],
+        &[vk_sync::ImageBarrier {
+            previous_accesses: &[vk_sync::AccessType::Nothing],
+            next_accesses: &[vk_sync::AccessType::TransferWrite],
+            previous_layout: vk_sync::ImageLayout::Optimal,
+            next_layout: vk_sync::ImageLayout::Optimal,
+            discard_contents: false,
+            src_queue_family_index: qfis[0],
+            dst_queue_family_index: qfis[0],
+            image: img.image,
+            range: whole_img,
+        }],
+    );
+    let whole_mip0 = vk::ImageSubresourceLayers {
+        aspect_mask: vk::ImageAspectFlags::COLOR,
+        mip_level: 0,
+        base_array_layer: 0,
+        layer_count: 1,
+    };
+    let whole_copy = [vk::BufferImageCopy {
+        buffer_offset: 0,
+        buffer_row_length: 0,
+        buffer_image_height: 0,
+        image_subresource: whole_mip0,
+        image_offset: Default::default(),
+        image_extent: img_extent,
+    }];
+    unsafe {
+        rctx.handles.device.cmd_copy_buffer_to_image(
+            cmd.handle(),
+            buf.buffer,
+            img.image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            &whole_copy,
+        );
+    }
+    let ibarrier = vk_sync::ImageBarrier {
+        previous_accesses: &[vk_sync::AccessType::TransferWrite],
+        next_accesses: &[vk_sync::AccessType::FragmentShaderReadSampledImageOrUniformTexelBuffer],
+        previous_layout: vk_sync::ImageLayout::Optimal,
+        next_layout: vk_sync::ImageLayout::Optimal,
+        discard_contents: false,
+        src_queue_family_index: qfis[0],
+        dst_queue_family_index: qfis[0],
+        image: img.image,
+        range: whole_img,
+    };
+    vk_sync::cmd::pipeline_barrier(
+        rctx.handles.device.fp_v1_0(),
+        cmd.handle(),
+        None,
+        &[],
+        &[ibarrier.clone()],
+    );
+    cmd.execute(&queue);
+    buf.destroy(&mut vmalloc, &rctx.handles);
+    img
 }
