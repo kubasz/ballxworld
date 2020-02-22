@@ -3,7 +3,10 @@
 use crate::client::config::Config;
 use crate::client::input::InputManager;
 use crate::client::render::resources::RenderingResources;
-use crate::client::render::ui::{GuiRenderer, GuiOrderedCmd, GUI_WHITE, GuiCmd, GuiControlStyle, GuiRect};
+use crate::client::render::ui::z::GUI_Z_LAYER_BACKGROUND;
+use crate::client::render::ui::{
+    GuiCmd, GuiControlStyle, GuiOrderedCmd, GuiRect, GuiRenderer, GUI_WHITE,
+};
 use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::client::world::{CameraSettings, ClientWorld};
 use crate::math::*;
@@ -16,7 +19,6 @@ use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::io::{Read, Write};
 use std::sync::Arc;
-use crate::client::render::ui::z::GUI_Z_LAYER_BACKGROUND;
 
 const PHYSICS_FRAME_TIME: f64 = 1.0 / 60.0;
 
@@ -190,13 +192,13 @@ pub fn client_main() {
             fc.end_region();
             fc.begin_region([0.5, 0.5, 0.5, 1.0], || "gui.prepass_draw");
             let gui = guictx.prepass_draw(&mut fc);
-            gui.push_cmd(GuiOrderedCmd{
+            gui.push_cmd(GuiOrderedCmd {
                 z_index: GUI_Z_LAYER_BACKGROUND,
                 color: GUI_WHITE,
                 cmd: GuiCmd::Rectangle {
                     style: GuiControlStyle::Window,
-                    rect: GuiRect::from_xywh((0.0, 5.0), (0.0, 5.0), (0.4, -5.0), (0.4, -5.0)),
-                }
+                    rect: GuiRect::from_xywh((0.0, 5.0), (0.0, 5.0), (0.0, 32.0), (0.0, 32.0)),
+                },
             });
             fc.end_region();
             let mut fc = RenderingContext::frame_goto_pass(fc);

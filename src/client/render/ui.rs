@@ -1,5 +1,6 @@
 use crate::client::config::Config;
 use crate::client::render::resources::RenderingResources;
+use crate::client::render::ui::shaders::UiVertex;
 use crate::client::render::vkhelpers::{make_pipe_depthstencil, OwnedBuffer, VulkanDeviceObject};
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles, INFLIGHT_FRAMES};
 use crate::client::render::{InPassFrameContext, PrePassFrameContext, RenderingContext};
@@ -10,7 +11,6 @@ use rayon::prelude::*;
 use std::ffi::CString;
 use std::sync::Arc;
 use vk_mem as vma;
-use crate::client::render::ui::shaders::UiVertex;
 
 pub mod z {
     pub const GUI_Z_OFFSET_BG: i32 = 0;
@@ -49,9 +49,9 @@ enum ControlStyleRenderInfo {
 
 impl GuiControlStyle {
     fn render_info(self) -> ControlStyleRenderInfo {
-        let p = |x| (x as f32)/128.0;
+        let p = |x| (x as f32) / 128.0;
         match self {
-            _ => ControlStyleRenderInfo::LRTB([p(48), p(80), p(0), p(32)])
+            _ => ControlStyleRenderInfo::LRTB([p(48), p(80), p(0), p(32)]),
         }
     }
 }
@@ -75,7 +75,10 @@ pub struct GuiVec2(GuiCoord, GuiCoord);
 
 impl GuiVec2 {
     pub fn to_absolute_from_dim(self, dimensions: (u32, u32)) -> Vector2<f32> {
-        vec2(self.0.to_absolute_from_dim(dimensions.0), self.1.to_absolute_from_dim(dimensions.1))
+        vec2(
+            self.0.to_absolute_from_dim(dimensions.0),
+            self.1.to_absolute_from_dim(dimensions.1),
+        )
     }
 
     pub fn to_absolute_from_rctx(self, rctx: &RenderingContext) -> Vector2<f32> {
@@ -99,16 +102,22 @@ impl GuiRect {
     pub fn from_xywh(x: (f32, f32), y: (f32, f32), w: (f32, f32), h: (f32, f32)) -> Self {
         Self {
             top_left: gv2(x, y),
-            bottom_right: gv2((x.0+w.0, x.1+w.1), (y.0+h.0, y.1+h.1)),
+            bottom_right: gv2((x.0 + w.0, x.1 + w.1), (y.0 + h.0, y.1 + h.1)),
         }
     }
 
     pub fn to_absolute_from_dim(self, dimensions: (u32, u32)) -> (Vector2<f32>, Vector2<f32>) {
-        (self.top_left.to_absolute_from_dim(dimensions), self.bottom_right.to_absolute_from_dim(dimensions))
+        (
+            self.top_left.to_absolute_from_dim(dimensions),
+            self.bottom_right.to_absolute_from_dim(dimensions),
+        )
     }
 
     pub fn to_absolute_from_rctx(self, rctx: &RenderingContext) -> (Vector2<f32>, Vector2<f32>) {
-        (self.top_left.to_absolute_from_rctx(rctx), self.bottom_right.to_absolute_from_rctx(rctx))
+        (
+            self.top_left.to_absolute_from_rctx(rctx),
+            self.bottom_right.to_absolute_from_rctx(rctx),
+        )
     }
 }
 
@@ -156,37 +165,47 @@ impl GuiVtxWriter {
         self.indxs.clear();
     }
 
-    fn put_rect(&mut self, top_left: Vector2<f32>, bottom_right: Vector2<f32>, texture_tl: Vector2<f32>, texture_br: Vector2<f32>, texture_z: f32, texselect: i32, color: [f32; 4]) {
+    fn put_rect(
+        &mut self,
+        top_left: Vector2<f32>,
+        bottom_right: Vector2<f32>,
+        texture_tl: Vector2<f32>,
+        texture_br: Vector2<f32>,
+        texture_z: f32,
+        texselect: i32,
+        color: [f32; 4],
+    ) {
         let idx = self.verts.len() as u32;
         // top-left
-        self.verts.push(UiVertex{
+        self.verts.push(UiVertex {
             position: [top_left.x, top_left.y],
             color,
             texcoord: [texture_tl.x, texture_tl.y, texture_z],
-            texselect
+            texselect,
         });
         // bottom-left
-        self.verts.push(UiVertex{
+        self.verts.push(UiVertex {
             position: [top_left.x, bottom_right.y],
             color,
             texcoord: [texture_tl.x, texture_br.y, texture_z],
-            texselect
+            texselect,
         });
         // top-right
-        self.verts.push(UiVertex{
+        self.verts.push(UiVertex {
             position: [bottom_right.x, top_left.y],
             color,
             texcoord: [texture_br.x, texture_tl.y, texture_z],
-            texselect
+            texselect,
         });
         // bottom-right
-        self.verts.push(UiVertex{
+        self.verts.push(UiVertex {
             position: [bottom_right.x, bottom_right.y],
             color,
             texcoord: [texture_br.x, texture_br.y, texture_z],
-            texselect
+            texselect,
         });
-        self.indxs.extend_from_slice(&[idx, idx+1, idx+2, idx+3, u32::max_value()]);
+        self.indxs
+            .extend_from_slice(&[idx, idx + 1, idx + 2, idx + 3, u32::max_value()]);
     }
 }
 
@@ -202,7 +221,15 @@ impl GuiOrderedCmd {
                 let absrect = rect.to_absolute_from_rctx(rctx);
                 match style.render_info() {
                     ControlStyleRenderInfo::LRTB(lrtb) => {
-                        writer.put_rect(absrect.0, absrect.1, vec2(lrtb[0], lrtb[2]), vec2(lrtb[1], lrtb[3]), 0.0, TEXSELECT_GUI, color);
+                        writer.put_rect(
+                            absrect.0,
+                            absrect.1,
+                            vec2(lrtb[0], lrtb[2]),
+                            vec2(lrtb[1], lrtb[3]),
+                            0.0,
+                            TEXSELECT_GUI,
+                            color,
+                        );
                     }
                 }
             }
@@ -238,7 +265,7 @@ pub struct GuiRenderer {
     pub pipeline: vk::Pipeline,
     pub gui_frame_pool: Vec<GuiFrame>,
     pub gui_buffers: Vec<(OwnedBuffer, OwnedBuffer)>,
-    gui_vtx_write: GuiVtxWriter
+    gui_vtx_write: GuiVtxWriter,
 }
 
 impl GuiRenderer {
@@ -474,7 +501,7 @@ impl GuiRenderer {
             pipeline,
             gui_frame_pool,
             gui_buffers,
-            gui_vtx_write: Default::default()
+            gui_vtx_write: Default::default(),
         }
     }
 
@@ -546,17 +573,21 @@ impl GuiRenderer {
         let (vbuf, ibuf) = &self.gui_buffers[fctx.inflight_index];
         {
             let vmalloc = fctx.rctx.handles.vmalloc.lock();
-            let (va,_vai) = vbuf.allocation.as_ref().unwrap();
-            let (ia,_iai) = ibuf.allocation.as_ref().unwrap();
+            let (va, _vai) = vbuf.allocation.as_ref().unwrap();
+            let (ia, _iai) = ibuf.allocation.as_ref().unwrap();
             let vmap = vmalloc.map_memory(va).unwrap() as *mut shaders::UiVertex;
             let imap = vmalloc.map_memory(ia).unwrap() as *mut u32;
             unsafe {
-                std::ptr::copy_nonoverlapping(self.gui_vtx_write.verts.as_ptr(),
+                std::ptr::copy_nonoverlapping(
+                    self.gui_vtx_write.verts.as_ptr(),
                     vmap,
-                    self.gui_vtx_write.verts.len());
-                std::ptr::copy_nonoverlapping(self.gui_vtx_write.indxs.as_ptr(),
-                                              imap,
-                                              self.gui_vtx_write.indxs.len());
+                    self.gui_vtx_write.verts.len(),
+                );
+                std::ptr::copy_nonoverlapping(
+                    self.gui_vtx_write.indxs.as_ptr(),
+                    imap,
+                    self.gui_vtx_write.indxs.len(),
+                );
             }
             vmalloc.unmap_memory(va).unwrap();
             vmalloc.unmap_memory(ia).unwrap();

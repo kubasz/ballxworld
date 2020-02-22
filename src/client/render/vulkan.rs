@@ -163,8 +163,7 @@ impl<'r, Stage: FrameStage> FrameContext<'r, Stage> {
                 .color(color)
                 .label_name(name.as_c_str());
             unsafe {
-                ext_debug
-                    .cmd_begin_debug_utils_label(self.cmd, &label);
+                ext_debug.cmd_begin_debug_utils_label(self.cmd, &label);
             }
         }
     }
@@ -188,8 +187,7 @@ impl<'r, Stage: FrameStage> FrameContext<'r, Stage> {
                 .color(color)
                 .label_name(name.as_c_str());
             unsafe {
-                ext_debug
-                    .cmd_insert_debug_utils_label(self.cmd, &label);
+                ext_debug.cmd_insert_debug_utils_label(self.cmd, &label);
             }
         }
     }
@@ -512,7 +510,11 @@ impl RenderingHandles {
         entry: &ash::Entry,
         window: &Window,
         cfg: &Config,
-    ) -> (ash::Instance, Option<ash::extensions::ext::DebugUtils>, Option<DebugExts>) {
+    ) -> (
+        ash::Instance,
+        Option<ash::extensions::ext::DebugUtils>,
+        Option<DebugExts>,
+    ) {
         let app_name = CString::new("BallX World").unwrap();
         let engine_name = CString::new("BallX World Engine").unwrap();
 
@@ -668,7 +670,8 @@ impl RenderingHandles {
         }
         if let Some(ext_debug) = ext_debug {
             unsafe {
-                debug_utils.unwrap()
+                debug_utils
+                    .unwrap()
                     .destroy_debug_utils_messenger(ext_debug.debug_messenger, allocation_cbs());
             }
         }

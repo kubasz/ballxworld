@@ -23,11 +23,7 @@ pub fn name_vk_object<F: Fn() -> S, S>(
             .object_handle(raw_handle)
             .object_type(obj_type)
             .object_name(name.as_c_str());
-        unsafe {
-            ext_debug
-                .debug_utils_set_object_name(handles.device.handle(), &ni)
-        }
-        .unwrap();
+        unsafe { ext_debug.debug_utils_set_object_name(handles.device.handle(), &ni) }.unwrap();
     }
 }
 
@@ -236,11 +232,7 @@ impl<'h> FenceGuard<'h> {
                 .object_handle(fence.as_raw())
                 .object_type(vk::ObjectType::FENCE)
                 .object_name(name.as_c_str());
-            unsafe {
-                ext_debug
-                    .debug_utils_set_object_name(handles.device.handle(), &ni)
-            }
-            .unwrap();
+            unsafe { ext_debug.debug_utils_set_object_name(handles.device.handle(), &ni) }.unwrap();
         }
         Self { handles, fence }
     }
