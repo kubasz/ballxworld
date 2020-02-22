@@ -3,6 +3,7 @@
 use crate::client::config::Config;
 use crate::client::input::InputManager;
 use crate::client::render::resources::RenderingResources;
+use crate::client::render::ui::GuiRenderer;
 use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::client::world::{CameraSettings, ClientWorld};
 use crate::math::*;
@@ -58,6 +59,7 @@ pub fn client_main() {
     let mut rctx = RenderingContext::new(&sdl_vid, &cfg);
     let rres = Arc::new(RenderingResources::load(&cfg, &mut rctx));
     let mut vctx = VoxelRenderer::new(&cfg, &mut rctx, rres.clone());
+    let mut guictx = GuiRenderer::new(&cfg, &mut rctx, rres.clone());
 
     let mut frametimes = VecDeque::new();
     let frametime_count: usize = 100;
@@ -183,6 +185,7 @@ pub fn client_main() {
             let mut fc = RenderingContext::frame_goto_pass(fc);
             fc.begin_region([0.3, 0.3, 0.8, 1.0], || "vctx.inpass_draw");
             vctx.inpass_draw(&mut fc);
+            guictx.inpass_draw(&mut fc);
             fc.end_region();
             let fc = RenderingContext::frame_goto_postpass(fc);
             fc.insert_label([0.1, 0.8, 0.1, 1.0], || "frame_finish");
@@ -232,15 +235,13 @@ pub fn client_main() {
                     ..
                 } = &rc.hit
                 {
-                    if normal_datum
+                    if !click_place {
+                        click_pos = Some(*position);
+                    } else if normal_datum
                         .map(|d| !world.vregistry.get_definition_from_id(d).has_hitbox)
                         .unwrap_or(false)
                     {
-                        if click_place {
-                            click_pos = Some(*position + normal.to_vec());
-                        } else {
-                            click_pos = Some(*position);
-                        }
+                        click_pos = Some(*position + normal.to_vec());
                     }
                 }
             }
@@ -257,6 +258,7 @@ pub fn client_main() {
     }
 
     vctx.destroy(&rctx.handles);
+    guictx.destroy(&rctx.handles);
     Arc::try_unwrap(rres)
         .unwrap_or_else(|_| panic!("Handle still held to resource manager"))
         .destroy(&rctx.handles);

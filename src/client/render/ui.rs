@@ -1,12 +1,12 @@
 use crate::client::config::Config;
-use crate::client::render::vkhelpers::{cmd_push_struct_constants, make_pipe_depthstencil, OwnedImage};
+use crate::client::render::resources::RenderingResources;
+use crate::client::render::vkhelpers::make_pipe_depthstencil;
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles};
 use crate::client::render::{InPassFrameContext, RenderingContext};
 use crate::math::*;
 use ash::version::DeviceV1_0;
 use ash::vk;
 use std::ffi::CString;
-use crate::client::render::resources::RenderingResources;
 use std::sync::Arc;
 
 pub mod shaders {
@@ -74,10 +74,109 @@ pub struct GuiRenderer {
 }
 
 impl GuiRenderer {
-    pub fn new(_cfg: &Config, rctx: &mut RenderingContext, resources: Arc<RenderingResources>) -> Self {
-        let pipeline_layot = {
+    pub fn new(
+        _cfg: &Config,
+        rctx: &mut RenderingContext,
+        resources: Arc<RenderingResources>,
+    ) -> Self {
+        let texture_ds_layout = {
+            let samplers = [
+                resources.gui_sampler,
+                resources.gui_sampler,
+                resources.voxel_texture_sampler,
+            ];
+            let binds = [
+                vk::DescriptorSetLayoutBinding::builder()
+                    .binding(0)
+                    .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .immutable_samplers(&samplers[0..=0])
+                    .descriptor_count(1)
+                    .build(),
+                vk::DescriptorSetLayoutBinding::builder()
+                    .binding(1)
+                    .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .immutable_samplers(&samplers[1..=1])
+                    .descriptor_count(1)
+                    .build(),
+                vk::DescriptorSetLayoutBinding::builder()
+                    .binding(2)
+                    .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .immutable_samplers(&samplers[2..=2])
+                    .descriptor_count(1)
+                    .build(),
+            ];
+            let dsci = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&binds);
+            unsafe {
+                rctx.handles
+                    .device
+                    .create_descriptor_set_layout(&dsci, allocation_cbs())
+            }
+            .expect("Could not create GUI descriptor set layout")
+        };
+
+        let ds_pool = {
+            let szs = [vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: 3,
+            }];
+            let dspi = vk::DescriptorPoolCreateInfo::builder()
+                .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
+                .max_sets(1)
+                .pool_sizes(&szs);
+            unsafe {
+                rctx.handles
+                    .device
+                    .create_descriptor_pool(&dspi, allocation_cbs())
+            }
+            .expect("Could not create GUI descriptor pool")
+        };
+
+        let texture_ds = {
+            let lay = [texture_ds_layout];
+            let dai = vk::DescriptorSetAllocateInfo::builder()
+                .descriptor_pool(ds_pool)
+                .set_layouts(&lay);
+            unsafe { rctx.handles.device.allocate_descriptor_sets(&dai) }
+                .expect("Could not allocate GUI texture descriptor")[0]
+        };
+
+        // write to texture DS
+        {
+            let ii = [
+                vk::DescriptorImageInfo::builder()
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .image_view(resources.gui_atlas.image_view)
+                    .build(),
+                vk::DescriptorImageInfo::builder()
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .image_view(resources.font_atlas.image_view)
+                    .build(),
+                vk::DescriptorImageInfo::builder()
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .image_view(resources.voxel_texture_array.image_view)
+                    .build(),
+            ];
+            let wds = |i: usize| {
+                vk::WriteDescriptorSet::builder()
+                    .dst_set(texture_ds)
+                    .dst_binding(i as u32)
+                    .dst_array_element(0)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(&ii[i..=i])
+                    .build()
+            };
+            let dw = [wds(0), wds(1), wds(2)];
+            unsafe {
+                rctx.handles.device.update_descriptor_sets(&dw, &[]);
+            }
+        }
+
+        let pipeline_layout = {
             let pc = [];
-            let dsls = [];
+            let dsls = [texture_ds_layout];
             let lci = vk::PipelineLayoutCreateInfo::builder()
                 .set_layouts(&dsls)
                 .push_constant_ranges(&pc);
@@ -86,11 +185,11 @@ impl GuiRenderer {
                     .device
                     .create_pipeline_layout(&lci, allocation_cbs())
             }
-                .expect("Could not create voxel pipeline layout")
+            .expect("Could not create GUI pipeline layout")
         };
 
         // create pipeline
-        let gui_pipeline = {
+        let pipeline = {
             let vs = rctx
                 .handles
                 .load_shader_module("res/shaders/ui.vert.spv")
@@ -160,7 +259,7 @@ impl GuiRenderer {
                 .depth_stencil_state(&depthstencil)
                 .color_blend_state(&blending)
                 .dynamic_state(&dyn_state)
-                .layout(pipeline_layot)
+                .layout(pipeline_layout)
                 .render_pass(rctx.handles.mainpass)
                 .subpass(0)
                 .base_pipeline_handle(vk::Pipeline::null())
@@ -174,7 +273,7 @@ impl GuiRenderer {
                     allocation_cbs(),
                 )
             }
-                .expect("Could not create atmosphere pipeline")[0];
+            .expect("Could not create GUI pipeline")[0];
 
             unsafe {
                 rctx.handles
@@ -189,11 +288,11 @@ impl GuiRenderer {
 
         Self {
             resources,
-            texture_ds: Default::default(),
-            texture_ds_layout: Default::default(),
-            ds_pool: Default::default(),
+            texture_ds,
+            texture_ds_layout,
+            ds_pool,
             pipeline_layout,
-            pipeline
+            pipeline,
         }
     }
 
@@ -205,48 +304,25 @@ impl GuiRenderer {
             handles
                 .device
                 .destroy_pipeline_layout(self.pipeline_layout, allocation_cbs());
-            handles.device.destroy_descriptor_pool(self.ds_pool, allocation_cbs());
-            handles.device.destroy_descriptor_set_layout(self.texture_ds_layout, allocation_cbs());
+            handles
+                .device
+                .destroy_descriptor_pool(self.ds_pool, allocation_cbs());
+            handles
+                .device
+                .destroy_descriptor_set_layout(self.texture_ds_layout, allocation_cbs());
         }
     }
 
     #[allow(clippy::cast_ptr_alignment)]
-    pub fn inpass_draw(
-        &mut self,
-        fctx: &mut InPassFrameContext,
-        mview: Matrix4<f32>,
-        mproj: Matrix4<f32>,
-    ) {
-        let ubo = {
-            let mut ubo = shaders::SkyUBO::default();
-            let proj = mproj;
-            let mut view = mview;
-            view.set_column(3, &vec4(0.0, 0.0, 0.0, 1.0));
-            ubo.viewproj = (proj * view).into();
-            ubo
-        };
-
+    pub fn inpass_draw(&mut self, fctx: &mut InPassFrameContext) {
         let device = &fctx.rctx.handles.device;
 
         unsafe {
-            device.cmd_bind_pipeline(fctx.cmd, vk::PipelineBindPoint::GRAPHICS, self.sky_pipeline);
+            device.cmd_bind_pipeline(fctx.cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
         }
         fctx.rctx
             .swapchain
             .dynamic_state
             .cmd_update_pipeline(device, fctx.cmd);
-
-        cmd_push_struct_constants(
-            device,
-            fctx.cmd,
-            self.sky_pipeline_layout,
-            vk::ShaderStageFlags::VERTEX,
-            0,
-            &ubo,
-        );
-        unsafe {
-            device.cmd_draw(fctx.cmd, 36, 1, 0, 0);
-        }
     }
 }
-

@@ -22,7 +22,7 @@ pub struct AtmosphereRenderer {
 
 impl AtmosphereRenderer {
     pub fn new(_cfg: &Config, rctx: &mut RenderingContext) -> Self {
-        let pipeline_layot = {
+        let pipeline_layout = {
             let pc = [vk::PushConstantRange {
                 stage_flags: vk::ShaderStageFlags::VERTEX,
                 offset: 0,
@@ -104,7 +104,7 @@ impl AtmosphereRenderer {
                 .depth_stencil_state(&depthstencil)
                 .color_blend_state(&blending)
                 .dynamic_state(&dyn_state)
-                .layout(pipeline_layot)
+                .layout(pipeline_layout)
                 .render_pass(rctx.handles.mainpass)
                 .subpass(0)
                 .base_pipeline_handle(vk::Pipeline::null())
@@ -132,7 +132,7 @@ impl AtmosphereRenderer {
         };
 
         Self {
-            sky_pipeline_layout: pipeline_layot,
+            sky_pipeline_layout: pipeline_layout,
             sky_pipeline,
         }
     }

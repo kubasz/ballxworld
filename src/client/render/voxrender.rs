@@ -374,7 +374,7 @@ impl VoxelRenderer {
             v
         };
 
-        let pipeline_layot = {
+        let pipeline_layout = {
             let pc = vox::VoxelPC::pc_ranges();
             let dsls = [uniform_ds_layout, texture_ds_layout];
             let lci = vk::PipelineLayoutCreateInfo::builder()
@@ -455,7 +455,7 @@ impl VoxelRenderer {
                 .depth_stencil_state(&depthstencil)
                 .color_blend_state(&blending)
                 .dynamic_state(&dyn_state)
-                .layout(pipeline_layot)
+                .layout(pipeline_layout)
                 .render_pass(rctx.handles.mainpass)
                 .subpass(0)
                 .base_pipeline_handle(vk::Pipeline::null())
@@ -491,7 +491,7 @@ impl VoxelRenderer {
             uniform_dss,
             ds_pool,
             world: None,
-            voxel_pipeline_layout: pipeline_layot,
+            voxel_pipeline_layout: pipeline_layout,
             voxel_pipeline,
             atmosphere_renderer: AtmosphereRenderer::new(cfg, rctx),
             drawn_chunks: FnvHashMap::default(),
