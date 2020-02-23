@@ -34,6 +34,7 @@ pub mod vox {
     pub struct ChunkBuffers {
         pub vertices: Vec<VoxelVertex>,
         pub indices: Vec<u32>,
+        pub dirty: u64,
     }
 
     #[derive(Copy, Clone, Default)]
@@ -659,9 +660,7 @@ impl VoxelRenderer {
             }
 
             for rr in chunk_objs_to_add.drain(..) {
-                // give a chance to release the lock to a writer on each iteration
-                let voxels = world.voxels.read();
-                let mesh = mesh_from_chunk(&world, &voxels, rr.pos, rr.lod, texture_dim);
+                let mesh = mesh_from_chunk(&world, rr.pos, rr.lod, texture_dim);
                 if mesh.is_none() {
                     done_chunks.push(rr);
                     continue;
@@ -754,7 +753,7 @@ impl VoxelRenderer {
 
                     DrawnChunk {
                         cpos: rr.pos,
-                        last_dirty: voxels.chunks.get(&rr.pos).unwrap().dirty,
+                        last_dirty: mesh.dirty,
                         buffer,
                         lod: rr.lod,
                         istart: v_tot_sz,
@@ -764,7 +763,7 @@ impl VoxelRenderer {
                 } else {
                     DrawnChunk {
                         cpos: rr.pos,
-                        last_dirty: voxels.chunks.get(&rr.pos).unwrap().dirty,
+                        last_dirty: mesh.dirty,
                         buffer: OwnedBuffer::new(),
                         lod: rr.lod,
                         istart: 0,

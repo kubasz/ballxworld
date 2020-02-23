@@ -22,12 +22,13 @@ struct CubeSide {
 #[allow(clippy::cognitive_complexity)]
 pub fn mesh_from_chunk(
     world: &World,
-    voxels: &WVoxels,
     cpos: ChunkPosition,
     lod: u32,
     texture_dim: (u32, u32),
 ) -> Option<ChunkBuffers> {
     debug_assert!((1u32 << lod) <= CHUNK_DIM as u32);
+    let voxels = world.voxels.read();
+    let dirty = voxels.chunks.get(&cpos).map(|c| c.dirty).unwrap_or(0);
     let registry: &VoxelRegistry = &world.vregistry;
     {
         let chk = voxels.chunks.get(&cpos)?;
@@ -38,6 +39,7 @@ pub fn mesh_from_chunk(
                 return Some(ChunkBuffers {
                     indices: Vec::new(),
                     vertices: Vec::new(),
+                    dirty,
                 });
             }
         }
@@ -45,8 +47,9 @@ pub fn mesh_from_chunk(
     let mut vcache = world.get_vcache();
     let mut chunks: SmallVec<[&UncompressedChunk; 32]> = SmallVec::new();
     for (y, z, x) in iproduct!(-1..=1, -1..=1, -1..=1) {
-        vcache.ensure_newest_cached(voxels, cpos + vec3(x, y, z))?;
+        vcache.ensure_newest_cached(&voxels, cpos + vec3(x, y, z))?;
     }
+    drop(voxels);
     for (y, z, x) in iproduct!(-1..=1, -1..=1, -1..=1) {
         chunks.push(
             vcache
@@ -225,6 +228,7 @@ pub fn mesh_from_chunk(
     Some(ChunkBuffers {
         vertices: vbuf,
         indices: ibuf,
+        dirty,
     })
 }
 
