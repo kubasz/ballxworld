@@ -5,7 +5,7 @@ use crate::client::render::vkhelpers::{
 use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::vk;
 use ash::vk::Handle;
-use ash::vk_make_version;
+use ash::vk::make_version;
 use num_traits::clamp;
 use parking_lot::{Mutex, MutexGuard};
 use sdl2::video::Window;
@@ -273,7 +273,7 @@ impl RenderingHandles {
                     .contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE)
                     && unsafe {
                         ext_surface
-                            .get_physical_device_surface_support(physical, *i as u32, surface)
+                            .get_physical_device_surface_support(physical, *i as u32, surface).unwrap_or(false)
                     }
             })
             .map(|(i, q)| (i as u32, q))
@@ -570,9 +570,9 @@ impl RenderingHandles {
         let enabled_layers: Vec<*const c_char> = raw_layers.iter().map(|s| s.as_ptr()).collect();
 
         let ai = vk::ApplicationInfo::builder()
-            .api_version(vk_make_version!(1, 1, 0))
-            .application_version(vk_make_version!(1, 0, 0))
-            .engine_version(vk_make_version!(1, 0, 0))
+            .api_version(make_version(1, 1, 0))
+            .application_version(make_version(1, 0, 0))
+            .engine_version(make_version(1, 0, 0))
             .application_name(&app_name)
             .engine_name(&engine_name);
         let ici = vk::InstanceCreateInfo::builder()
