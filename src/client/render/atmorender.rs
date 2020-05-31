@@ -4,8 +4,7 @@ use crate::client::render::vulkan::{allocation_cbs, RenderingHandles};
 use crate::client::render::{InPassFrameContext, RenderingContext};
 use ash::version::DeviceV1_0;
 use ash::vk;
-use bxw_util::*;
-use math::*;
+use bxw_util::math::*;
 use std::ffi::CString;
 
 pub mod shaders {

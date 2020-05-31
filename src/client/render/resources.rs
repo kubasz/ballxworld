@@ -7,7 +7,7 @@ use ash::vk;
 use bxw_util::*;
 use fnv::FnvHashMap;
 use image::RgbaImage;
-use math::*;
+use bxw_util::math::*;
 use regex::{Match, Regex};
 use std::path::{Path, PathBuf};
 use vk_mem as vma;

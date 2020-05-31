@@ -12,7 +12,7 @@ use ash::version::DeviceV1_0;
 use ash::vk;
 use bxw_util::*;
 use fnv::{FnvHashMap, FnvHashSet};
-use math::*;
+use bxw_util::math::*;
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use smallvec::SmallVec;
@@ -27,6 +27,7 @@ use vk_mem as vma;
 use world::ecs::{CLocation, ECSHandler};
 use world::{blockidx_from_blockpos, chunkpos_from_blockpos, World};
 use world::{ChunkPosition, CHUNK_DIM};
+use bxw_util::math::vec3;
 
 pub mod vox {
     use crate::offset_of;
