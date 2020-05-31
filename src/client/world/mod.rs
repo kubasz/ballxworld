@@ -1,7 +1,6 @@
-use crate::world::ecs::ValidEntityID;
-use crate::world::{VoxelRegistry, World};
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::sync::Arc;
+use world::ecs::ValidEntityID;
+use world::{VoxelRegistry, World};
 
 #[derive(Clone, Debug)]
 pub enum CameraSettings {
@@ -15,10 +14,10 @@ pub struct ClientWorld {
 }
 
 impl ClientWorld {
-    pub fn new_world(name: String, registry: Arc<VoxelRegistry>) -> World {
-        let mut world = World::new(name, registry, None);
+    pub fn new_world(name: String, registry: Arc<VoxelRegistry>) -> (World, ClientWorld) {
+        let mut world = World::new(name, registry);
         let entities = world.entities.get_mut();
-        let local_player = crate::world::entities::player::create_player(
+        let local_player = world::entities::player::create_player(
             &mut entities.ecs,
             true,
             String::from("@local_player"),
@@ -30,21 +29,6 @@ impl ClientWorld {
                 yaw: 0.0,
             },
         };
-        world.client_world = Some(RwLock::new(cw));
-        world
-    }
-
-    pub fn read(w: &World) -> RwLockReadGuard<ClientWorld> {
-        w.client_world
-            .as_ref()
-            .expect("Trying to access client world from server-side")
-            .read()
-    }
-
-    pub fn write(w: &World) -> RwLockWriteGuard<ClientWorld> {
-        w.client_world
-            .as_ref()
-            .expect("Trying to access client world from server-side")
-            .write()
+        (world, cw)
     }
 }

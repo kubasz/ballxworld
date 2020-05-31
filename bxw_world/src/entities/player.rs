@@ -1,4 +1,4 @@
-use crate::world::ecs::*;
+use crate::ecs::*;
 
 pub fn create_player(entities: &mut ECS, local: bool, name: String) -> ValidEntityID {
     let id = entities.add_new_entity(if local {

@@ -7,14 +7,12 @@ use crate::client::render::vkhelpers::{
 use crate::client::render::voxmesh::mesh_from_chunk;
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles, INFLIGHT_FRAMES};
 use crate::client::render::*;
-use crate::client::world::{CameraSettings, ClientWorld};
-use crate::math::*;
-use crate::world::ecs::{CLocation, ECSHandler};
-use crate::world::{blockidx_from_blockpos, chunkpos_from_blockpos, World};
-use crate::world::{ChunkPosition, CHUNK_DIM};
+use crate::client::world::CameraSettings;
 use ash::version::DeviceV1_0;
 use ash::vk;
+use bxw_util::*;
 use fnv::{FnvHashMap, FnvHashSet};
+use math::*;
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use smallvec::SmallVec;
@@ -26,6 +24,9 @@ use std::sync::{mpsc, Weak};
 use std::thread;
 use thread_local::CachedThreadLocal;
 use vk_mem as vma;
+use world::ecs::{CLocation, ECSHandler};
+use world::{blockidx_from_blockpos, chunkpos_from_blockpos, World};
+use world::{ChunkPosition, CHUNK_DIM};
 
 pub mod vox {
     use crate::offset_of;
@@ -806,9 +807,11 @@ impl VoxelRenderer {
         let ref_pos; // TODO: Add velocity-based position prediction
         let ref_fdir;
         {
-            let client = ClientWorld::read(world);
             let entities = world.entities.read();
-            let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
+            let lp_loc: &CLocation = entities
+                .ecs
+                .get_component(fctx.client_world.local_player)
+                .unwrap();
             ref_pos = lp_loc.position;
             let mrot = glm::quat_to_mat3(&lp_loc.orientation).transpose();
             ref_fdir = mrot * vec3(0.0, 0.0, 1.0);
@@ -911,7 +914,7 @@ impl VoxelRenderer {
         let mut fwd: Vector3<f32> = zero();
         let mut player_pos = zero();
         let mview = if let Some(world) = &self.world {
-            let client = ClientWorld::read(world);
+            let client = fctx.client_world;
             let entities = world.entities.read();
             let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
             player_pos = lp_loc.position;
@@ -926,7 +929,7 @@ impl VoxelRenderer {
             }
 
             let voxels = world.voxels.read();
-            use crate::world::raycast;
+            use world::raycast;
             fwd = mrot.transpose() * vec3(0.0, 0.0, 1.0);
             let rc = raycast::RaycastQuery::new_directed(
                 player_pos,

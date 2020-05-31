@@ -1,16 +1,11 @@
 extern crate bindgen;
 
 use std::env;
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 
 fn main() {
-
-    let dirs = [
-        "c/src/include",
-        "c/src/vm",
-        "c/src/optional"
-    ];
+    let dirs = ["c/src/include", "c/src/vm", "c/src/optional"];
     let src = {
         let mut src = Vec::with_capacity(32);
         for dir in dirs.iter().map(|d| fs::read_dir(d).unwrap()) {
@@ -44,12 +39,9 @@ fn main() {
         .whitelist_type("Wren.*")
         .whitelist_function("wren.*")
         .whitelist_var("WREN.*")
-
         .opaque_type("WrenVM")
         .opaque_type("WrenHandle")
-
         .prepend_enum_name(false)
-        
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))

@@ -1,5 +1,6 @@
 use crate::client::render::RenderingContext;
-use crate::math::*;
+use bxw_util::*;
+use math::*;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;

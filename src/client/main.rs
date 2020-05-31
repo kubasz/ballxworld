@@ -9,17 +9,17 @@ use crate::client::render::ui::{
 };
 use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::client::world::{CameraSettings, ClientWorld};
-use crate::math::*;
-use crate::world;
-use crate::world::blocks::register_standard_blocks;
-use crate::world::ecs::{CLoadAnchor, CLocation, ECSHandler};
-use crate::world::generation::WorldLoadGen;
-use crate::world::{blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition};
+use bxw_util::*;
+use math::*;
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::io::{Read, Write};
 use std::sync::Arc;
+use world::blocks::register_standard_blocks;
+use world::ecs::{CLoadAnchor, CLocation, ECSHandler};
+use world::generation::WorldLoadGen;
+use world::{blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition};
 
 const PHYSICS_FRAME_TIME: f64 = 1.0 / 60.0;
 
@@ -74,12 +74,11 @@ pub fn client_main() {
     let frametime_count: usize = 100;
 
     let mut vxreg = world::registry::VoxelRegistry::new();
-    register_standard_blocks(&mut vxreg, Some(&vctx)); //FIXME
-    let world = ClientWorld::new_world("world".to_owned(), Arc::new(vxreg));
+    register_standard_blocks(&mut vxreg, &|nm| vctx.get_texture_id(nm)); //FIXME
+    let (world, mut client_world) = ClientWorld::new_world("world".to_owned(), Arc::new(vxreg));
     let world = Arc::new(world);
     {
-        let client = ClientWorld::read(&world);
-        let lp = client.local_player;
+        let lp = client_world.local_player;
         let mut ents = world.entities.write();
         let anchor: &mut CLoadAnchor = ents.ecs.get_component_mut(lp).unwrap();
         anchor.radius = cfg.performance_load_distance;
@@ -124,12 +123,11 @@ pub fn client_main() {
                 physics_frames
             };
 
-            let mut client = ClientWorld::write(&world);
-            let local_player = client.local_player;
+            let local_player = client_world.local_player;
 
             let (dyaw, dpitch) = (input_mgr.input_state.look.x, input_mgr.input_state.look.y);
             input_mgr.input_state.look = zero();
-            let CameraSettings::FPS { pitch, yaw } = &mut client.camera_settings;
+            let CameraSettings::FPS { pitch, yaw } = &mut client_world.camera_settings;
             *pitch -= dpitch / 60.0;
             *pitch = f32::min(f32::max(*pitch, -PI / 4.0), PI / 4.0);
             *yaw -= dyaw / 60.0;
@@ -187,7 +185,7 @@ pub fn client_main() {
             wgen.load_tick();
         }
 
-        if let Some(mut fc) = rctx.frame_begin_prepass(&cfg, frame_delta_time) {
+        if let Some(mut fc) = rctx.frame_begin_prepass(&cfg, &client_world, frame_delta_time) {
             fc.begin_region([0.7, 0.7, 0.1, 1.0], || "vctx.prepass_draw");
             vctx.prepass_draw(&mut fc);
             fc.end_region();
@@ -248,16 +246,18 @@ pub fn client_main() {
         let player_ang;
         {
             let voxels = world.voxels.read();
-            let client = ClientWorld::read(&world);
             let entities = world.entities.read();
-            let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
+            let lp_loc: &CLocation = entities
+                .ecs
+                .get_component(client_world.local_player)
+                .unwrap();
             player_pos = lp_loc.position;
             player_ang = lp_loc.orientation;
 
             let primary = input_mgr.input_state.primary_action.is_active();
             let secondary = input_mgr.input_state.secondary_action.is_active();
             if primary | secondary {
-                use crate::world::raycast;
+                use world::raycast;
                 let mview = glm::quat_to_mat3(&player_ang).transpose();
                 let fwd = mview * vec3(0.0, 0.0, 1.0);
                 let rc = raycast::RaycastQuery::new_directed(

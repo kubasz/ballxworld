@@ -1,13 +1,12 @@
-use crate::client::render::VoxelRenderer;
-use crate::world::registry::{VoxelDefinitionBuilder, VoxelRegistry};
-use crate::world::TextureMapping;
+use crate::registry::VoxelRegistry;
+use crate::TextureMapping;
 
-pub fn register_standard_blocks(vxreg: &mut VoxelRegistry, vctx: Option<&VoxelRenderer>) {
+pub fn register_standard_blocks(vxreg: &mut VoxelRegistry, texmapper: &dyn Fn(&str) -> u32) {
     vxreg
         .build_definition()
         .name("core:grass")
-        .opt_texture_names(
-            vctx,
+        .texture_names(
+            texmapper,
             TextureMapping::TiledTSB {
                 top: "grass_top",
                 side: "dirt_grass",
@@ -20,8 +19,8 @@ pub fn register_standard_blocks(vxreg: &mut VoxelRegistry, vctx: Option<&VoxelRe
     vxreg
         .build_definition()
         .name("core:snow_grass")
-        .opt_texture_names(
-            vctx,
+        .texture_names(
+            texmapper,
             TextureMapping::TiledTSB {
                 top: "snow",
                 side: "dirt_snow",
@@ -34,43 +33,29 @@ pub fn register_standard_blocks(vxreg: &mut VoxelRegistry, vctx: Option<&VoxelRe
     vxreg
         .build_definition()
         .name("core:dirt")
-        .opt_texture_names(vctx, TextureMapping::TiledSingle("dirt"))
+        .texture_names(texmapper, TextureMapping::TiledSingle("dirt"))
         .has_physical_properties()
         .finish()
         .unwrap();
     vxreg
         .build_definition()
         .name("core:stone")
-        .opt_texture_names(vctx, TextureMapping::TiledSingle("stone"))
+        .texture_names(texmapper, TextureMapping::TiledSingle("stone"))
         .has_physical_properties()
         .finish()
         .unwrap();
     vxreg
         .build_definition()
         .name("core:diamond_ore")
-        .opt_texture_names(vctx, TextureMapping::TiledSingle("stone_diamond"))
+        .texture_names(texmapper, TextureMapping::TiledSingle("stone_diamond"))
         .has_physical_properties()
         .finish()
         .unwrap();
     vxreg
         .build_definition()
         .name("core:water")
-        .opt_texture_names(vctx, TextureMapping::TiledSingle("water"))
+        .texture_names(texmapper, TextureMapping::TiledSingle("water"))
         .has_physical_properties()
         .finish()
         .unwrap();
-}
-
-trait OptionalTextureNames {
-    fn opt_texture_names(self, vctx: Option<&VoxelRenderer>, t: TextureMapping<&str>) -> Self;
-}
-
-impl OptionalTextureNames for VoxelDefinitionBuilder<'_> {
-    fn opt_texture_names(self, vctx: Option<&VoxelRenderer>, t: TextureMapping<&str>) -> Self {
-        if let Some(vctx) = vctx {
-            self.texture_names(vctx, t)
-        } else {
-            self
-        }
-    }
 }

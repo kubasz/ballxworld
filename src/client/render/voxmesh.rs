@@ -1,12 +1,13 @@
 use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
-use crate::math::*;
-use crate::world::registry::VoxelRegistry;
-use crate::world::{
+use bxw_util::*;
+use itertools::iproduct;
+use math::*;
+use smallvec::SmallVec;
+use world::registry::VoxelRegistry;
+use world::{
     blockidx_from_blockpos, chunkpos_from_blockpos, ChunkPosition, UncompressedChunk, VChunkData,
     VoxelDatum, World, CHUNK_DIM,
 };
-use itertools::iproduct;
-use smallvec::SmallVec;
 
 struct CubeSide {
     // counter-clockwise coords of the face
@@ -182,7 +183,7 @@ pub fn mesh_from_chunk(
                     1.0,
                 ];
                 let texid;
-                use crate::world::TextureMapping;
+                use world::TextureMapping;
                 match &vdef.texture_mapping {
                     TextureMapping::TiledSingle(t) => {
                         texid = *t;

@@ -2,10 +2,12 @@ use crate::client::config::Config;
 use crate::client::render::vkhelpers::{
     identity_components, DynamicState, OwnedImage, VulkanDeviceObject,
 };
+use crate::client::world::ClientWorld;
 use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::vk;
-use ash::vk::Handle;
 use ash::vk::make_version;
+use ash::vk::Handle;
+use bxw_util::*;
 use num_traits::clamp;
 use parking_lot::{Mutex, MutexGuard};
 use sdl2::video::Window;
@@ -141,9 +143,10 @@ pub struct PostPassStage {}
 impl FrameStage for PostPassStage {}
 
 #[must_use]
-pub struct FrameContext<'r, Stage: FrameStage> {
+pub struct FrameContext<'r, 'cw, Stage: FrameStage> {
     pub rctx: &'r mut RenderingContext,
     pub cmd: vk::CommandBuffer,
+    pub client_world: &'cw ClientWorld,
     pub delta_time: f64,
     pub dims: [u32; 2],
     pub image_index: usize,
@@ -151,7 +154,7 @@ pub struct FrameContext<'r, Stage: FrameStage> {
     _phantom: PhantomData<Stage>,
 }
 
-impl<'r, Stage: FrameStage> FrameContext<'r, Stage> {
+impl<'r, 'cw, Stage: FrameStage> FrameContext<'r, 'cw, Stage> {
     pub fn begin_region<F: FnOnce() -> S, S>(&self, color: [f32; 4], name_fn: F)
     where
         S: Into<Vec<u8>>,
@@ -193,9 +196,9 @@ impl<'r, Stage: FrameStage> FrameContext<'r, Stage> {
     }
 }
 
-pub type PrePassFrameContext<'r> = FrameContext<'r, PrePassStage>;
-pub type InPassFrameContext<'r> = FrameContext<'r, InPassStage>;
-pub type PostPassFrameContext<'r> = FrameContext<'r, PostPassStage>;
+pub type PrePassFrameContext<'r, 'cw> = FrameContext<'r, 'cw, PrePassStage>;
+pub type InPassFrameContext<'r, 'cw> = FrameContext<'r, 'cw, InPassStage>;
+pub type PostPassFrameContext<'r, 'cw> = FrameContext<'r, 'cw, PostPassStage>;
 
 extern "system" fn debug_msg_callback(
     msg_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -273,7 +276,8 @@ impl RenderingHandles {
                     .contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE)
                     && unsafe {
                         ext_surface
-                            .get_physical_device_surface_support(physical, *i as u32, surface).unwrap_or(false)
+                            .get_physical_device_surface_support(physical, *i as u32, surface)
+                            .unwrap_or(false)
                     }
             })
             .map(|(i, q)| (i as u32, q))
@@ -1072,11 +1076,12 @@ impl RenderingContext {
 
     /// Returns None if e.g. swapchain is in the process of being recreated
     #[allow(clippy::modulo_one)] // There may only be one inflight frame configured
-    pub fn frame_begin_prepass(
+    pub fn frame_begin_prepass<'cw>(
         &mut self,
         cfg: &Config,
+        client_world: &'cw ClientWorld,
         delta_time: f64,
-    ) -> Option<PrePassFrameContext> {
+    ) -> Option<PrePassFrameContext<'_, 'cw>> {
         let device = &self.handles.device;
         let old_inflight_index = self.handles.inflight_index;
         self.handles.inflight_index = (self.handles.inflight_index + 1) % INFLIGHT_FRAMES;
@@ -1135,6 +1140,7 @@ impl RenderingContext {
         Some(PrePassFrameContext {
             rctx: self,
             cmd,
+            client_world,
             delta_time,
             dims,
             image_index: image_index as usize,
@@ -1143,10 +1149,13 @@ impl RenderingContext {
         })
     }
 
-    pub fn frame_goto_pass(fctx: PrePassFrameContext) -> InPassFrameContext {
+    pub fn frame_goto_pass<'r, 'cw>(
+        fctx: PrePassFrameContext<'r, 'cw>,
+    ) -> InPassFrameContext<'r, 'cw> {
         let PrePassFrameContext {
             rctx: me,
             cmd,
+            client_world,
             delta_time,
             dims,
             image_index,
@@ -1187,6 +1196,7 @@ impl RenderingContext {
         InPassFrameContext {
             rctx: me,
             cmd,
+            client_world,
             delta_time,
             dims,
             image_index,
@@ -1195,10 +1205,13 @@ impl RenderingContext {
         }
     }
 
-    pub fn frame_goto_postpass(fctx: InPassFrameContext) -> PostPassFrameContext {
+    pub fn frame_goto_postpass<'r, 'cw>(
+        fctx: InPassFrameContext<'r, 'cw>,
+    ) -> PostPassFrameContext<'r, 'cw> {
         let InPassFrameContext {
             rctx: me,
             cmd,
+            client_world,
             delta_time,
             dims,
             image_index,
@@ -1213,6 +1226,7 @@ impl RenderingContext {
         PostPassFrameContext {
             rctx: me,
             cmd,
+            client_world,
             delta_time,
             dims,
             image_index,

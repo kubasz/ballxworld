@@ -1,8 +1,9 @@
-use crate::math::*;
-use crate::world::{
+use crate::{
     blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition, Direction, VoxelDatum,
     WEntities, WVoxels, World, CHUNK_DIM,
 };
+use bxw_util::*;
+use math::*;
 
 #[derive(Clone)]
 pub struct RaycastQuery<'q> {

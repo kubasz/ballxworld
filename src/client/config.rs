@@ -1,3 +1,5 @@
+use bxw_util::*;
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub window_width: u32,

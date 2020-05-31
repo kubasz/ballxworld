@@ -6,11 +6,12 @@ pub mod raycast;
 pub mod registry;
 pub mod stdgen;
 
-use crate::math::*;
-use crate::world::ecs::ECS;
+use crate::ecs::ECS;
+use bxw_util::*;
 use divrem::{DivFloor, RemFloor};
 use fnv::FnvHashMap;
 use lru::LruCache;
+use math::*;
 use parking_lot::RwLock;
 pub use registry::VoxelRegistry;
 use std::cell::{RefCell, RefMut};
@@ -302,7 +303,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::world::{compress_rle, decompress_rle, CHUNK_DIM3};
+    use crate::{compress_rle, decompress_rle, CHUNK_DIM3};
 
     #[test]
     fn rle_compress_zero_test() {
@@ -338,6 +339,7 @@ mod test {
     fn rle_random_cmp() {
         let mut randdata = [0xFFFF_FFFFu32; CHUNK_DIM3];
         {
+            use bxw_util::*;
             use rand::prelude::*;
             use rand_xoshiro::Xoshiro256StarStar;
             let mut rng = Xoshiro256StarStar::seed_from_u64(1234);
@@ -426,8 +428,6 @@ impl VoxelDefinition {
     }
 }
 
-type ClientWorld = crate::client::world::ClientWorld;
-
 #[derive(Default)]
 pub struct WVoxels {
     pub chunks: FnvHashMap<ChunkPosition, VChunk>,
@@ -444,7 +444,6 @@ pub struct World {
     pub vcache: ThreadLocal<RefCell<VCache>>,
     pub voxels: RwLock<WVoxels>,
     pub entities: RwLock<WEntities>,
-    pub client_world: Option<RwLock<ClientWorld>>,
 }
 
 impl WVoxels {
@@ -506,18 +505,13 @@ impl WEntities {
 }
 
 impl World {
-    pub fn new(
-        name: String,
-        vregistry: Arc<VoxelRegistry>,
-        client_world: Option<RwLock<ClientWorld>>,
-    ) -> Self {
+    pub fn new(name: String, vregistry: Arc<VoxelRegistry>) -> Self {
         Self {
             name,
             vregistry,
             vcache: ThreadLocal::new(),
             voxels: RwLock::new(WVoxels::new()),
             entities: RwLock::new(WEntities::new()),
-            client_world,
         }
     }
 
