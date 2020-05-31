@@ -3,7 +3,7 @@ use crate::math::*;
 use crate::world::registry::VoxelRegistry;
 use crate::world::{
     blockidx_from_blockpos, chunkpos_from_blockpos, ChunkPosition, UncompressedChunk, VChunkData,
-    VoxelDatum, WVoxels, World, CHUNK_DIM,
+    VoxelDatum, World, CHUNK_DIM,
 };
 use itertools::iproduct;
 use smallvec::SmallVec;

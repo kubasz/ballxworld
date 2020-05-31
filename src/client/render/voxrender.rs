@@ -810,7 +810,7 @@ impl VoxelRenderer {
             let entities = world.entities.read();
             let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
             ref_pos = lp_loc.position;
-            let mrot = glm::quat_to_mat3(&-lp_loc.orientation).transpose();
+            let mrot = glm::quat_to_mat3(&lp_loc.orientation).transpose();
             ref_fdir = mrot * vec3(0.0, 0.0, 1.0);
         }
         let cposition = chunkpos_from_blockpos(ref_pos.map(|x| x as i32));
@@ -920,7 +920,7 @@ impl VoxelRenderer {
             let mrot: Matrix3<f32>;
             match client.camera_settings {
                 CameraSettings::FPS { .. } => {
-                    mrot = glm::quat_to_mat3(&-player_ang);
+                    mrot = glm::quat_to_mat3(&player_ang);
                     mview = mrot.to_homogeneous() * glm::translation(&-player_pos);
                 }
             }

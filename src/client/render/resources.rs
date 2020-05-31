@@ -147,7 +147,7 @@ impl RenderingResources {
     }
 
     fn new_texture_atlas(
-        cfg: &Config,
+        _cfg: &Config,
         rctx: &mut RenderingContext,
     ) -> (OwnedImage, TextureArrayParams, FnvHashMap<String, u32>) {
         use toml_edit::Document;

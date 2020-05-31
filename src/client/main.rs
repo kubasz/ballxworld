@@ -168,7 +168,7 @@ pub fn client_main() {
                 let qpitch = Quaternion::from_polar_decomposition(1.0, pitch, Vector3::x_axis());
                 lp_loc.orientation = UnitQuaternion::new_normalize(qpitch * qyaw);
 
-                let mview = glm::quat_to_mat3(&-lp_loc.orientation).transpose();
+                let mview = glm::quat_to_mat3(&lp_loc.orientation).transpose();
 
                 let mut wvel = Vector3::new(
                     input_mgr.input_state.walk.x,

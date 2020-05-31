@@ -255,6 +255,7 @@ impl GuiVtxWriter {
 
 const TEXSELECT_GUI: i32 = 0;
 const TEXSELECT_FONT: i32 = 1;
+#[allow(dead_code)] // TODO: Remove once voxels are rendered in gui
 const TEXSELECT_VOX: i32 = 2;
 
 impl GuiOrderedCmd {
