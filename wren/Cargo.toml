@@ -10,5 +10,5 @@ links = "wren"
 libc = "0.2"
 
 [build-dependencies]
-bindgen = "0.52"
+bindgen = "0.54"
 cc = { version = "1.0", features = ["parallel"] }

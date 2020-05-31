@@ -28,7 +28,9 @@ fn main() {
         builder.include(d);
     }
     let build = builder
-        .files(src.iter());
+        .files(src.iter())
+        .warnings(false)
+        .extra_warnings(false);
     build.compile("wren");
 
     // The bindgen::Builder is the main entry point
