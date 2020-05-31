@@ -180,9 +180,6 @@ impl RenderingResources {
             idim.0 = idim.0.max(dim1.0);
             idim.1 = idim.1.max(dim1.1);
             memimages.push(img);
-            if cfg.debug_logging {
-                eprintln!("Loaded {} from {:?}", nm, path);
-            }
         }
         let numimages = memimages.len() as u32;
 
