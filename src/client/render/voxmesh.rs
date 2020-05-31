@@ -1,7 +1,7 @@
 use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
+use bxw_util::math::*;
 use bxw_util::*;
 use itertools::iproduct;
-use bxw_util::math::*;
 use smallvec::SmallVec;
 use world::registry::VoxelRegistry;
 use world::{

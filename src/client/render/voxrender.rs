@@ -10,9 +10,10 @@ use crate::client::render::*;
 use crate::client::world::CameraSettings;
 use ash::version::DeviceV1_0;
 use ash::vk;
+use bxw_util::math::vec3;
+use bxw_util::math::*;
 use bxw_util::*;
 use fnv::{FnvHashMap, FnvHashSet};
-use bxw_util::math::*;
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use smallvec::SmallVec;
@@ -27,7 +28,6 @@ use vk_mem as vma;
 use world::ecs::{CLocation, ECSHandler};
 use world::{blockidx_from_blockpos, chunkpos_from_blockpos, World};
 use world::{ChunkPosition, CHUNK_DIM};
-use bxw_util::math::vec3;
 
 pub mod vox {
     use crate::offset_of;
@@ -539,8 +539,12 @@ impl VoxelRenderer {
                 .destroy_descriptor_set_layout(self.uniform_ds_layout, allocation_cbs());
             let mut vmalloc = handles.vmalloc.lock();
             self.ubuffer.destroy(&mut vmalloc, handles);
-            let vpool = Arc::try_unwrap(self.chunk_pool).or(Err(())).expect("Voxrender vmalloc pool has remaining users on destruction");
-            vmalloc.destroy_pool(&vpool.0).expect("Couldn't destroy voxrender vmalloc pool");
+            let vpool = Arc::try_unwrap(self.chunk_pool)
+                .or(Err(()))
+                .expect("Voxrender vmalloc pool has remaining users on destruction");
+            vmalloc
+                .destroy_pool(&vpool.0)
+                .expect("Couldn't destroy voxrender vmalloc pool");
         }
     }
 

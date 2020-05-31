@@ -846,7 +846,9 @@ impl Swapchain {
         let old_swapchain = self.swapchain;
         self.swapchain = unsafe { ext_swapchain.create_swapchain(&sci, allocation_cbs()) }
             .expect("Failed to create swapchain");
-        unsafe { ext_swapchain.destroy_swapchain(old_swapchain, allocation_cbs()); }
+        unsafe {
+            ext_swapchain.destroy_swapchain(old_swapchain, allocation_cbs());
+        }
 
         self.outdated = false;
 
