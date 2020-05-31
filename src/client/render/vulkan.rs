@@ -631,14 +631,17 @@ impl RenderingHandles {
         self.destroy_queue.lock()[self.inflight_index as usize].push(vdo);
     }
 
-    pub fn destroy(self) {
+    pub fn flush_destroy_queue(&self) {
         let mut vmalloc = self.vmalloc.lock();
         for queue in self.destroy_queue.lock().iter_mut() {
             for mut vdo in queue.drain(..) {
                 vdo.destroy(&mut vmalloc, &self);
             }
         }
-        drop(vmalloc);
+    }
+
+    pub fn destroy(self) {
+        self.flush_destroy_queue();
         let Self {
             instance,
             ext_surface,
@@ -744,13 +747,7 @@ impl Swapchain {
                 }
             }
         }
-        for img in self.swapimages.drain(..) {
-            if img != vk::Image::null() {
-                unsafe {
-                    handles.device.destroy_image(img, allocation_cbs());
-                }
-            }
-        }
+        // Don't destroy swapimages - they are owned by the swapchain object
         self.depth_image
             .destroy(&mut handles.vmalloc.lock(), handles);
         self.color_image
@@ -846,8 +843,10 @@ impl Swapchain {
             .old_swapchain(self.swapchain)
             .image_array_layers(1);
 
+        let old_swapchain = self.swapchain;
         self.swapchain = unsafe { ext_swapchain.create_swapchain(&sci, allocation_cbs()) }
             .expect("Failed to create swapchain");
+        unsafe { ext_swapchain.destroy_swapchain(old_swapchain, allocation_cbs()); }
 
         self.outdated = false;
 
@@ -920,7 +919,7 @@ impl Swapchain {
             let qfis = [handles.queues.get_primary_family()];
             let ici = vk::ImageCreateInfo::builder()
                 .image_type(vk::ImageType::TYPE_2D)
-                .format(vk::Format::R8G8B8A8_SRGB)
+                .format(handles.surface_format.format)
                 .extent(vk::Extent3D {
                     width: extent.width,
                     height: extent.height,
@@ -1000,37 +999,6 @@ impl Swapchain {
     }
 }
 
-impl Drop for RenderingContext {
-    fn drop(&mut self) {
-        if self.handles.device.handle() == vk::Device::null() {
-            return;
-        }
-        unsafe {
-            self.handles.device.device_wait_idle().unwrap();
-        }
-        if self.pipeline_cache != vk::PipelineCache::null() {
-            unsafe {
-                self.handles
-                    .device
-                    .destroy_pipeline_cache(self.pipeline_cache, allocation_cbs());
-            }
-            self.pipeline_cache = vk::PipelineCache::null();
-        }
-        self.inflight_cmds.clear();
-        if self.cmd_pool != vk::CommandPool::null() {
-            unsafe {
-                self.handles
-                    .device
-                    .destroy_command_pool(self.cmd_pool, allocation_cbs());
-            }
-            self.cmd_pool = vk::CommandPool::null();
-        }
-        unsafe {
-            ManuallyDrop::drop(&mut self.swapchain);
-        }
-    }
-}
-
 impl RenderingContext {
     pub fn new(sdl_video: &sdl2::VideoSubsystem, cfg: &Config) -> RenderingContext {
         let (window, handles) = RenderingHandles::new(sdl_video, cfg);
@@ -1072,6 +1040,38 @@ impl RenderingContext {
             inflight_cmds,
             pipeline_cache,
         }
+    }
+
+    pub fn destroy(mut self) {
+        if self.handles.device.handle() == vk::Device::null() {
+            return;
+        }
+        unsafe {
+            self.handles.device.device_wait_idle().unwrap();
+        }
+        self.handles.flush_destroy_queue();
+        if self.pipeline_cache != vk::PipelineCache::null() {
+            unsafe {
+                self.handles
+                    .device
+                    .destroy_pipeline_cache(self.pipeline_cache, allocation_cbs());
+            }
+            self.pipeline_cache = vk::PipelineCache::null();
+        }
+        self.inflight_cmds.clear();
+        if self.cmd_pool != vk::CommandPool::null() {
+            unsafe {
+                self.handles
+                    .device
+                    .destroy_command_pool(self.cmd_pool, allocation_cbs());
+            }
+            self.cmd_pool = vk::CommandPool::null();
+        }
+        unsafe {
+            self.swapchain.destroy_vk_objs(&self.handles, true);
+            ManuallyDrop::drop(&mut self.swapchain);
+        }
+        self.handles.destroy();
     }
 
     /// Returns None if e.g. swapchain is in the process of being recreated

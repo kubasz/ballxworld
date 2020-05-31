@@ -511,12 +511,14 @@ impl VoxelRenderer {
         unsafe {
             handles.device.device_wait_idle().unwrap();
         }
+        self.atmosphere_renderer.destroy(handles);
         for ch in self.work_receiver.get().unwrap().try_iter() {
             ch.1.enqueue_destroy(handles);
         }
         for (_cpos, ch) in self.drawn_chunks.drain() {
             ch.enqueue_destroy(handles);
         }
+        handles.flush_destroy_queue();
         unsafe {
             handles
                 .device
@@ -536,6 +538,8 @@ impl VoxelRenderer {
                 .destroy_descriptor_set_layout(self.uniform_ds_layout, allocation_cbs());
             let mut vmalloc = handles.vmalloc.lock();
             self.ubuffer.destroy(&mut vmalloc, handles);
+            let vpool = Arc::try_unwrap(self.chunk_pool).or(Err(())).expect("Voxrender vmalloc pool has remaining users on destruction");
+            vmalloc.destroy_pool(&vpool.0).expect("Couldn't destroy voxrender vmalloc pool");
         }
     }
 
@@ -1048,11 +1052,5 @@ impl VoxelRenderer {
         }
 
         self.atmosphere_renderer.inpass_draw(fctx, mview, mproj);
-    }
-}
-
-impl Drop for VoxelRenderer {
-    fn drop(&mut self) {
-        self.kill_threads();
     }
 }

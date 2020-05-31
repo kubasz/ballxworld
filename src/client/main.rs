@@ -304,4 +304,5 @@ pub fn client_main() {
     Arc::try_unwrap(rres)
         .unwrap_or_else(|_| panic!("Handle still held to resource manager"))
         .destroy(&rctx.handles);
+    rctx.destroy();
 }
