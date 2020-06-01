@@ -1,1 +1,1 @@
-paths = [".", "bxw_util", "bxw_world", "vk-sync-rs-master", "wren"]
+paths = [".", "bxw_util", "bxw_world", "vk-sync-rs-master"]
