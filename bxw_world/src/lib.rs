@@ -151,7 +151,7 @@ impl VCache {
             Some(())
         } else {
             if self.uncompressed_chunks.len() >= self.uncompressed_chunks.cap() {
-                let (k,v) = self.uncompressed_chunks.pop_lru().unwrap();
+                let (_k, _v) = self.uncompressed_chunks.pop_lru().unwrap();
             }
             self.uncompressed_chunks.put(cpos, newest.decompress());
             Some(())
