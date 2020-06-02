@@ -2,6 +2,7 @@ pub mod blocks;
 pub mod ecs;
 pub mod entities;
 pub mod generation;
+pub mod physics;
 pub mod raycast;
 pub mod registry;
 pub mod stdgen;
@@ -520,6 +521,6 @@ impl World {
     }
 
     pub fn physics_tick(&self) {
-        //
+        physics::world_physics_tick(self);
     }
 }

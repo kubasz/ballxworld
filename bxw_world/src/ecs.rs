@@ -178,7 +178,7 @@ impl<T> ComponentId<T> {
         Self(i, PhantomData)
     }
 
-    pub fn index(self) -> usize {
+    pub fn index(&self) -> usize {
         self.0
     }
 }
@@ -216,6 +216,31 @@ pub struct ECS {
     load_anchors: Vec<CLoadAnchor>,
 }
 
+pub struct ECSPhysicsIteratorMut<'e> {
+    it: std::slice::IterMut<'e, CPhysics>,
+    locs: &'e mut [CLocation],
+    ents: &'e mut HashMap<ValidEntityID, Entity>,
+}
+
+impl<'e> Iterator for ECSPhysicsIteratorMut<'e> {
+    type Item = (&'e mut CPhysics, &'e mut CLocation);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let nxt = self.it.next();
+            if let Some(phys) = nxt {
+                if let Some(locid) = &self.ents.get(&phys.entity_id()).unwrap().location {
+                    // Safety: The vectors and hashmaps can't be modified while this iterator holds an 'e reference to the ECS object
+                    let loc: &'e mut CLocation = unsafe { std::mem::transmute(&mut self.locs[locid.index()] as *mut CLocation)};
+                    return Some((phys, loc));
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+}
+
 impl ECS {
     pub fn new() -> Self {
         Default::default()
@@ -227,6 +252,14 @@ impl ECS {
 
     pub fn iter_mut(&mut self) -> std::collections::hash_map::ValuesMut<'_, ValidEntityID, Entity> {
         self.entities.values_mut()
+    }
+
+    pub fn iter_mut_physics(&mut self) -> ECSPhysicsIteratorMut {
+        ECSPhysicsIteratorMut {
+            it: self.physicss.iter_mut(),
+            locs: &mut self.locations,
+            ents: &mut self.entities,
+        }
     }
 
     pub fn add_new_entity(&mut self, domain: EntityDomain) -> ValidEntityID {
