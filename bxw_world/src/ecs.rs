@@ -102,6 +102,31 @@ impl Component for CLocation {
 }
 
 #[derive(Clone, Debug)]
+pub struct CPhysics {
+    id: ValidEntityID,
+    //
+}
+
+impl CPhysics {
+    pub fn new(id: ValidEntityID) -> Self {
+        Self {
+            id,
+            //
+        }
+    }
+}
+
+impl Component for CPhysics {
+    fn name() -> &'static str {
+        "Physics"
+    }
+
+    fn entity_id(&self) -> ValidEntityID {
+        self.id
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct CDebugInfo {
     id: ValidEntityID,
     pub ent_name: String,
@@ -162,6 +187,7 @@ impl<T> ComponentId<T> {
 pub struct Entity {
     pub id: ValidEntityID,
     pub location: Option<ComponentId<CLocation>>,
+    pub physics: Option<ComponentId<CPhysics>>,
     pub debug_info: Option<ComponentId<CDebugInfo>>,
     pub load_anchor: Option<ComponentId<CLoadAnchor>>,
 }
@@ -171,6 +197,7 @@ impl Entity {
         Self {
             id,
             location: None,
+            physics: None,
             debug_info: None,
             load_anchor: None,
         }
@@ -184,6 +211,7 @@ pub struct ECS {
     last_nonfree_ids: [u64; 4],
     // components
     locations: Vec<CLocation>,
+    physicss: Vec<CPhysics>,
     debug_infos: Vec<CDebugInfo>,
     load_anchors: Vec<CLoadAnchor>,
 }
@@ -291,5 +319,6 @@ macro_rules! impl_ecs_fns {
 }
 
 impl_ecs_fns!(CLocation, location, locations);
+impl_ecs_fns!(CPhysics, physics, physicss);
 impl_ecs_fns!(CDebugInfo, debug_info, debug_infos);
 impl_ecs_fns!(CLoadAnchor, load_anchor, load_anchors);

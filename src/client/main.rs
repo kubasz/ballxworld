@@ -110,8 +110,8 @@ pub fn client_main() {
             frametimes.pop_front();
         }
         frametimes.push_back(frame_delta_time);
-        let ftmax = frametimes.iter().copied().fold(0.0, f64::max) * 1000000.0;
-        let ftavg = frametimes.iter().sum::<f64>() * 1000000.0 / frametimes.len() as f64;
+        let ftmax = frametimes.iter().copied().fold(0.0, f64::max) * 1_000_000.0;
+        let ftavg = frametimes.iter().sum::<f64>() * 1_000_000.0 / frametimes.len() as f64;
         DEBUG_DATA
             .fps
             .store((1.0 / frame_delta_time) as u32, Ordering::Release);
