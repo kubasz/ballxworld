@@ -1,5 +1,4 @@
-use bxw_util::*;
-use math::*;
+use bxw_util::math::*;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
@@ -104,14 +103,23 @@ impl Component for CLocation {
 #[derive(Clone, Debug)]
 pub struct CPhysics {
     id: ValidEntityID,
-    //
+    pub frozen: bool,
+    pub mass: f32,
+    pub control_target_velocity: Vector3<f32>,
+    pub control_max_force: Vector3<f32>,
+    /// Acceleration impulse applied on the next physics tick (and then reset to 0)
+    pub control_frame_impulse: Vector3<f32>,
 }
 
 impl CPhysics {
     pub fn new(id: ValidEntityID) -> Self {
         Self {
             id,
-            //
+            frozen: false,
+            mass: 1.0,
+            control_target_velocity: vec3(0.0, 0.0, 0.0),
+            control_max_force: vec3(0.0, 0.0, 0.0),
+            control_frame_impulse: vec3(0.0, 0.0, 0.0),
         }
     }
 }
@@ -231,7 +239,9 @@ impl<'e> Iterator for ECSPhysicsIteratorMut<'e> {
             if let Some(phys) = nxt {
                 if let Some(locid) = &self.ents.get(&phys.entity_id()).unwrap().location {
                     // Safety: The vectors and hashmaps can't be modified while this iterator holds an 'e reference to the ECS object
-                    let loc: &'e mut CLocation = unsafe { std::mem::transmute(&mut self.locs[locid.index()] as *mut CLocation)};
+                    let loc: &'e mut CLocation = unsafe {
+                        std::mem::transmute(&mut self.locs[locid.index()] as *mut CLocation)
+                    };
                     return Some((phys, loc));
                 }
             } else {

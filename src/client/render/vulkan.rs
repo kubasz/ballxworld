@@ -211,6 +211,9 @@ extern "system" fn debug_msg_callback(
     if cb_data.is_null() {
         return vk::FALSE;
     }
+    if msg_severity == vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE {
+        return vk::FALSE;
+    }
     let cb_data: &vk::DebugUtilsMessengerCallbackDataEXT = unsafe { &*cb_data };
     let str_severity = match msg_severity {
         vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => "verb",

@@ -24,7 +24,7 @@ use world::ecs::{CLoadAnchor, CLocation, ECSHandler};
 use world::generation::WorldLoadGen;
 use world::{blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition};
 
-const PHYSICS_FRAME_TIME: f64 = 1.0 / 60.0;
+use world::physics::TIMESTEP as PHYSICS_FRAME_TIME;
 
 #[derive(Debug, Clone, Default)]
 struct InputState {
@@ -187,7 +187,7 @@ pub fn client_main() {
                     wvel *= 3.0;
                 }
                 lp_loc.position += mview * wvel;
-                lp_loc.velocity = (PHYSICS_FRAME_TIME as f32) * wvel;
+                //lp_loc.velocity = (PHYSICS_FRAME_TIME as f32) * wvel;
                 drop(entities);
                 //
                 world.physics_tick();
@@ -289,7 +289,7 @@ pub fn client_main() {
                     Some(&voxels),
                     None,
                 )
-                    .execute();
+                .execute();
                 click_place = secondary;
                 if let raycast::Hit::Voxel {
                     position,
