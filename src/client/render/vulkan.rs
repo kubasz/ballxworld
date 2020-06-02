@@ -7,6 +7,7 @@ use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::vk;
 use ash::vk::make_version;
 use ash::vk::Handle;
+use bxw_util::debug_data::DEBUG_DATA;
 use bxw_util::*;
 use num_traits::clamp;
 use parking_lot::{Mutex, MutexGuard};
@@ -16,6 +17,7 @@ use std::ffi::{c_void, CStr, CString};
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::os::raw::c_char;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use vk_mem as vma;
 
@@ -1094,6 +1096,14 @@ impl RenderingContext {
         unsafe { device.reset_fences(&[inflight_fence]) }.expect("Couldn't reset fence");
 
         let mut vmalloc = self.handles.vmalloc.lock();
+
+        let memstats = vmalloc.calculate_stats();
+        if let Ok(memstats) = memstats {
+            DEBUG_DATA
+                .gpu_usage_bytes
+                .store(memstats.total.usedBytes as i64, Ordering::Release);
+        }
+
         for mut vdo in self.handles.destroy_queue.lock()[old_inflight_index as usize].drain(..) {
             vdo.destroy(&mut vmalloc, &self.handles);
         }

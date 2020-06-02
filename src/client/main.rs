@@ -9,12 +9,14 @@ use crate::client::render::ui::{
 };
 use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::client::world::{CameraSettings, ClientWorld};
+use bxw_util::debug_data::DEBUG_DATA;
 use bxw_util::math::*;
 use bxw_util::*;
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::io::{Read, Write};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use world::blocks::register_standard_blocks;
 use world::ecs::{CLoadAnchor, CLocation, ECSHandler};
@@ -107,6 +109,13 @@ pub fn client_main() {
             frametimes.pop_front();
         }
         frametimes.push_back(frame_delta_time);
+        let ftmax = frametimes.iter().copied().fold(0.0, f64::max) * 1000000.0;
+        let ftavg = frametimes.iter().sum::<f64>() * 1000000.0 / frametimes.len() as f64;
+        DEBUG_DATA
+            .fps
+            .store((1.0 / frame_delta_time) as u32, Ordering::Release);
+        DEBUG_DATA.ft_max_us.store(ftmax as u32, Ordering::Release);
+        DEBUG_DATA.ft_avg_us.store(ftavg as u32, Ordering::Release);
 
         physics_accum_time += frame_delta_time;
         previous_frame_time = current_frame_time;
@@ -196,7 +205,7 @@ pub fn client_main() {
                 color: GUI_WHITE,
                 cmd: GuiCmd::Rectangle {
                     style: GuiControlStyle::Window,
-                    rect: GuiRect::from_xywh((0.0, 5.0), (0.0, 5.0), (0.0, 200.0), (0.0, 50.0)),
+                    rect: GuiRect::from_xywh((0.0, 5.0), (0.0, 5.0), (0.0, 200.0), (0.0, 150.0)),
                 },
             });
             gui.push_cmd(GuiOrderedCmd {
@@ -212,7 +221,7 @@ pub fn client_main() {
                 z_index: GUI_Z_LAYER_BACKGROUND + GUI_Z_OFFSET_CONTROL,
                 color: GUI_BLACK,
                 cmd: GuiCmd::FreeText {
-                    text: Cow::from(format!("FPS: {:.1}", 1.0 / frame_delta_time)),
+                    text: Cow::from(DEBUG_DATA.hud_format()),
                     scale: 0.5,
                     start_at: gv2((0.0, 10.0), (0.0, 30.0)),
                 },
@@ -245,7 +254,6 @@ pub fn client_main() {
         let player_pos;
         let player_ang;
         {
-            let voxels = world.voxels.read();
             let entities = world.entities.read();
             let lp_loc: &CLocation = entities
                 .ecs
@@ -253,6 +261,18 @@ pub fn client_main() {
                 .unwrap();
             player_pos = lp_loc.position;
             player_ang = lp_loc.orientation;
+            DEBUG_DATA
+                .local_player_x
+                .store(lp_loc.position.x as i64, Ordering::Release);
+            DEBUG_DATA
+                .local_player_y
+                .store(lp_loc.position.y as i64, Ordering::Release);
+            DEBUG_DATA
+                .local_player_z
+                .store(lp_loc.position.z as i64, Ordering::Release);
+        }
+        {
+            let voxels = world.voxels.read();
 
             let primary = input_mgr.input_state.primary_action.is_active();
             let secondary = input_mgr.input_state.secondary_action.is_active();

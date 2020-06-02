@@ -629,6 +629,7 @@ impl BMFont {
             }
             if c == '\n' {
                 y += s(self.line_height);
+                x = 0.0;
                 continue;
             }
             let bmchar = self.get_char(c);

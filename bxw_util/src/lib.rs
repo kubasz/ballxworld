@@ -16,4 +16,5 @@ pub use thread_local_crate as thread_local;
 pub use toml_edit;
 
 // Own modules
+pub mod debug_data;
 pub mod math;

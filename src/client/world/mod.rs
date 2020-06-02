@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use world::ecs::ValidEntityID;
+use world::ecs::{CLocation, ECSHandler};
 use world::{VoxelRegistry, World};
 
 #[derive(Clone, Debug)]
@@ -22,6 +23,8 @@ impl ClientWorld {
             true,
             String::from("@local_player"),
         );
+        let loc: &mut CLocation = entities.ecs.get_component_mut(local_player).unwrap();
+        loc.position.y = 40.0;
         let cw = ClientWorld {
             local_player,
             camera_settings: CameraSettings::FPS {
