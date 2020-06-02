@@ -1,5 +1,6 @@
 #![allow(unused_variables)]
 #![deny(unused_must_use)]
+
 use crate::client::config::Config;
 use crate::client::input::InputManager;
 use crate::client::render::resources::RenderingResources;
@@ -67,17 +68,17 @@ pub fn client_main() {
         eprintln!("Adjusting settings for renderdoc");
     }
 
-    let mut rctx = RenderingContext::new(&sdl_vid, &cfg);
+    let mut rctx = Box::new(RenderingContext::new(&sdl_vid, &cfg));
     let rres = Arc::new(RenderingResources::load(&cfg, &mut rctx));
-    let mut vctx = VoxelRenderer::new(&cfg, &mut rctx, rres.clone());
-    let mut guictx = GuiRenderer::new(&cfg, &mut rctx, rres.clone());
+    let mut vctx = Box::new(VoxelRenderer::new(&cfg, &mut rctx, rres.clone()));
+    let mut guictx = Box::new(GuiRenderer::new(&cfg, &mut rctx, rres.clone()));
 
     let mut frametimes = VecDeque::new();
     let frametime_count: usize = 100;
 
-    let mut vxreg = world::registry::VoxelRegistry::new();
+    let mut vxreg = Box::new(world::registry::VoxelRegistry::new());
     register_standard_blocks(&mut vxreg, &|nm| vctx.get_texture_id(nm)); //FIXME
-    let (world, mut client_world) = ClientWorld::new_world("world".to_owned(), Arc::new(vxreg));
+    let (world, mut client_world) = ClientWorld::new_world("world".to_owned(), Arc::from(vxreg));
     let world = Arc::new(world);
     {
         let lp = client_world.local_player;
@@ -288,7 +289,7 @@ pub fn client_main() {
                     Some(&voxels),
                     None,
                 )
-                .execute();
+                    .execute();
                 click_place = secondary;
                 if let raycast::Hit::Voxel {
                     position,
