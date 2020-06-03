@@ -12,7 +12,7 @@ pub fn create_player(entities: &mut ECS, local: bool, name: String) -> ValidEnti
     });
     let mut location = CLocation::new(id);
     location.bounding_shape = BoundingShape::Capsule {
-        r: 0.5,
+        r: 0.85,
         h: PLAYER_HEIGHT,
     };
     entities.set_component(id, location);

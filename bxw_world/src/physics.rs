@@ -1,18 +1,27 @@
 use crate::ecs::*;
 use crate::raycast::*;
-use crate::World;
+use crate::{Direction, WVoxels, World, ALL_DIRS};
 use bxw_util::math::*;
 
 pub const TIMESTEP: f64 = 1.0 / 60.0;
 pub const SPEED_LIMIT_MPS: f32 = 1000.0;
 pub const SPEED_LIMIT_MPS_SQ: f32 = SPEED_LIMIT_MPS * SPEED_LIMIT_MPS;
+pub const DESUFFOCATION_SPEED: f32 = 10.0;
 pub const GRAVITY_ACCEL: f32 = 30.0;
 pub const AIR_FRICTION_SQ: f32 = 0.5 * 0.5 * 1.2;
 // 1/2 * pyramid drag coefficient * air density
 pub const SMALL_V_CUTOFF: f32 = 1.0e-6;
 
-// TODO: Detect suffocation
-// TODO: Handle suffocation
+fn check_suffocation(world: &World, voxels: &WVoxels, position: Vector3<f32>) -> bool {
+    let bpos = position.map(|c| c.floor() as i32);
+    let bidx = world.get_vcache().get_block(voxels, bpos);
+    if let Some(bidx) = bidx {
+        let vdef = world.vregistry.get_definition_from_id(bidx);
+        vdef.has_hitbox
+    } else {
+        false
+    }
+}
 
 pub fn world_physics_tick(world: &World) {
     let voxels = world.voxels.read();
@@ -35,10 +44,6 @@ pub fn world_physics_tick(world: &World) {
             BoundingShape::Box { size } => [size.x / 2.0, size.y / 2.0, size.z / 2.0],
         };
         let old_pos = loc.position;
-        // check "suffocation" - whether the object is stuck inside a block
-        let _suffocation = {
-            false // TODO
-        };
         let old_vel = loc.velocity;
         let mut new_accel = vec3(0.0, 0.0, 0.0);
         // air friction
@@ -124,7 +129,8 @@ pub fn world_physics_tick(world: &World) {
                             } else {
                                 phys.against_wall[sixaxis] = true;
                                 if rc.distance < bound_length[axis] {
-                                    new_pos -= vec_dir * (bound_length[axis] - rc.distance);
+                                    new_pos =
+                                        old_pos - vec_dir * (bound_length[axis] - rc.distance);
                                 }
                             }
                         }
@@ -156,6 +162,27 @@ pub fn world_physics_tick(world: &World) {
                         Hit::Nothing => old_pos[axis] + move_length,
                     };
                 }
+            }
+        }
+        // check for suffocation
+        let new_suffocation = check_suffocation(world, &voxels, new_pos);
+        if new_suffocation {
+            let old_suffocation = check_suffocation(world, &voxels, old_pos);
+            if old_suffocation {
+                let mut desuf_dir = Direction::YPlus;
+                for dir in &ALL_DIRS {
+                    let dir_suffocation =
+                        check_suffocation(world, &voxels, old_pos + dir.to_vec().map(|c| c as f32));
+                    if !dir_suffocation {
+                        desuf_dir = *dir;
+                        break;
+                    }
+                }
+                new_vel = desuf_dir.to_vec().map(|c| c as f32) * DESUFFOCATION_SPEED;
+                new_pos = old_pos + new_vel * TIMESTEP as f32;
+            } else {
+                new_pos = old_pos;
+                new_vel = zero();
             }
         }
         // store new values
