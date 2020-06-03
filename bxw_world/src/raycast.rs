@@ -36,6 +36,7 @@ impl<'q> Default for Hit {
 #[derive(Clone)]
 pub struct RaycastResult {
     pub hit: Hit,
+    pub hit_point: Vector3<f32>,
     pub distance: f32,
 }
 
@@ -132,16 +133,20 @@ impl<'q> RaycastQuery<'q> {
                     let datum = chunk.blocks_yzx[bidx];
                     let vdef = self.world.vregistry.get_definition_from_id(datum);
                     if vdef.has_hitbox {
-                        let position = bpos + cpos * ichunk_dim;
-                        let distance = (position.map(|c| c as f32) - self.start_point).magnitude();
+                        let block_position = bpos + cpos * ichunk_dim;
+                        let hit_point = block_position.map(|c| c as f32); // TODO
+                        let distance = (hit_point - self.start_point)
+                            .magnitude()
+                            .min(distance_limit);
                         // hit!
                         return RaycastResult {
                             hit: Hit::Voxel {
-                                position,
+                                position: block_position,
                                 datum,
                                 normal,
                                 normal_datum,
                             },
+                            hit_point,
                             distance,
                         };
                     }
@@ -177,6 +182,7 @@ impl<'q> RaycastQuery<'q> {
 
         RaycastResult {
             hit: Hit::Nothing,
+            hit_point: self.start_point + direction * distance_limit,
             distance: distance_limit,
         }
     }

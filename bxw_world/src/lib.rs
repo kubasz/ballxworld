@@ -453,6 +453,10 @@ impl VoxelDefinition {
     pub fn id(&self) -> u32 {
         self.id
     }
+
+    pub fn intersect_ray() -> Option<Vector3<f32>> {
+        None
+    }
 }
 
 #[derive(Default)]

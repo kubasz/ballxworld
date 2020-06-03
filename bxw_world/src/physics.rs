@@ -25,12 +25,14 @@ pub fn world_physics_tick(world: &World) {
         let area_est = match loc.bounding_shape {
             BoundingShape::Point => 0.05,
             BoundingShape::Ball { r } => r * r * f32::pi(),
+            BoundingShape::Capsule { r, h } => 2.0 * r * h,
             BoundingShape::Box { size } => size.x * size.z,
         };
-        let bound_length = match loc.bounding_shape {
-            BoundingShape::Point => 0.05,
-            BoundingShape::Ball { r } => r,
-            BoundingShape::Box { size } => (size.x + size.y + size.z) / 3.0,
+        let bound_length: [f32; 3] = match loc.bounding_shape {
+            BoundingShape::Point => [0.05; 3],
+            BoundingShape::Ball { r } => [r; 3],
+            BoundingShape::Capsule { r, h } => [r, h, r],
+            BoundingShape::Box { size } => [size.x / 2.0, size.y / 2.0, size.z / 2.0],
         };
         let old_pos = loc.position;
         // check "suffocation" - whether the object is stuck inside a block
@@ -91,12 +93,12 @@ pub fn world_physics_tick(world: &World) {
                     let rc = RaycastQuery::new_directed(
                         old_pos,
                         vec_dir,
-                        bound_length + 1.0e-3,
+                        bound_length[axis] + 1.0e-3,
                         world,
                         Some(&voxels),
                         None,
                     )
-                        .execute();
+                    .execute();
                     if let Hit::Nothing = rc.hit {
                         phys.against_wall[sixaxis] = false;
                     } else {
@@ -111,27 +113,24 @@ pub fn world_physics_tick(world: &World) {
             let rc = RaycastQuery::new_directed(
                 old_pos,
                 new_vel_dir,
-                move_length + bound_length,
+                move_length + bound_length[axis],
                 world,
                 Some(&voxels),
                 None,
             )
-                .execute();
+            .execute();
             phys.against_wall[axis * 2] = false;
             phys.against_wall[axis * 2 + 1] = false;
             new_pos[axis] = match rc.hit {
                 Hit::Voxel { normal, .. } => {
                     new_vel[normal.to_unsigned_axis_index()] = 0.0;
                     phys.against_wall[normal.opposite().to_signed_axis_index()] = true;
-                    eprintln!("h");
-                    old_pos[axis] + new_vel_dir[axis] * (rc.distance - bound_length)
+                    old_pos[axis] + new_vel_dir[axis] * (rc.distance - bound_length[axis])
                 }
                 Hit::Entity => {
                     unreachable!();
                 }
-                Hit::Nothing => {
-                    old_pos[axis] + move_length
-                }
+                Hit::Nothing => old_pos[axis] + move_length,
             };
         }
         // store new values

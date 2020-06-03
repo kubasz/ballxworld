@@ -4,7 +4,9 @@
 use crate::client::config::Config;
 use crate::client::input::InputManager;
 use crate::client::render::resources::RenderingResources;
-use crate::client::render::ui::z::{GUI_Z_LAYER_BACKGROUND, GUI_Z_OFFSET_CONTROL};
+use crate::client::render::ui::z::{
+    GUI_Z_LAYER_BACKGROUND, GUI_Z_LAYER_CURSOR, GUI_Z_OFFSET_CONTROL,
+};
 use crate::client::render::ui::{
     gv2, GuiCmd, GuiControlStyle, GuiOrderedCmd, GuiRect, GuiRenderer, GUI_BLACK, GUI_WHITE,
 };
@@ -185,7 +187,7 @@ pub fn client_main() {
                     0.0,
                     input_mgr.input_state.walk.y,
                 );
-                wvel *= 3.0; // Walk 3m/s
+                wvel *= 6.0; // Walk 6m/s
                 if input_mgr.input_state.sprint.is_active() {
                     wvel *= 3.0;
                 }
@@ -240,6 +242,14 @@ pub fn client_main() {
                     start_at: gv2((0.0, 10.0), (0.0, 30.0)),
                 },
             });
+            gui.push_cmd(GuiOrderedCmd {
+                z_index: GUI_Z_LAYER_CURSOR,
+                color: GUI_WHITE,
+                cmd: GuiCmd::Rectangle {
+                    style: GuiControlStyle::Crosshair,
+                    rect: GuiRect::from_xywh((0.5, -7.0), (0.5, -7.0), (0.0, 14.0), (0.0, 14.0)),
+                },
+            });
             fc.end_region();
             let mut fc = RenderingContext::frame_goto_pass(fc);
             fc.begin_region([0.3, 0.3, 0.8, 1.0], || "vctx.inpass_draw");
@@ -288,8 +298,11 @@ pub fn client_main() {
         {
             let voxels = world.voxels.read();
 
-            let primary = input_mgr.input_state.primary_action.is_active();
-            let secondary = input_mgr.input_state.secondary_action.is_active();
+            let primary = input_mgr.input_state.primary_action.get_and_reset_pressed();
+            let secondary = input_mgr
+                .input_state
+                .secondary_action
+                .get_and_reset_pressed();
             if primary | secondary {
                 use world::raycast;
                 let mview = glm::quat_to_mat3(&player_ang).transpose();

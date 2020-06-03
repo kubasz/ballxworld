@@ -64,6 +64,7 @@ pub trait Component {
 pub enum BoundingShape {
     Point,
     Ball { r: f32 },
+    Capsule { r: f32, h: f32 },
     Box { size: Vector3<f32> },
 }
 
@@ -242,9 +243,8 @@ impl<'e> Iterator for ECSPhysicsIteratorMut<'e> {
             if let Some(phys) = nxt {
                 if let Some(locid) = &self.ents.get(&phys.entity_id()).unwrap().location {
                     // Safety: The vectors and hashmaps can't be modified while this iterator holds an 'e reference to the ECS object
-                    let loc: &'e mut CLocation = unsafe {
-                        std::mem::transmute(&mut self.locs[locid.index()] as *mut CLocation)
-                    };
+                    let loc: &'e mut CLocation =
+                        unsafe { &mut *(&mut self.locs[locid.index()] as *mut CLocation) };
                     return Some((phys, loc));
                 }
             } else {
