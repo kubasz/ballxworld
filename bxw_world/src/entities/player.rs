@@ -8,7 +8,7 @@ pub fn create_player(entities: &mut ECS, local: bool, name: String) -> ValidEnti
         EntityDomain::SharedOmnipresent
     });
     let mut location = CLocation::new(id);
-    location.bounding_shape = BoundingShape::Capsule { r: 0.5, h: 1.0 };
+    location.bounding_shape = BoundingShape::Capsule { r: 0.5, h: 2.0 };
     entities.set_component(id, location);
     let mut physics = CPhysics::new(id);
     physics.mass = 100.0;

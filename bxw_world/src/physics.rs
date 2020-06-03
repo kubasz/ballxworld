@@ -103,6 +103,9 @@ pub fn world_physics_tick(world: &World) {
                         phys.against_wall[sixaxis] = false;
                     } else {
                         phys.against_wall[sixaxis] = true;
+                        if rc.distance < bound_length[axis] {
+                            new_pos -= vec_dir * (bound_length[axis] - rc.distance);
+                        }
                     }
                 }
                 continue;

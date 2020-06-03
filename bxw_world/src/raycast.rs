@@ -88,6 +88,7 @@ impl<'q> RaycastQuery<'q> {
         // https://www.gamedev.net/blogs/entry/2265248-voxel-traversal-algorithm-ray-casting/
         // http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.42.3443&rep=rep1&type=pdf
         if let Some(voxels) = self.hit_voxels {
+            let mut intersect_pos: Vector3<f32> = self.start_point;
             let offset_start: Vector3<f32> = self.start_point + vec3(0.5, 0.5, 0.5);
             let mut bpos: Vector3<i32> = offset_start.map(|c| c.floor() as i32);
             let mut cpos: Vector3<i32> = chunkpos_from_blockpos(bpos);
@@ -134,8 +135,7 @@ impl<'q> RaycastQuery<'q> {
                     let vdef = self.world.vregistry.get_definition_from_id(datum);
                     if vdef.has_hitbox {
                         let block_position = bpos + cpos * ichunk_dim;
-                        let hit_point = block_position.map(|c| c as f32); // TODO
-                        let distance = (hit_point - self.start_point)
+                        let distance = (intersect_pos - self.start_point)
                             .magnitude()
                             .min(distance_limit);
                         // hit!
@@ -146,7 +146,7 @@ impl<'q> RaycastQuery<'q> {
                                 normal,
                                 normal_datum,
                             },
-                            hit_point,
+                            hit_point: intersect_pos,
                             distance,
                         };
                     }
@@ -175,6 +175,7 @@ impl<'q> RaycastQuery<'q> {
                     cpos[min_tmax] += step[min_tmax];
                     chunk = vcache.get_uncompressed_chunk(voxels, cpos);
                 }
+                intersect_pos[min_tmax] += t_delta[min_tmax];
                 t_max[min_tmax] += t_delta[min_tmax];
                 normal = normals[min_tmax];
             }
