@@ -5,6 +5,7 @@ pub use glm;
 pub use itertools;
 pub use lru;
 pub use nalgebra as na;
+pub use ncollide3d as nc;
 pub use num_traits;
 pub use parking_lot;
 pub use rand;

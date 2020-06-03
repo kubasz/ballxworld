@@ -8,6 +8,7 @@ edition = "2018"
 rand = "0.7"
 rand_xoshiro = "0.4"
 nalgebra = "0.21"
+ncollide3d = "0.23"
 glm = { version = "0.7", package = "nalgebra-glm" }
 toml_edit = "0.1"
 thread_local_crate = { version = "1", package = "thread_local" }
