@@ -60,6 +60,10 @@ pub fn world_physics_tick(world: &World) {
                 control_da[comp] = control_da[comp]
                     .min(phys.control_max_force[comp] / mass)
                     .max(-phys.control_max_force[comp] / mass);
+                let sixaxis = comp as i32 * 2 + (control_da[comp].signum() as i32 + 1) / 2;
+                if phys.against_wall[sixaxis as usize] {
+                    control_da[comp] = 0.0;
+                }
             }
             control_da
         };
@@ -92,7 +96,7 @@ pub fn world_physics_tick(world: &World) {
                         Some(&voxels),
                         None,
                     )
-                    .execute();
+                        .execute();
                     if let Hit::Nothing = rc.hit {
                         phys.against_wall[sixaxis] = false;
                     } else {
@@ -112,19 +116,22 @@ pub fn world_physics_tick(world: &World) {
                 Some(&voxels),
                 None,
             )
-            .execute();
+                .execute();
             phys.against_wall[axis * 2] = false;
             phys.against_wall[axis * 2 + 1] = false;
             new_pos[axis] = match rc.hit {
                 Hit::Voxel { normal, .. } => {
                     new_vel[normal.to_unsigned_axis_index()] = 0.0;
                     phys.against_wall[normal.opposite().to_signed_axis_index()] = true;
+                    eprintln!("h");
                     old_pos[axis] + new_vel_dir[axis] * (rc.distance - bound_length)
                 }
                 Hit::Entity => {
                     unreachable!();
                 }
-                Hit::Nothing => old_pos[axis] + new_vel[axis] * TIMESTEP as f32,
+                Hit::Nothing => {
+                    old_pos[axis] + move_length
+                }
             };
         }
         // store new values

@@ -12,7 +12,7 @@ pub fn create_player(entities: &mut ECS, local: bool, name: String) -> ValidEnti
     entities.set_component(id, location);
     let mut physics = CPhysics::new(id);
     physics.mass = 100.0;
-    physics.control_max_force = vec3(1000.0, 0.0, 1000.0);
+    physics.control_max_force = vec3(10000.0, 0.0, 10000.0);
     entities.set_component(id, physics);
     entities.set_component(id, CDebugInfo::new(id, name));
     entities.set_component(id, CLoadAnchor::new(id, 1));
