@@ -329,7 +329,7 @@ pub fn client_main() {
                         click_pos = Some(*position);
                     } else if normal_datum
                         .map(|d| !world.vregistry.get_definition_from_id(d).has_hitbox)
-                        .unwrap_or(false)
+                        .unwrap_or(false) && rc.distance > 2.0
                     {
                         click_pos = Some(*position + normal.to_vec());
                     }

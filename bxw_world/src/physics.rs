@@ -68,9 +68,6 @@ pub fn world_physics_tick(world: &World) {
                     .min(phys.control_max_force[comp] / mass)
                     .max(-phys.control_max_force[comp] / mass);
                 let sixaxis = comp as i32 * 2 + (control_da[comp].signum() as i32 + 1) / 2;
-                if phys.against_wall[sixaxis as usize] {
-                    control_da[comp] = 0.0;
-                }
             }
             control_da
         };
@@ -90,13 +87,16 @@ pub fn world_physics_tick(world: &World) {
         let collision_probe_count: [u32; 3] = {
             let mut probes = [1; 3];
             for dim in 0..probes.len() {
-                probes[dim] = (bound_length[dim].ceil() as u32).max(1);
+                probes[dim] = (bound_length[dim].ceil() as u32).max(2);
             }
             probes
         };
         for axis in 0..3 {
             let uaxis = (axis + 1) % 3;
             let vaxis = (axis + 2) % 3;
+            phys.against_wall[axis * 2] = false;
+            phys.against_wall[axis * 2 + 1] = false;
+            let mut anyprobe_hit = false;
             for uprobe in 1..=collision_probe_count[uaxis] {
                 for vprobe in 1..=collision_probe_count[vaxis] {
                     let uoffset = ((uprobe as f32 / (collision_probe_count[uaxis] as f32 + 1.0))
@@ -123,15 +123,14 @@ pub fn world_physics_tick(world: &World) {
                                 Some(&voxels),
                                 None,
                             )
-                            .execute();
-                            if let Hit::Nothing = rc.hit {
-                                phys.against_wall[sixaxis] = false;
-                            } else {
+                                .execute();
+                            if let Hit::Nothing = rc.hit {} else {
                                 phys.against_wall[sixaxis] = true;
                                 if rc.distance < bound_length[axis] {
                                     new_pos =
                                         old_pos - vec_dir * (bound_length[axis] - rc.distance);
                                 }
+                                anyprobe_hit = true;
                             }
                         }
                         continue;
@@ -147,19 +146,25 @@ pub fn world_physics_tick(world: &World) {
                         Some(&voxels),
                         None,
                     )
-                    .execute();
-                    phys.against_wall[axis * 2] = false;
-                    phys.against_wall[axis * 2 + 1] = false;
+                        .execute();
                     new_pos[axis] = match rc.hit {
                         Hit::Voxel { normal, .. } => {
                             new_vel[normal.to_unsigned_axis_index()] = 0.0;
+                            new_vel_dir[normal.to_unsigned_axis_index()] = 0.0;
                             phys.against_wall[normal.opposite().to_signed_axis_index()] = true;
+                            anyprobe_hit = true;
                             old_pos[axis] + new_vel_dir[axis] * (rc.distance - bound_length[axis])
                         }
                         Hit::Entity => {
                             unreachable!();
                         }
-                        Hit::Nothing => old_pos[axis] + move_length,
+                        Hit::Nothing => {
+                            if anyprobe_hit {
+                                new_pos[axis]
+                            } else {
+                                old_pos[axis] + move_length
+                            }
+                        }
                     };
                 }
             }
@@ -169,8 +174,9 @@ pub fn world_physics_tick(world: &World) {
         if new_suffocation {
             let old_suffocation = check_suffocation(world, &voxels, old_pos);
             if old_suffocation {
-                let mut desuf_dir = Direction::YPlus;
-                for dir in &ALL_DIRS {
+                use Direction::*;
+                let mut desuf_dir = YPlus;
+                for dir in &[YPlus, YMinus, XMinus, XPlus, ZMinus, ZPlus] {
                     let dir_suffocation =
                         check_suffocation(world, &voxels, old_pos + dir.to_vec().map(|c| c as f32));
                     if !dir_suffocation {

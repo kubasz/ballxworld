@@ -24,7 +24,9 @@ impl ClientWorld {
             String::from("@local_player"),
         );
         let loc: &mut CLocation = entities.ecs.get_component_mut(local_player).unwrap();
-        loc.position.y = 40.0;
+        loc.position.x = 300.0;
+        loc.position.y = 32.0;
+        loc.position.z = 28.0;
         let cw = ClientWorld {
             local_player,
             camera_settings: CameraSettings::FPS {
