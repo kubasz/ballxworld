@@ -1,6 +1,16 @@
 use crate::{TextureMapping, VoxelDatum, VoxelDefinition, VoxelId};
+use bxw_util::lazy_static::lazy_static;
+use bxw_util::math::*;
+use bxw_util::*;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+lazy_static! {
+    pub static ref VOXEL_CUBE_SHAPE: Arc<dyn nc::shape::Shape<f32>> = {
+        let shape = nc::shape::Cuboid::new(vec3(0.5, 0.5, 0.5));
+        Arc::new(shape)
+    };
+}
 
 pub struct VoxelDefinitionBuilder<'a> {
     registry: &'a mut VoxelRegistry,
@@ -9,6 +19,8 @@ pub struct VoxelDefinitionBuilder<'a> {
     has_mesh: bool,
     has_collisions: bool,
     has_hitbox: bool,
+    collision_shape: Arc<dyn nc::shape::Shape<f32>>,
+    collision_offset: nc::math::Isometry<f32>,
     debug_color: [f32; 3],
     texture_mapping: TextureMapping<u32>,
 }
@@ -60,6 +72,8 @@ impl<'a> VoxelDefinitionBuilder<'a> {
             has_mesh: self.has_mesh,
             has_collisions: self.has_collisions,
             has_hitbox: self.has_hitbox,
+            collision_shape: self.collision_shape,
+            collision_offset: self.collision_offset,
             debug_color: self.debug_color,
             texture_mapping: self.texture_mapping,
         });
@@ -107,6 +121,9 @@ impl VoxelRegistry {
             has_mesh: false,
             has_collisions: false,
             has_hitbox: false,
+            collision_shape: VOXEL_CUBE_SHAPE.clone(),
+            collision_offset: nc::math::Isometry::identity(),
+
             debug_color: [1.0, 1.0, 1.0],
             texture_mapping: TextureMapping::TiledSingle(0),
         }

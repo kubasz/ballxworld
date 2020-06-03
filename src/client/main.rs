@@ -143,7 +143,7 @@ pub fn client_main() {
             input_mgr.input_state.look = zero();
             let CameraSettings::FPS { pitch, yaw } = &mut client_world.camera_settings;
             *pitch -= dpitch / 60.0;
-            *pitch = f32::min(f32::max(*pitch, -PI / 4.0), PI / 4.0);
+            *pitch = f32::min(f32::max(*pitch, -PI / 4.0 + 0.01), PI / 4.0 - 0.01);
             *yaw -= dyaw / 60.0;
             *yaw %= 2.0 * PI;
             let (pitch, yaw) = (*pitch, *yaw);
@@ -329,7 +329,8 @@ pub fn client_main() {
                         click_pos = Some(*position);
                     } else if normal_datum
                         .map(|d| !world.vregistry.get_definition_from_id(d).has_hitbox)
-                        .unwrap_or(false) && rc.distance > 2.0
+                        .unwrap_or(false)
+                        && rc.distance > 2.0
                     {
                         click_pos = Some(*position + normal.to_vec());
                     }

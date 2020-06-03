@@ -1,4 +1,6 @@
-use smallvec::alloc::alloc::{GlobalAlloc, Layout};
+use lazy_static::lazy_static;
+use parking_lot::Mutex;
+use std::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::*;
 
 /// Debug view data for monitoring the behaviour of the game
@@ -15,6 +17,8 @@ pub struct DebugData {
     pub local_player_x: AtomicI64,
     pub local_player_y: AtomicI64,
     pub local_player_z: AtomicI64,
+    /// Custom string that can be set to anything while debugging a piece of code
+    pub custom_string: Mutex<String>,
 }
 
 pub fn format_bytes(bytes: i64) -> String {
@@ -40,7 +44,8 @@ FT avg ms: {ftavg:.1}
 Pos: {lpx:.1} {lpy:.1} {lpz:.1}
 
 Heap usage: {heap}
-GPU heap usage: {gpuheap}"#,
+GPU heap usage: {gpuheap}
+{custom_string}"#,
             fps = self.fps.load(Ordering::Acquire),
             ftmax = self.ft_max_us.load(Ordering::Acquire) as f32 / 1000.0,
             ftavg = self.ft_avg_us.load(Ordering::Acquire) as f32 / 1000.0,
@@ -49,20 +54,24 @@ GPU heap usage: {gpuheap}"#,
             lpz = self.local_player_z.load(Ordering::Acquire) as f32 / 10.0,
             heap = format_bytes(self.heap_usage_bytes.load(Ordering::Acquire)),
             gpuheap = format_bytes(self.gpu_usage_bytes.load(Ordering::Acquire)),
+            custom_string = &self.custom_string.lock()
         )
     }
 }
 
-pub static DEBUG_DATA: DebugData = DebugData {
-    heap_usage_bytes: AtomicI64::new(0),
-    gpu_usage_bytes: AtomicI64::new(0),
-    fps: AtomicU32::new(0),
-    ft_max_us: AtomicU32::new(0),
-    ft_avg_us: AtomicU32::new(0),
-    local_player_x: AtomicI64::new(0),
-    local_player_y: AtomicI64::new(0),
-    local_player_z: AtomicI64::new(0),
-};
+lazy_static! {
+    pub static ref DEBUG_DATA: DebugData = DebugData {
+        heap_usage_bytes: AtomicI64::new(0),
+        gpu_usage_bytes: AtomicI64::new(0),
+        fps: AtomicU32::new(0),
+        ft_max_us: AtomicU32::new(0),
+        ft_avg_us: AtomicU32::new(0),
+        local_player_x: AtomicI64::new(0),
+        local_player_y: AtomicI64::new(0),
+        local_player_z: AtomicI64::new(0),
+        custom_string: Mutex::new(String::new()),
+    };
+}
 
 pub struct TrackingAllocator<A: GlobalAlloc> {
     pub allocator: A,

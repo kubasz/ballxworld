@@ -433,7 +433,7 @@ impl<T> TextureMapping<T> {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone)]
 pub struct VoxelDefinition {
     pub id: VoxelId,
     /// eg. core:air
@@ -441,6 +441,8 @@ pub struct VoxelDefinition {
     pub has_mesh: bool,
     pub has_collisions: bool,
     pub has_hitbox: bool,
+    pub collision_shape: Arc<dyn nc::shape::Shape<f32>>,
+    pub collision_offset: nc::math::Isometry<f32>,
     pub debug_color: [f32; 3],
     pub texture_mapping: TextureMapping<u32>,
 }

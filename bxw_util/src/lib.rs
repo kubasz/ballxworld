@@ -3,6 +3,7 @@ pub use divrem;
 pub use fnv;
 pub use glm;
 pub use itertools;
+pub use lazy_static;
 pub use lru;
 pub use nalgebra as na;
 pub use ncollide3d as nc;
