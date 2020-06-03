@@ -31,7 +31,7 @@ pub fn world_physics_tick(world: &World) {
         let bound_length: [f32; 3] = match loc.bounding_shape {
             BoundingShape::Point => [0.05; 3],
             BoundingShape::Ball { r } => [r; 3],
-            BoundingShape::Capsule { r, h } => [r, h, r],
+            BoundingShape::Capsule { r, h } => [r, h / 2.0, r],
             BoundingShape::Box { size } => [size.x / 2.0, size.y / 2.0, size.z / 2.0],
         };
         let old_pos = loc.position;
@@ -82,59 +82,81 @@ pub fn world_physics_tick(world: &World) {
         }
         // position integration with collision correction
         let mut new_pos = old_pos;
+        let collision_probe_count: [u32; 3] = {
+            let mut probes = [1; 3];
+            for dim in 0..probes.len() {
+                probes[dim] = (bound_length[dim].ceil() as u32).max(1);
+            }
+            probes
+        };
         for axis in 0..3 {
-            let new_vel_len = new_vel[axis];
-            if new_vel_len == 0.0 {
-                // re-check wall contact
-                for wall_dir in &[-1i32, 1i32] {
-                    let sixaxis = ((wall_dir + 1) / 2 + axis as i32 * 2) as usize;
-                    let mut vec_dir: Vector3<f32> = zero();
-                    vec_dir[axis] = *wall_dir as f32;
+            let uaxis = (axis + 1) % 3;
+            let vaxis = (axis + 2) % 3;
+            for uprobe in 1..=collision_probe_count[uaxis] {
+                for vprobe in 1..=collision_probe_count[vaxis] {
+                    let uoffset = ((uprobe as f32 / (collision_probe_count[uaxis] as f32 + 1.0))
+                        - 0.5)
+                        * bound_length[uaxis];
+                    let voffset = ((vprobe as f32 / (collision_probe_count[vaxis] as f32 + 1.0))
+                        - 0.5)
+                        * bound_length[vaxis];
+                    let mut raycast_offset: Vector3<f32> = zero();
+                    raycast_offset[uprobe as usize] = uoffset;
+                    raycast_offset[vprobe as usize] = voffset;
+                    let new_vel_len = new_vel[axis];
+                    if new_vel_len == 0.0 {
+                        // re-check wall contact
+                        for wall_dir in &[-1i32, 1i32] {
+                            let sixaxis = ((wall_dir + 1) / 2 + axis as i32 * 2) as usize;
+                            let mut vec_dir: Vector3<f32> = zero();
+                            vec_dir[axis] = *wall_dir as f32;
+                            let rc = RaycastQuery::new_directed(
+                                old_pos + raycast_offset,
+                                vec_dir,
+                                bound_length[axis] + 1.0e-3,
+                                world,
+                                Some(&voxels),
+                                None,
+                            )
+                            .execute();
+                            if let Hit::Nothing = rc.hit {
+                                phys.against_wall[sixaxis] = false;
+                            } else {
+                                phys.against_wall[sixaxis] = true;
+                                if rc.distance < bound_length[axis] {
+                                    new_pos -= vec_dir * (bound_length[axis] - rc.distance);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    let mut new_vel_dir: Vector3<f32> = zero();
+                    new_vel_dir[axis] = new_vel_len.signum();
+                    let move_length = new_vel_len * TIMESTEP as f32;
                     let rc = RaycastQuery::new_directed(
-                        old_pos,
-                        vec_dir,
-                        bound_length[axis] + 1.0e-3,
+                        old_pos + raycast_offset,
+                        new_vel_dir,
+                        move_length + bound_length[axis],
                         world,
                         Some(&voxels),
                         None,
                     )
                     .execute();
-                    if let Hit::Nothing = rc.hit {
-                        phys.against_wall[sixaxis] = false;
-                    } else {
-                        phys.against_wall[sixaxis] = true;
-                        if rc.distance < bound_length[axis] {
-                            new_pos -= vec_dir * (bound_length[axis] - rc.distance);
+                    phys.against_wall[axis * 2] = false;
+                    phys.against_wall[axis * 2 + 1] = false;
+                    new_pos[axis] = match rc.hit {
+                        Hit::Voxel { normal, .. } => {
+                            new_vel[normal.to_unsigned_axis_index()] = 0.0;
+                            phys.against_wall[normal.opposite().to_signed_axis_index()] = true;
+                            old_pos[axis] + new_vel_dir[axis] * (rc.distance - bound_length[axis])
                         }
-                    }
+                        Hit::Entity => {
+                            unreachable!();
+                        }
+                        Hit::Nothing => old_pos[axis] + move_length,
+                    };
                 }
-                continue;
             }
-            let mut new_vel_dir: Vector3<f32> = zero();
-            new_vel_dir[axis] = new_vel_len.signum();
-            let move_length = new_vel_len * TIMESTEP as f32;
-            let rc = RaycastQuery::new_directed(
-                old_pos,
-                new_vel_dir,
-                move_length + bound_length[axis],
-                world,
-                Some(&voxels),
-                None,
-            )
-            .execute();
-            phys.against_wall[axis * 2] = false;
-            phys.against_wall[axis * 2 + 1] = false;
-            new_pos[axis] = match rc.hit {
-                Hit::Voxel { normal, .. } => {
-                    new_vel[normal.to_unsigned_axis_index()] = 0.0;
-                    phys.against_wall[normal.opposite().to_signed_axis_index()] = true;
-                    old_pos[axis] + new_vel_dir[axis] * (rc.distance - bound_length[axis])
-                }
-                Hit::Entity => {
-                    unreachable!();
-                }
-                Hit::Nothing => old_pos[axis] + move_length,
-            };
         }
         // store new values
         loc.position = new_pos;

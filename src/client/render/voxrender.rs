@@ -26,6 +26,7 @@ use std::thread;
 use thread_local::CachedThreadLocal;
 use vk_mem as vma;
 use world::ecs::{CLocation, ECSHandler};
+use world::entities::player::PLAYER_EYE_HEIGHT;
 use world::{blockidx_from_blockpos, chunkpos_from_blockpos, World};
 use world::{ChunkPosition, CHUNK_DIM};
 
@@ -933,7 +934,10 @@ impl VoxelRenderer {
             match client.camera_settings {
                 CameraSettings::FPS { .. } => {
                     mrot = glm::quat_to_mat3(&player_ang);
-                    mview = mrot.to_homogeneous() * glm::translation(&-player_pos);
+                    mview = mrot.to_homogeneous()
+                        * glm::translation(
+                            &-(player_pos + vec3(0.0, PLAYER_EYE_HEIGHT / 2.0, 0.0)),
+                        );
                 }
             }
 
@@ -941,7 +945,7 @@ impl VoxelRenderer {
             use world::raycast;
             fwd = mrot.transpose() * vec3(0.0, 0.0, 1.0);
             let rc = raycast::RaycastQuery::new_directed(
-                player_pos,
+                player_pos + vec3(0.0, PLAYER_EYE_HEIGHT / 2.0, 0.0),
                 fwd,
                 32.0,
                 &world,

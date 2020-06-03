@@ -1,5 +1,4 @@
 use super::*;
-use ash;
 
 /// Simplified wrapper around `vkCmdPipelineBarrier`.
 /// The mapping functions defined above are used to translate the passed in

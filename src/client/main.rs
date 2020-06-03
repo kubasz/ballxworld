@@ -23,6 +23,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use world::blocks::register_standard_blocks;
 use world::ecs::*;
+use world::entities::player::PLAYER_EYE_HEIGHT;
 use world::generation::WorldLoadGen;
 use world::{blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition};
 
@@ -308,7 +309,7 @@ pub fn client_main() {
                 let mview = glm::quat_to_mat3(&player_ang).transpose();
                 let fwd = mview * vec3(0.0, 0.0, 1.0);
                 let rc = raycast::RaycastQuery::new_directed(
-                    player_pos,
+                    player_pos + vec3(0.0, PLAYER_EYE_HEIGHT / 2.0, 0.0),
                     fwd,
                     32.0,
                     &world,
