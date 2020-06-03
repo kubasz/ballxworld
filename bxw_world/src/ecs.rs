@@ -105,6 +105,8 @@ pub struct CPhysics {
     id: ValidEntityID,
     pub frozen: bool,
     pub mass: f32,
+    /// X-, X+, Y-, Y+, Z-, Z+
+    pub against_wall: [bool; 6],
     pub control_target_velocity: Vector3<f32>,
     pub control_max_force: Vector3<f32>,
     /// Acceleration impulse applied on the next physics tick (and then reset to 0)
@@ -117,6 +119,7 @@ impl CPhysics {
             id,
             frozen: false,
             mass: 1.0,
+            against_wall: [false; 6],
             control_target_velocity: vec3(0.0, 0.0, 0.0),
             control_max_force: vec3(0.0, 0.0, 0.0),
             control_frame_impulse: vec3(0.0, 0.0, 0.0),

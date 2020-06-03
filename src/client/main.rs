@@ -20,10 +20,11 @@ use std::io::{Read, Write};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use world::blocks::register_standard_blocks;
-use world::ecs::{CLoadAnchor, CLocation, ECSHandler};
+use world::ecs::*;
 use world::generation::WorldLoadGen;
 use world::{blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition};
 
+use world::physics::SMALL_V_CUTOFF;
 use world::physics::TIMESTEP as PHYSICS_FRAME_TIME;
 
 #[derive(Debug, Clone, Default)]
@@ -177,16 +178,28 @@ pub fn client_main() {
                 lp_loc.orientation = UnitQuaternion::new_normalize(qpitch * qyaw);
 
                 let mview = glm::quat_to_mat3(&lp_loc.orientation).transpose();
+                let lp_phys: &mut CPhysics = entities.ecs.get_component_mut(local_player).unwrap();
 
                 let mut wvel = Vector3::new(
                     input_mgr.input_state.walk.x,
                     0.0,
                     input_mgr.input_state.walk.y,
                 );
+                wvel *= 3.0; // Walk 3m/s
                 if input_mgr.input_state.sprint.is_active() {
                     wvel *= 3.0;
                 }
-                lp_loc.position += mview * wvel;
+                let mut tvel = mview * wvel;
+                let tspeed = tvel.magnitude();
+                tvel.y = 0.0;
+                lp_phys.control_target_velocity = if tspeed < SMALL_V_CUTOFF {
+                    zero()
+                } else {
+                    tvel.normalize() * tspeed
+                };
+                if input_mgr.input_state.jump.is_active() && lp_phys.against_wall[2] {
+                    lp_phys.control_frame_impulse.y = 250.0;
+                }
                 //lp_loc.velocity = (PHYSICS_FRAME_TIME as f32) * wvel;
                 drop(entities);
                 //
@@ -264,13 +277,13 @@ pub fn client_main() {
             player_ang = lp_loc.orientation;
             DEBUG_DATA
                 .local_player_x
-                .store(lp_loc.position.x as i64, Ordering::Release);
+                .store((lp_loc.position.x * 10.0) as i64, Ordering::Release);
             DEBUG_DATA
                 .local_player_y
-                .store(lp_loc.position.y as i64, Ordering::Release);
+                .store((lp_loc.position.y * 10.0) as i64, Ordering::Release);
             DEBUG_DATA
                 .local_player_z
-                .store(lp_loc.position.z as i64, Ordering::Release);
+                .store((lp_loc.position.z * 10.0) as i64, Ordering::Release);
         }
         {
             let voxels = world.voxels.read();

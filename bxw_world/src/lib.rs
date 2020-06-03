@@ -80,6 +80,32 @@ impl Direction {
             ZPlus => vec3(0, 0, 1),
         }
     }
+
+    /// 0..=2
+    pub fn to_unsigned_axis_index(self) -> usize {
+        use Direction::*;
+        match self {
+            XMinus => 0,
+            XPlus => 0,
+            YMinus => 1,
+            YPlus => 1,
+            ZMinus => 2,
+            ZPlus => 2,
+        }
+    }
+
+    /// 0..=5
+    pub fn to_signed_axis_index(self) -> usize {
+        use Direction::*;
+        match self {
+            XMinus => 0,
+            XPlus => 1,
+            YMinus => 2,
+            YPlus => 3,
+            ZMinus => 4,
+            ZPlus => 5,
+        }
+    }
 }
 
 pub type ChunkPosition = Vector3<i32>;

@@ -11,7 +11,7 @@ pub struct DebugData {
     pub fps: AtomicU32,
     pub ft_max_us: AtomicU32,
     pub ft_avg_us: AtomicU32,
-    // Coordinate info
+    // Coordinate info in tenths of a meter
     pub local_player_x: AtomicI64,
     pub local_player_y: AtomicI64,
     pub local_player_z: AtomicI64,
@@ -37,16 +37,16 @@ impl DebugData {
             r#"FPS: {fps}
 FT max ms: {ftmax:.1}
 FT avg ms: {ftavg:.1}
-Pos: {lpx} {lpy} {lpz}
+Pos: {lpx:.1} {lpy:.1} {lpz:.1}
 
 Heap usage: {heap}
 GPU heap usage: {gpuheap}"#,
             fps = self.fps.load(Ordering::Acquire),
             ftmax = self.ft_max_us.load(Ordering::Acquire) as f32 / 1000.0,
             ftavg = self.ft_avg_us.load(Ordering::Acquire) as f32 / 1000.0,
-            lpx = self.local_player_x.load(Ordering::Acquire),
-            lpy = self.local_player_y.load(Ordering::Acquire),
-            lpz = self.local_player_z.load(Ordering::Acquire),
+            lpx = self.local_player_x.load(Ordering::Acquire) as f32 / 10.0,
+            lpy = self.local_player_y.load(Ordering::Acquire) as f32 / 10.0,
+            lpz = self.local_player_z.load(Ordering::Acquire) as f32 / 10.0,
             heap = format_bytes(self.heap_usage_bytes.load(Ordering::Acquire)),
             gpuheap = format_bytes(self.gpu_usage_bytes.load(Ordering::Acquire)),
         )
