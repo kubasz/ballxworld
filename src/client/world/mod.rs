@@ -5,7 +5,7 @@ use world::{VoxelRegistry, World};
 
 #[derive(Clone, Debug)]
 pub enum CameraSettings {
-    FPS { pitch: f32, yaw: f32 },
+    FPS { pitch: f64, yaw: f64 },
 }
 
 #[derive(Clone, Debug)]

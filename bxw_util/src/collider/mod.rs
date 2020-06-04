@@ -1,4 +1,3 @@
-
 use crate::math::*;
 
 #[repr(i32)]
@@ -90,5 +89,27 @@ impl Direction {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct AABB {
     pub mins: Vector3<f64>,
-    pub maxs: Vector3<f64>
+    pub maxs: Vector3<f64>,
+}
+
+impl AABB {
+    pub fn from_min_max(mins: Vector3<f64>, maxs: Vector3<f64>) -> Self {
+        AABB { mins, maxs }
+    }
+
+    pub fn from_center_size(center: Vector3<f64>, size: Vector3<f64>) -> Self {
+        let halfsize = size / 2.0;
+        AABB {
+            mins: center - halfsize,
+            maxs: center + halfsize,
+        }
+    }
+
+    pub fn size(&self) -> Vector3<f64> {
+        self.maxs - self.mins
+    }
+
+    pub fn center(&self) -> Vector3<f64> {
+        (self.maxs + self.mins) / 2.0
+    }
 }

@@ -6,15 +6,15 @@ use bxw_util::*;
 use itertools::Itertools;
 
 pub const TIMESTEP: f64 = 1.0 / 60.0;
-pub const SPEED_LIMIT_MPS: f32 = 1000.0;
-pub const SPEED_LIMIT_MPS_SQ: f32 = SPEED_LIMIT_MPS * SPEED_LIMIT_MPS;
-pub const DESUFFOCATION_SPEED: f32 = 0.1;
-pub const GRAVITY_ACCEL: f32 = 30.0;
-pub const AIR_FRICTION_SQ: f32 = 0.5 * 0.5 * 1.2;
+pub const SPEED_LIMIT_MPS: f64 = 1000.0;
+pub const SPEED_LIMIT_MPS_SQ: f64 = SPEED_LIMIT_MPS * SPEED_LIMIT_MPS;
+pub const DESUFFOCATION_SPEED: f64 = 0.1;
+pub const GRAVITY_ACCEL: f64 = 30.0;
+pub const AIR_FRICTION_SQ: f64 = 0.5 * 0.5 * 1.2;
 // 1/2 * pyramid drag coefficient * air density
-pub const SMALL_V_CUTOFF: f32 = 1.0e-6;
+pub const SMALL_V_CUTOFF: f64 = 1.0e-6;
 
-fn check_suffocation(world: &World, voxels: &WVoxels, position: Vector3<f32>) -> bool {
+fn check_suffocation(world: &World, voxels: &WVoxels, position: Vector3<f64>) -> bool {
     let bpos = position.map(|c| c.floor() as i32);
     let bidx = world.get_vcache().get_block(voxels, bpos);
     if let Some(bidx) = bidx {
@@ -35,9 +35,7 @@ pub fn world_physics_tick(world: &World) {
         let mass = phys.mass;
         let area_est = match loc.bounding_shape {
             BoundingShape::Point => 0.05,
-            BoundingShape::Ball { r } => r * r * f32::pi(),
-            BoundingShape::Capsule { r, h } => 2.0 * r * h,
-            BoundingShape::Box { size } => size.x * size.z,
+            BoundingShape::AxisAlignedBox(aabb) => aabb.size().x * aabb.size().y,
         };
         let old_pos = loc.position;
         let old_vel = loc.velocity;
@@ -58,7 +56,7 @@ pub fn world_physics_tick(world: &World) {
         // control force
         let control_dv = phys.control_target_velocity - old_vel;
         let control_da = {
-            let mut control_da = control_dv / TIMESTEP as f32;
+            let mut control_da = control_dv / TIMESTEP;
             for comp in 0..3 {
                 control_da[comp] = control_da[comp]
                     .min(phys.control_max_force[comp] / mass)
@@ -72,7 +70,7 @@ pub fn world_physics_tick(world: &World) {
         };
         new_accel += control_da;
         // velocity integration
-        let mut new_vel = old_vel + new_accel * TIMESTEP as f32;
+        let mut new_vel = old_vel + new_accel * TIMESTEP;
         for comp in 0..new_vel.len() {
             if new_vel[comp].abs() < SMALL_V_CUTOFF {
                 new_vel[comp] = 0.0;
@@ -82,8 +80,8 @@ pub fn world_physics_tick(world: &World) {
             new_vel = new_vel.normalize() * SPEED_LIMIT_MPS;
         }
         // position integration with collision correction
-        let mut new_pos = old_pos + new_vel * TIMESTEP as f32;
-        /*let entity_shape: Box<dyn nc::shape::Shape<f32>> = match loc.bounding_shape {
+        let mut new_pos = old_pos + new_vel * TIMESTEP;
+        /*let entity_shape: Box<dyn nc::shape::Shape<f64>> = match loc.bounding_shape {
             BoundingShape::Point => Box::new(nc::shape::Ball::new(0.05)),
             BoundingShape::Ball { r } => Box::new(nc::shape::Ball::new(r)),
             BoundingShape::Capsule { r, h } => Box::new(nc::shape::Capsule::new(h / 2.0, r)),
@@ -117,9 +115,9 @@ pub fn world_physics_tick(world: &World) {
                 let bshape = &bdef.collision_shape;
                 let mut bisometry = bdef.collision_offset;
                 bisometry.append_translation_mut(&na::Translation3::new(
-                    bpos.x as f32,
-                    bpos.y as f32,
-                    bpos.z as f32,
+                    bpos.x as f64,
+                    bpos.y as f64,
+                    bpos.z as f64,
                 ));
                 let contact = nc::query::contact(
                     &bisometry,
@@ -184,14 +182,14 @@ pub fn world_physics_tick(world: &World) {
                 let mut desuf_dir = YPlus;
                 for dir in &[YPlus, YMinus, XMinus, XPlus, ZMinus, ZPlus] {
                     let dir_suffocation =
-                        check_suffocation(world, &voxels, old_pos + dir.to_vec().map(|c| c as f32));
+                        check_suffocation(world, &voxels, old_pos + dir.to_vec().map(|c| c as f64));
                     if !dir_suffocation {
                         desuf_dir = *dir;
                         break;
                     }
                 }
-                new_vel = desuf_dir.to_vec().map(|c| c as f32) * DESUFFOCATION_SPEED;
-                new_pos = old_pos + new_vel * TIMESTEP as f32;
+                new_vel = desuf_dir.to_vec().map(|c| c as f64) * DESUFFOCATION_SPEED;
+                new_pos = old_pos + new_vel * TIMESTEP;
             } else {
                 new_pos = old_pos;
                 new_vel = zero();

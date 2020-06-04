@@ -823,7 +823,9 @@ impl VoxelRenderer {
                 .get_component(fctx.client_world.local_player)
                 .unwrap();
             ref_pos = lp_loc.position;
-            let mrot = glm::quat_to_mat3(&lp_loc.orientation).transpose();
+            let mrot = glm::quat_to_mat3(&lp_loc.orientation)
+                .transpose()
+                .map(|c| c as f32);
             ref_fdir = mrot * vec3(0.0, 0.0, 1.0);
         }
         let cposition = chunkpos_from_blockpos(ref_pos.map(|x| x as i32));
@@ -933,10 +935,11 @@ impl VoxelRenderer {
             let mrot: Matrix3<f32>;
             match client.camera_settings {
                 CameraSettings::FPS { .. } => {
-                    mrot = glm::quat_to_mat3(&player_ang);
+                    mrot = glm::quat_to_mat3(&player_ang).map(|c| c as f32);
                     mview = mrot.to_homogeneous()
                         * glm::translation(
-                            &-(player_pos + vec3(0.0, PLAYER_EYE_HEIGHT / 2.0, 0.0)),
+                            &-(player_pos.map(|c| c as f32)
+                                + vec3(0.0, PLAYER_EYE_HEIGHT as f32 / 2.0, 0.0)),
                         );
                 }
             }
@@ -946,7 +949,7 @@ impl VoxelRenderer {
             fwd = mrot.transpose() * vec3(0.0, 0.0, 1.0);
             let rc = raycast::RaycastQuery::new_directed(
                 player_pos + vec3(0.0, PLAYER_EYE_HEIGHT / 2.0, 0.0),
-                fwd,
+                fwd.map(|c| c as f64),
                 32.0,
                 &world,
                 Some(&voxels),
@@ -1031,7 +1034,7 @@ impl VoxelRenderer {
         let always_dist = (CHUNK_DIM * CHUNK_DIM * 5) as f32;
         for (pos, chunk) in self.drawn_chunks.iter().filter(|c| c.1.icount > 0) {
             let ch_offset = pos.map(|x| (x as f32) * (CHUNK_DIM as f32));
-            let rpos = ch_offset - (player_pos - fwd * (CHUNK_DIM as f32));
+            let rpos = ch_offset - (player_pos.map(|c| c as f32) - fwd * (CHUNK_DIM as f32));
             let ang = fwd.dot(&rpos);
             if ang < 0.0 && rpos.norm_squared() > always_dist {
                 continue;

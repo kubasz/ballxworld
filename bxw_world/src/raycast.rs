@@ -7,9 +7,9 @@ use math::*;
 
 #[derive(Clone)]
 pub struct RaycastQuery<'q> {
-    pub start_point: Vector3<f32>,
-    pub direction: Vector3<f32>,
-    pub distance_limit: f32,
+    pub start_point: Vector3<f64>,
+    pub direction: Vector3<f64>,
+    pub distance_limit: f64,
     pub world: &'q World,
     pub hit_voxels: Option<&'q WVoxels>,
     pub hit_entities: Option<&'q WEntities>,
@@ -36,15 +36,15 @@ impl<'q> Default for Hit {
 #[derive(Clone)]
 pub struct RaycastResult {
     pub hit: Hit,
-    pub hit_point: Vector3<f32>,
-    pub distance: f32,
+    pub hit_point: Vector3<f64>,
+    pub distance: f64,
 }
 
 impl<'q> RaycastQuery<'q> {
     pub fn new_directed(
-        start_point: Vector3<f32>,
-        direction: Vector3<f32>,
-        distance_limit: f32,
+        start_point: Vector3<f64>,
+        direction: Vector3<f64>,
+        distance_limit: f64,
         world: &'q World,
         hit_voxels: Option<&'q WVoxels>,
         hit_entities: Option<&'q WEntities>,
@@ -60,9 +60,9 @@ impl<'q> RaycastQuery<'q> {
     }
 
     pub fn new_oriented(
-        start_point: Vector3<f32>,
-        orientation: UnitQuaternion<f32>,
-        distance_limit: f32,
+        start_point: Vector3<f64>,
+        orientation: UnitQuaternion<f64>,
+        distance_limit: f64,
         world: &'q World,
         hit_voxels: Option<&'q WVoxels>,
         hit_entities: Option<&'q WEntities>,
@@ -82,14 +82,14 @@ impl<'q> RaycastQuery<'q> {
         let distance_limit = self.distance_limit.min(1000.0);
         let direction = self
             .direction
-            .map(|c| if c == 0.0 { std::f32::EPSILON } else { c });
+            .map(|c| if c == 0.0 { std::f64::EPSILON } else { c });
 
         // fast voxel traversal
         // https://www.gamedev.net/blogs/entry/2265248-voxel-traversal-algorithm-ray-casting/
         // http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.42.3443&rep=rep1&type=pdf
         if let Some(voxels) = self.hit_voxels {
-            let mut intersect_pos: Vector3<f32> = self.start_point;
-            let offset_start: Vector3<f32> = self.start_point + vec3(0.5, 0.5, 0.5);
+            let mut intersect_pos: Vector3<f64> = self.start_point;
+            let offset_start: Vector3<f64> = self.start_point + vec3(0.5, 0.5, 0.5);
             let mut bpos: Vector3<i32> = offset_start.map(|c| c.floor() as i32);
             let mut cpos: Vector3<i32> = chunkpos_from_blockpos(bpos);
             let end_bpos: Vector3<i32> =
@@ -97,11 +97,11 @@ impl<'q> RaycastQuery<'q> {
             let iters: i32 = (end_bpos - bpos).iter().map(|c| c.abs()).sum::<i32>() + 1;
 
             let step: Vector3<i32> = direction.map(|c| c.signum() as i32);
-            let next_vox_boundary: Vector3<f32> =
-                (bpos + step.map(|c| if c >= 0 { 1 } else { 0 })).map(|c| c as f32);
-            let mut t_max: Vector3<f32> =
+            let next_vox_boundary: Vector3<f64> =
+                (bpos + step.map(|c| if c >= 0 { 1 } else { 0 })).map(|c| c as f64);
+            let mut t_max: Vector3<f64> =
                 (next_vox_boundary - offset_start).component_div(&direction);
-            let t_delta: Vector3<f32> = step.map(|c| c as f32).component_div(&direction);
+            let t_delta: Vector3<f64> = step.map(|c| c as f64).component_div(&direction);
             let normals: [Direction; 3] = [
                 if step.x < 0 {
                     Direction::XPlus

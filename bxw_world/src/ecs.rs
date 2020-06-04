@@ -1,3 +1,4 @@
+use bxw_util::collider::AABB;
 use bxw_util::math::*;
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -63,19 +64,17 @@ pub trait Component {
 #[derive(Clone, Debug)]
 pub enum BoundingShape {
     Point,
-    Ball { r: f32 },
-    Capsule { r: f32, h: f32 },
-    Box { size: Vector3<f32> },
+    AxisAlignedBox(AABB),
 }
 
 #[derive(Clone, Debug)]
 pub struct CLocation {
     id: ValidEntityID,
-    pub position: Vector3<f32>,
-    pub velocity: Vector3<f32>,
-    pub orientation: UnitQuaternion<f32>,
+    pub position: Vector3<f64>,
+    pub velocity: Vector3<f64>,
+    pub orientation: UnitQuaternion<f64>,
     pub bounding_shape: BoundingShape,
-    pub bounding_offset: Vector3<f32>,
+    pub bounding_offset: Vector3<f64>,
 }
 
 impl CLocation {
@@ -105,13 +104,13 @@ impl Component for CLocation {
 pub struct CPhysics {
     id: ValidEntityID,
     pub frozen: bool,
-    pub mass: f32,
+    pub mass: f64,
     /// X-, X+, Y-, Y+, Z-, Z+
     pub against_wall: [bool; 6],
-    pub control_target_velocity: Vector3<f32>,
-    pub control_max_force: Vector3<f32>,
+    pub control_target_velocity: Vector3<f64>,
+    pub control_max_force: Vector3<f64>,
     /// Acceleration impulse applied on the next physics tick (and then reset to 0)
-    pub control_frame_impulse: Vector3<f32>,
+    pub control_frame_impulse: Vector3<f64>,
 }
 
 impl CPhysics {

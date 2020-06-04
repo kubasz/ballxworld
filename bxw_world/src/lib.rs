@@ -8,11 +8,11 @@ pub mod registry;
 pub mod stdgen;
 
 use crate::ecs::ECS;
+use bxw_util::math::*;
 use bxw_util::*;
 use divrem::{DivFloor, RemFloor};
 use fnv::FnvHashMap;
 use lru::LruCache;
-use bxw_util::math::*;
 use parking_lot::RwLock;
 pub use registry::VoxelRegistry;
 use std::cell::{RefCell, RefMut};
@@ -23,8 +23,8 @@ pub const CHUNK_DIM: usize = 32;
 pub const CHUNK_DIM2: usize = CHUNK_DIM * CHUNK_DIM;
 pub const CHUNK_DIM3: usize = CHUNK_DIM * CHUNK_DIM * CHUNK_DIM;
 
-pub use bxw_util::collider::{Direction, ALL_DIRS};
 use bxw_util::collider::AABB;
+pub use bxw_util::collider::{Direction, ALL_DIRS};
 
 pub type ChunkPosition = Vector3<i32>;
 pub type BlockPosition = Vector3<i32>;

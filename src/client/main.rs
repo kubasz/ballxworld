@@ -17,7 +17,7 @@ use bxw_util::math::*;
 use bxw_util::*;
 use std::borrow::Cow;
 use std::collections::VecDeque;
-use std::f32::consts::PI;
+use std::f64::consts::PI;
 use std::io::{Read, Write};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -139,11 +139,14 @@ pub fn client_main() {
 
             let local_player = client_world.local_player;
 
-            let (dyaw, dpitch) = (input_mgr.input_state.look.x, input_mgr.input_state.look.y);
+            let (dyaw, dpitch) = (
+                input_mgr.input_state.look.x as f64,
+                input_mgr.input_state.look.y as f64,
+            );
             input_mgr.input_state.look = zero();
             let CameraSettings::FPS { pitch, yaw } = &mut client_world.camera_settings;
             *pitch -= dpitch / 60.0;
-            *pitch = f32::min(f32::max(*pitch, -PI / 4.0 + 0.01), PI / 4.0 - 0.01);
+            *pitch = f64::min(f64::max(*pitch, -PI / 4.0 + 0.01), PI / 4.0 - 0.01);
             *yaw -= dyaw / 60.0;
             *yaw %= 2.0 * PI;
             let (pitch, yaw) = (*pitch, *yaw);
@@ -184,9 +187,9 @@ pub fn client_main() {
                 let lp_phys: &mut CPhysics = entities.ecs.get_component_mut(local_player).unwrap();
 
                 let mut wvel = Vector3::new(
-                    input_mgr.input_state.walk.x,
+                    input_mgr.input_state.walk.x as f64,
                     0.0,
-                    input_mgr.input_state.walk.y,
+                    input_mgr.input_state.walk.y as f64,
                 );
                 wvel *= 6.0; // Walk 6m/s
                 if input_mgr.input_state.sprint.is_active() {

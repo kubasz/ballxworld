@@ -1,7 +1,7 @@
 use crate::{TextureMapping, VoxelDatum, VoxelDefinition, VoxelId};
+use bxw_util::collider::AABB;
 use bxw_util::lazy_static::lazy_static;
 use bxw_util::math::*;
-use bxw_util::collider::AABB;
 use bxw_util::*;
 use std::collections::HashMap;
 use std::sync::Arc;
