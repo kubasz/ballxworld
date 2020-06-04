@@ -28,9 +28,7 @@ fn check_suffocation(world: &World, voxels: &WVoxels, position: Vector3<f32>) ->
 pub fn world_physics_tick(world: &World) {
     let voxels = world.voxels.read();
     let mut entities = world.entities.write();
-    let mut contact_list = Vec::with_capacity(8);
     for (phys, loc) in entities.ecs.iter_mut_physics() {
-        contact_list.clear();
         if phys.frozen {
             continue;
         }
@@ -85,7 +83,7 @@ pub fn world_physics_tick(world: &World) {
         }
         // position integration with collision correction
         let mut new_pos = old_pos + new_vel * TIMESTEP as f32;
-        let entity_shape: Box<dyn nc::shape::Shape<f32>> = match loc.bounding_shape {
+        /*let entity_shape: Box<dyn nc::shape::Shape<f32>> = match loc.bounding_shape {
             BoundingShape::Point => Box::new(nc::shape::Ball::new(0.05)),
             BoundingShape::Ball { r } => Box::new(nc::shape::Ball::new(r)),
             BoundingShape::Capsule { r, h } => Box::new(nc::shape::Capsule::new(h / 2.0, r)),
@@ -102,11 +100,10 @@ pub fn world_physics_tick(world: &World) {
             .maxs()
             .to_homogeneous()
             .xyz()
-            .map(|c| c.ceil() as i32);
+            .map(|c| c.ceil() as i32);*/
         phys.against_wall = [false; 6];
-        let mut contacts = 0;
 
-        for vx_pos in (0..3)
+        /*for vx_pos in (0..3)
             .map(|x| vx_mins[x]..=vx_maxs[x])
             .multi_cartesian_product()
         {
@@ -166,7 +163,7 @@ pub fn world_physics_tick(world: &World) {
                 new_vel -= contact.normal.as_ref() * vel_len;
                 entity_pos = nc::math::Isometry::translation(new_pos.x, new_pos.y, new_pos.z);
             }
-        }
+        }*/
         // no contact if moving away from a surface
         for axis in 0..3 {
             if new_vel[axis] > 0.1 {
@@ -176,7 +173,7 @@ pub fn world_physics_tick(world: &World) {
             }
         }
         *bxw_util::debug_data::DEBUG_DATA.custom_string.lock() =
-            format!("{:?}\n{:?}\n{}", phys.against_wall, old_vel, contacts);
+            format!("{:?}\n{:?}", phys.against_wall, old_vel);
 
         // check for suffocation
         let new_suffocation = check_suffocation(world, &voxels, new_pos);

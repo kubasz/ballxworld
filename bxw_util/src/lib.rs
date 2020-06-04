@@ -6,7 +6,6 @@ pub use itertools;
 pub use lazy_static;
 pub use lru;
 pub use nalgebra as na;
-pub use ncollide3d as nc;
 pub use num_traits;
 pub use parking_lot;
 pub use rand;
@@ -20,3 +19,4 @@ pub use toml_edit;
 // Own modules
 pub mod debug_data;
 pub mod math;
+pub mod collider;
