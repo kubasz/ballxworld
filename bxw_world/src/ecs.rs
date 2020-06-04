@@ -63,8 +63,19 @@ pub trait Component {
 
 #[derive(Clone, Debug)]
 pub enum BoundingShape {
-    Point,
+    Point { offset: Vector3<f64> },
     AxisAlignedBox(AABB),
+}
+
+impl BoundingShape {
+    pub fn aabb(&self, position: Vector3<f64>) -> AABB {
+        match self {
+            BoundingShape::Point { offset } => {
+                AABB::from_center_size(position + offset, vec3(0.05, 0.05, 0.05))
+            }
+            BoundingShape::AxisAlignedBox(aabb) => aabb.translate(position),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -74,7 +85,6 @@ pub struct CLocation {
     pub velocity: Vector3<f64>,
     pub orientation: UnitQuaternion<f64>,
     pub bounding_shape: BoundingShape,
-    pub bounding_offset: Vector3<f64>,
 }
 
 impl CLocation {
@@ -84,8 +94,7 @@ impl CLocation {
             position: vec3(0.0, 0.0, 0.0),
             velocity: vec3(0.0, 0.0, 0.0),
             orientation: one(),
-            bounding_shape: BoundingShape::Point,
-            bounding_offset: vec3(0.0, 0.0, 0.0),
+            bounding_shape: BoundingShape::Point { offset: zero() },
         }
     }
 }

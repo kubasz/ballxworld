@@ -1,6 +1,7 @@
 use crate::ecs::*;
 //use crate::raycast::*;
-use crate::{Direction, WVoxels, World};
+use crate::{blockpos_from_worldpos, Direction, WVoxels, World};
+use bxw_util::collider::AABB;
 use bxw_util::math::*;
 use bxw_util::*;
 use itertools::Itertools;
@@ -8,14 +9,16 @@ use itertools::Itertools;
 pub const TIMESTEP: f64 = 1.0 / 60.0;
 pub const SPEED_LIMIT_MPS: f64 = 1000.0;
 pub const SPEED_LIMIT_MPS_SQ: f64 = SPEED_LIMIT_MPS * SPEED_LIMIT_MPS;
-pub const DESUFFOCATION_SPEED: f64 = 0.1;
+pub const DESUFFOCATION_SPEED: f64 = 10.0;
 pub const GRAVITY_ACCEL: f64 = 30.0;
 pub const AIR_FRICTION_SQ: f64 = 0.5 * 0.5 * 1.2;
 // 1/2 * pyramid drag coefficient * air density
 pub const SMALL_V_CUTOFF: f64 = 1.0e-6;
+pub const WORLD_LIMIT: f64 = i32::max_value() as f64 / 4.0;
+const TOUCH_EPS: f64 = 1.0e-2;
 
 fn check_suffocation(world: &World, voxels: &WVoxels, position: Vector3<f64>) -> bool {
-    let bpos = position.map(|c| c.floor() as i32);
+    let bpos = blockpos_from_worldpos(position);
     let bidx = world.get_vcache().get_block(voxels, bpos);
     if let Some(bidx) = bidx {
         let vdef = world.vregistry.get_definition_from_id(bidx);
@@ -25,28 +28,36 @@ fn check_suffocation(world: &World, voxels: &WVoxels, position: Vector3<f64>) ->
     }
 }
 
+fn drag_force(loc: &CLocation, velocity: Vector3<f64>) -> Vector3<f64> {
+    let area_est = match loc.bounding_shape {
+        BoundingShape::Point { .. } => 0.05,
+        BoundingShape::AxisAlignedBox(aabb) => aabb.size().x * aabb.size().y,
+    };
+    velocity.component_mul(&velocity) * AIR_FRICTION_SQ * area_est
+}
+
 pub fn world_physics_tick(world: &World) {
     let voxels = world.voxels.read();
     let mut entities = world.entities.write();
+    let mut intersections = Vec::with_capacity(10);
     for (phys, loc) in entities.ecs.iter_mut_physics() {
         if phys.frozen {
             continue;
         }
         let mass = phys.mass;
-        let area_est = match loc.bounding_shape {
-            BoundingShape::Point => 0.05,
-            BoundingShape::AxisAlignedBox(aabb) => aabb.size().x * aabb.size().y,
-        };
+
         let old_pos = loc.position;
         let old_vel = loc.velocity;
+        let old_aabb = loc.bounding_shape.aabb(old_pos);
         let mut new_accel = vec3(0.0, 0.0, 0.0);
+        // determine wall contacts
+
+        phys.against_wall = determine_wall_contacts(old_aabb, world, &voxels);
+
         // air friction
-        let drag_force = old_vel.component_mul(&old_vel) * AIR_FRICTION_SQ * area_est;
-        new_accel -= drag_force / mass;
+        new_accel -= drag_force(loc, old_vel) / mass;
         // gravity
-        if !phys.against_wall[2] {
-            new_accel += vec3(0.0, -GRAVITY_ACCEL, 0.0);
-        }
+        new_accel += vec3(0.0, -GRAVITY_ACCEL, 0.0);
         // control impulse
         new_accel += phys.control_frame_impulse;
         phys.control_frame_impulse /= 2.0; // exponential backoff
@@ -61,19 +72,31 @@ pub fn world_physics_tick(world: &World) {
                 control_da[comp] = control_da[comp]
                     .min(phys.control_max_force[comp] / mass)
                     .max(-phys.control_max_force[comp] / mass);
-                let sixaxis = comp as i32 * 2 + (control_da[comp].signum() as i32 + 1) / 2;
-                if phys.against_wall[sixaxis as usize] {
-                    control_da[comp] = 0.0;
-                }
             }
             control_da
         };
         new_accel += control_da;
+        let pred_vel = old_vel + new_accel * TIMESTEP;
+        // don't accelerate towards a wall if you're already touching it
+        for axis in 0..3 {
+            if new_accel[axis] < 0.0 && pred_vel[axis] <= 0.0 && phys.against_wall[axis * 2]
+                || new_accel[axis] > 0.0 && pred_vel[axis] >= 0.0 && phys.against_wall[axis * 2 + 1]
+            {
+                new_accel[axis] = 0.0;
+            }
+        }
         // velocity integration
         let mut new_vel = old_vel + new_accel * TIMESTEP;
-        for comp in 0..new_vel.len() {
-            if new_vel[comp].abs() < SMALL_V_CUTOFF {
-                new_vel[comp] = 0.0;
+        let orig_new_vel = new_vel;
+        for axis in 0..new_vel.len() {
+            if new_vel[axis].abs() < SMALL_V_CUTOFF {
+                new_vel[axis] = 0.0;
+            }
+            // don't move towards walls
+            if new_vel[axis] < 0.0 && phys.against_wall[axis * 2]
+                || new_vel[axis] > 0.0 && phys.against_wall[axis * 2 + 1]
+            {
+                new_vel[axis] = 0.0;
             }
         }
         if new_vel.magnitude_squared() > SPEED_LIMIT_MPS_SQ {
@@ -81,97 +104,51 @@ pub fn world_physics_tick(world: &World) {
         }
         // position integration with collision correction
         let mut new_pos = old_pos + new_vel * TIMESTEP;
-        /*let entity_shape: Box<dyn nc::shape::Shape<f64>> = match loc.bounding_shape {
-            BoundingShape::Point => Box::new(nc::shape::Ball::new(0.05)),
-            BoundingShape::Ball { r } => Box::new(nc::shape::Ball::new(r)),
-            BoundingShape::Capsule { r, h } => Box::new(nc::shape::Capsule::new(h / 2.0, r)),
-            BoundingShape::Box { size } => Box::new(nc::shape::Cuboid::new(size / 2.0)),
-        };
-        let mut entity_pos = nc::math::Isometry::translation(new_pos.x, new_pos.y, new_pos.z);
-        let entity_aabb = entity_shape.aabb(&entity_pos);
-        let vx_mins: Vector3<i32> = entity_aabb
-            .mins()
-            .to_homogeneous()
-            .xyz()
-            .map(|c| c.floor() as i32);
-        let vx_maxs: Vector3<i32> = entity_aabb
-            .maxs()
-            .to_homogeneous()
-            .xyz()
-            .map(|c| c.ceil() as i32);*/
-        phys.against_wall = [false; 6];
-
-        /*for vx_pos in (0..3)
-            .map(|x| vx_mins[x]..=vx_maxs[x])
-            .multi_cartesian_product()
         {
-            let bpos: Vector3<i32> = vec3(vx_pos[0], vx_pos[1], vx_pos[2]);
-            let bidx = world.get_vcache().get_block(&voxels, bpos);
-            if let Some(bidx) = bidx {
-                let bdef = world.vregistry.get_definition_from_id(bidx);
-                if !bdef.has_collisions {
-                    continue;
+            for _iter in 0..4 {
+                let new_aabb = loc.bounding_shape.aabb(new_pos);
+                if !aabb_voxel_intersection(new_aabb, world, &voxels, Some(&mut intersections)) {
+                    break;
                 }
-                let bshape = &bdef.collision_shape;
-                let mut bisometry = bdef.collision_offset;
-                bisometry.append_translation_mut(&na::Translation3::new(
-                    bpos.x as f64,
-                    bpos.y as f64,
-                    bpos.z as f64,
-                ));
-                let contact = nc::query::contact(
-                    &bisometry,
-                    bshape.as_ref(),
-                    &entity_pos,
-                    entity_shape.as_ref(),
-                    0.1,
-                );
-                match contact {
-                    None => continue,
-                    Some(contact) => {
-                        contact_list.push((bisometry, bshape, contact));
+                // find the largest intersection volume and use as the heuristic for the most important intersection
+                let maxbox = intersections.iter().max_by(|&a, &b| {
+                    a.volume()
+                        .partial_cmp(&b.volume())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                if let Some(maxbox) = maxbox {
+                    // move away along axis with largest perpendicular surface area (which is the axis with the smallest dimension)
+                    let smaxis = maxbox.smallest_axis();
+                    let dist = maxbox.size()[smaxis]
+                        * if maxbox.center()[smaxis] < new_aabb.center()[smaxis] {
+                            1.0
+                        } else {
+                            -1.0
+                        };
+                    // clamp to move max one block size
+                    let dist = dist.max(-1.0).min(1.0);
+                    if dist != 0.0 {
+                        new_pos[smaxis] += dist;
+                        if new_vel[smaxis].signum() == -dist.signum() {
+                            new_vel[smaxis] = 0.0;
+                        }
+                    } else {
+                        break;
                     }
+                } else {
+                    break;
                 }
             }
         }
-        contact_list.sort_by_key(|c| (-c.2.depth * 1000.0) as i32);
-        for (bisometry, bshape, _orig_contact) in &contact_list {
-            if let Some(contact) = nc::query::contact(
-                &bisometry,
-                bshape.as_ref(),
-                &entity_pos,
-                entity_shape.as_ref(),
-                0.1,
-            ) {
-                if contact.depth <= -0.05 {
-                    continue;
-                }
-                for axis in 0..3 {
-                    if contact.normal[axis].abs() > 0.3 {
-                        phys.against_wall
-                            [axis * 2 + if contact.normal[axis] < 0.0 { 1 } else { 0 }] = true;
-                    }
-                }
-                contacts += 1;
-                if contact.depth <= 0.0 {
-                    continue;
-                }
-                new_pos += contact.normal.as_ref() * contact.depth;
-                let vel_len = contact.normal.dot(&new_vel);
-                new_vel -= contact.normal.as_ref() * vel_len;
-                entity_pos = nc::math::Isometry::translation(new_pos.x, new_pos.y, new_pos.z);
-            }
-        }*/
-        // no contact if moving away from a surface
-        for axis in 0..3 {
-            if new_vel[axis] > 0.1 {
-                phys.against_wall[axis * 2] = false;
-            } else if new_vel[axis] < 0.1 {
-                phys.against_wall[axis * 2 + 1] = false;
-            }
-        }
-        *bxw_util::debug_data::DEBUG_DATA.custom_string.lock() =
-            format!("{:?}\n{:?}", phys.against_wall, old_vel);
+
+        *bxw_util::debug_data::DEBUG_DATA.custom_string.lock() = format!(
+            "{:?}\nv:{:?}\na:{:?}\nonv:{:?}\nmin:{:?}\n",
+            phys.against_wall,
+            old_vel,
+            new_accel,
+            orig_new_vel,
+            loc.bounding_shape.aabb(new_pos).mins
+        );
 
         // check for suffocation
         let new_suffocation = check_suffocation(world, &voxels, new_pos);
@@ -198,5 +175,72 @@ pub fn world_physics_tick(world: &World) {
         // store new values
         loc.position = new_pos;
         loc.velocity = new_vel;
+        // clamp position to avoid any overflow problems
+        for c in 0..3 {
+            loc.position[c] = loc.position[c].max(-WORLD_LIMIT).min(WORLD_LIMIT);
+        }
     }
+}
+
+fn determine_wall_contacts(aabb: AABB, world: &World, voxels: &WVoxels) -> [bool; 6] {
+    let mut contacts = [false; 6];
+    for axis in 0..3 {
+        let mut minaabb = aabb;
+        let mut maxaabb = aabb;
+        for maxis in 0..3 {
+            if maxis == axis {
+                minaabb.maxs[maxis] = minaabb.mins[maxis] + TOUCH_EPS;
+                minaabb.mins[maxis] -= TOUCH_EPS;
+                maxaabb.mins[maxis] = maxaabb.maxs[maxis] - TOUCH_EPS;
+                maxaabb.maxs[maxis] += TOUCH_EPS;
+            } else {
+                minaabb.mins[maxis] += TOUCH_EPS;
+                minaabb.maxs[maxis] -= TOUCH_EPS;
+                maxaabb.mins[maxis] += TOUCH_EPS;
+                maxaabb.maxs[maxis] -= TOUCH_EPS;
+            }
+        }
+        contacts[axis * 2] = aabb_voxel_intersection(minaabb, world, &voxels, None);
+        contacts[axis * 2 + 1] = aabb_voxel_intersection(maxaabb, world, &voxels, None);
+    }
+    contacts
+}
+
+pub fn aabb_voxel_intersection(
+    entity_aabb: AABB,
+    world: &World,
+    voxels: &WVoxels,
+    mut out_intersections: Option<&mut Vec<AABB>>,
+) -> bool {
+    if let Some(ref mut out) = out_intersections {
+        out.clear();
+    }
+    let vx_mins: Vector3<i32> = blockpos_from_worldpos(entity_aabb.mins);
+    let vx_maxs: Vector3<i32> = blockpos_from_worldpos(entity_aabb.maxs);
+
+    let mut intersecting = false;
+    for vx_pos in (0..3)
+        .map(|x| vx_mins[x]..=vx_maxs[x])
+        .multi_cartesian_product()
+    {
+        let bpos: Vector3<i32> = vec3(vx_pos[0], vx_pos[1], vx_pos[2]);
+        let bidx = world.get_vcache().get_block(&voxels, bpos);
+        if let Some(bidx) = bidx {
+            let bdef = world.vregistry.get_definition_from_id(bidx);
+            if !bdef.has_collisions {
+                continue;
+            }
+            let bshape = bdef.collision_shape.translate(bpos.map(|c| c as f64));
+            match AABB::intersection(entity_aabb, bshape) {
+                Some(intersection) => {
+                    intersecting = true;
+                    if let Some(ref mut out) = out_intersections {
+                        out.push(intersection);
+                    }
+                }
+                None => continue,
+            }
+        }
+    }
+    intersecting
 }

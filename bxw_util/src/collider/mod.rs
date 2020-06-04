@@ -92,7 +92,20 @@ pub struct AABB {
     pub maxs: Vector3<f64>,
 }
 
+impl Default for AABB {
+    fn default() -> Self {
+        AABB {
+            mins: zero(),
+            maxs: zero(),
+        }
+    }
+}
+
 impl AABB {
+    fn zero() -> Self {
+        Self::default()
+    }
+
     pub fn from_min_max(mins: Vector3<f64>, maxs: Vector3<f64>) -> Self {
         AABB { mins, maxs }
     }
@@ -109,7 +122,67 @@ impl AABB {
         self.maxs - self.mins
     }
 
+    /// Axis for which the size is the smallest
+    pub fn smallest_axis(&self) -> usize {
+        let sz = self.size();
+        if sz.x < sz.y {
+            if sz.x < sz.z {
+                0
+            } else {
+                2
+            }
+        } else if sz.y < sz.z {
+            1
+        } else {
+            2
+        }
+    }
+
     pub fn center(&self) -> Vector3<f64> {
         (self.maxs + self.mins) / 2.0
+    }
+
+    pub fn volume(&self) -> f64 {
+        let sz = self.size();
+        sz.x * sz.y * sz.z
+    }
+
+    pub fn surface(&self) -> f64 {
+        let sz = self.size();
+        sz.x * (sz.y + sz.z) + sz.y * sz.z
+    }
+
+    pub fn translate(&self, by: Vector3<f64>) -> Self {
+        AABB {
+            mins: self.mins + by,
+            maxs: self.maxs + by,
+        }
+    }
+
+    pub fn intersection(a: Self, b: Self) -> Option<AABB> {
+        let mut prod = AABB::zero();
+        // Decompose into per-axis intersection
+        for c in 0..3 {
+            let (leftmost, rightmost) = if a.mins[c] < b.mins[c] {
+                (a, b)
+            } else {
+                (b, a)
+            };
+            // disjoint
+            if leftmost.maxs[c] < rightmost.mins[c] {
+                return None;
+            }
+            // embedded
+            else if leftmost.maxs[c] > rightmost.maxs[c] {
+                prod.mins[c] = rightmost.mins[c];
+                prod.maxs[c] = rightmost.maxs[c];
+            }
+            // intersecting
+            else {
+                prod.mins[c] = rightmost.mins[c];
+                prod.maxs[c] = leftmost.maxs[c];
+            }
+        }
+        Some(prod)
     }
 }

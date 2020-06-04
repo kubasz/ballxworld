@@ -27,6 +27,7 @@ use world::entities::player::PLAYER_EYE_HEIGHT;
 use world::generation::WorldLoadGen;
 use world::{blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition};
 
+use bxw_util::collider::AABB;
 use world::physics::SMALL_V_CUTOFF;
 use world::physics::TIMESTEP as PHYSICS_FRAME_TIME;
 
@@ -82,7 +83,8 @@ pub fn client_main() {
 
     let mut vxreg = Box::new(world::registry::VoxelRegistry::new());
     register_standard_blocks(&mut vxreg, &|nm| vctx.get_texture_id(nm)); //FIXME
-    let (world, mut client_world) = ClientWorld::new_world("world".to_owned(), Arc::from(vxreg));
+    let vxreg: Arc<world::registry::VoxelRegistry> = Arc::from(vxreg);
+    let (world, mut client_world) = ClientWorld::new_world("world".to_owned(), vxreg.clone());
     let world = Arc::new(world);
     {
         let lp = client_world.local_player;
@@ -101,10 +103,16 @@ pub fn client_main() {
     let mut input_mgr = InputManager::new(&sdl_ctx);
     input_mgr.input_state.capture_input_requested = true;
 
+    let mut look_pos: BlockPosition = zero();
+    let mut look_precise_pos: Vector3<f64> = zero();
     let mut click_pos: Option<BlockPosition> = None;
     let mut click_place = false;
 
     let mut event_pump = sdl_ctx.event_pump().unwrap();
+
+    let i_place = vxreg.get_definition_from_name("core:diamond_ore").unwrap();
+    let i_destroy = vxreg.get_definition_from_name("core:void").unwrap();
+
     'running: loop {
         let current_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
 
@@ -159,16 +167,8 @@ pub fn client_main() {
                 let cpos = chunkpos_from_blockpos(bpos);
                 let ch = vcache.get_uncompressed_chunk_mut(&voxels, cpos).unwrap();
                 let bidx = blockidx_from_blockpos(bpos);
-                let i_place;
-                i_place = world
-                    .vregistry
-                    .get_definition_from_name(if click_place {
-                        "core:diamond_ore"
-                    } else {
-                        "core:void"
-                    })
-                    .unwrap();
-                ch.blocks_yzx[bidx].id = i_place.id;
+                let i_used = if click_place { i_place } else { i_destroy };
+                ch.blocks_yzx[bidx].id = i_used.id;
                 let rch = voxels.chunks.get_mut(&cpos).unwrap();
                 rch.compress(&ch);
                 voxels.dirtify(bpos);
@@ -241,7 +241,12 @@ pub fn client_main() {
                 z_index: GUI_Z_LAYER_BACKGROUND + GUI_Z_OFFSET_CONTROL,
                 color: GUI_BLACK,
                 cmd: GuiCmd::FreeText {
-                    text: Cow::from(DEBUG_DATA.hud_format()),
+                    text: Cow::from(format!(
+                        "{}\nLookV: {:?}\nLookP: {:?}",
+                        DEBUG_DATA.hud_format(),
+                        look_pos,
+                        look_precise_pos
+                    )),
                     scale: 0.5,
                     start_at: gv2((0.0, 10.0), (0.0, 30.0)),
                 },
@@ -298,8 +303,7 @@ pub fn client_main() {
             DEBUG_DATA
                 .local_player_z
                 .store((lp_loc.position.z * 10.0) as i64, Ordering::Release);
-        }
-        {
+
             let voxels = world.voxels.read();
 
             let primary = input_mgr.input_state.primary_action.get_and_reset_pressed();
@@ -307,19 +311,23 @@ pub fn client_main() {
                 .input_state
                 .secondary_action
                 .get_and_reset_pressed();
+            use world::raycast;
+            let mview = glm::quat_to_mat3(&player_ang).transpose();
+            let fwd = mview * vec3(0.0, 0.0, 1.0);
+            let rc = raycast::RaycastQuery::new_directed(
+                player_pos + vec3(0.0, PLAYER_EYE_HEIGHT / 2.0, 0.0),
+                fwd,
+                32.0,
+                &world,
+                Some(&voxels),
+                None,
+            )
+            .execute();
+            if let raycast::Hit::Voxel { position, .. } = &rc.hit {
+                look_pos = *position;
+                look_precise_pos = rc.hit_point;
+            }
             if primary | secondary {
-                use world::raycast;
-                let mview = glm::quat_to_mat3(&player_ang).transpose();
-                let fwd = mview * vec3(0.0, 0.0, 1.0);
-                let rc = raycast::RaycastQuery::new_directed(
-                    player_pos + vec3(0.0, PLAYER_EYE_HEIGHT / 2.0, 0.0),
-                    fwd,
-                    32.0,
-                    &world,
-                    Some(&voxels),
-                    None,
-                )
-                .execute();
                 click_place = secondary;
                 if let raycast::Hit::Voxel {
                     position,
@@ -333,9 +341,16 @@ pub fn client_main() {
                     } else if normal_datum
                         .map(|d| !world.vregistry.get_definition_from_id(d).has_hitbox)
                         .unwrap_or(false)
-                        && rc.distance > 2.0
                     {
-                        click_pos = Some(*position + normal.to_vec());
+                        let place_pos = *position + normal.to_vec();
+                        let player_aabb = lp_loc.bounding_shape.aabb(lp_loc.position);
+                        let voxel_aabb = i_place
+                            .collision_shape
+                            .translate(place_pos.map(|c| c as f64));
+                        let intersecting = AABB::intersection(player_aabb, voxel_aabb).is_some();
+                        if !intersecting {
+                            click_pos = Some(place_pos);
+                        }
                     }
                 }
             }

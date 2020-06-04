@@ -29,6 +29,10 @@ pub use bxw_util::collider::{Direction, ALL_DIRS};
 pub type ChunkPosition = Vector3<i32>;
 pub type BlockPosition = Vector3<i32>;
 
+pub fn blockpos_from_worldpos(wpos: Vector3<f64>) -> BlockPosition {
+    wpos.map(|c| (c + 0.5).floor() as i32)
+}
+
 pub fn chunkpos_from_blockpos(bpos: BlockPosition) -> ChunkPosition {
     let cd = CHUNK_DIM as i32;
     bpos.map(|p| p.div_floor(&cd))
