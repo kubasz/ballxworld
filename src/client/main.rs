@@ -173,7 +173,6 @@ pub fn client_main() {
                 lp_loc.orientation = UnitQuaternion::new_normalize(qpitch * qyaw);
 
                 let mview = glm::quat_to_mat3(&lp_loc.orientation).transpose();
-                let lp_phys: &mut CPhysics = entities.ecs.get_component_mut(local_player).unwrap();
 
                 let mut wvel = Vector3::new(
                     input_mgr.input_state.walk.x as f64,
@@ -181,17 +180,28 @@ pub fn client_main() {
                     input_mgr.input_state.walk.y as f64,
                 );
                 wvel *= 6.0; // Walk 6m/s
+                if input_mgr.input_state.noclip {
+                    wvel *= 10.0;
+                }
                 if input_mgr.input_state.sprint.is_active() {
                     wvel *= 3.0;
                 }
                 let mut tvel = mview * wvel;
                 let tspeed = tvel.magnitude();
-                tvel.y = 0.0;
+
+                if input_mgr.input_state.noclip {
+                    lp_loc.position += tvel * PHYSICS_FRAME_TIME;
+                    lp_loc.velocity = tvel;
+                } else {
+                    tvel.y = 0.0;
+                }
+                let lp_phys: &mut CPhysics = entities.ecs.get_component_mut(local_player).unwrap();
                 lp_phys.control_target_velocity = if tspeed < SMALL_V_CUTOFF {
                     zero()
                 } else {
                     tvel.normalize() * tspeed
                 };
+                lp_phys.frozen = input_mgr.input_state.noclip;
                 if input_mgr.input_state.jump.is_active() && lp_phys.against_wall[2] {
                     lp_phys.control_frame_impulse.y = 250.0;
                 }
@@ -214,7 +224,7 @@ pub fn client_main() {
                 color: GUI_WHITE,
                 cmd: GuiCmd::Rectangle {
                     style: GuiControlStyle::Window,
-                    rect: GuiRect::from_xywh((0.0, 5.0), (0.0, 5.0), (0.0, 200.0), (0.0, 150.0)),
+                    rect: GuiRect::from_xywh((0.0, 5.0), (0.0, 5.0), (0.0, 400.0), (0.0, 300.0)),
                 },
             });
             gui.push_cmd(GuiOrderedCmd {

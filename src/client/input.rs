@@ -39,6 +39,7 @@ pub struct InputState {
     pub walk: Vector2<f32>,
     pub sprint: Input,
     pub jump: Input,
+    pub noclip: bool,
     /// Yaw, Pitch motion
     pub look: Vector2<f32>,
 
@@ -61,6 +62,7 @@ impl Default for InputState {
             sprint: Input::default(),
             jump: Input::default(),
             look: zero(),
+            noclip: false,
 
             scroller: 0,
             primary_action: Input::default(),
@@ -197,6 +199,9 @@ impl<'i> InputManager<'i> {
         match key {
             Keycode::Space => {
                 self.input_state.jump.update(pressed);
+            }
+            Keycode::C if pressed => {
+                self.input_state.noclip = !self.input_state.noclip;
             }
             _ => {}
         }

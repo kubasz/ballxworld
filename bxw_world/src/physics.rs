@@ -5,6 +5,7 @@ use bxw_util::collider::AABB;
 use bxw_util::math::*;
 use bxw_util::*;
 use itertools::Itertools;
+use std::time::Instant;
 
 pub const TIMESTEP: f64 = 1.0 / 60.0;
 pub const SPEED_LIMIT_MPS: f64 = 1000.0;
@@ -39,6 +40,7 @@ fn drag_force(loc: &CLocation, velocity: Vector3<f64>) -> Vector3<f64> {
 pub fn world_physics_tick(world: &World) {
     let voxels = world.voxels.read();
     let mut entities = world.entities.write();
+    let pretick = Instant::now();
     let mut intersections = Vec::with_capacity(10);
     for (phys, loc) in entities.ecs.iter_mut_physics() {
         if phys.frozen {
@@ -87,7 +89,6 @@ pub fn world_physics_tick(world: &World) {
         }
         // velocity integration
         let mut new_vel = old_vel + new_accel * TIMESTEP;
-        let orig_new_vel = new_vel;
         for axis in 0..new_vel.len() {
             if new_vel[axis].abs() < SMALL_V_CUTOFF {
                 new_vel[axis] = 0.0;
@@ -141,15 +142,6 @@ pub fn world_physics_tick(world: &World) {
             }
         }
 
-        *bxw_util::debug_data::DEBUG_DATA.custom_string.lock() = format!(
-            "{:?}\nv:{:?}\na:{:?}\nonv:{:?}\nmin:{:?}\n",
-            phys.against_wall,
-            old_vel,
-            new_accel,
-            orig_new_vel,
-            loc.bounding_shape.aabb(new_pos).mins
-        );
-
         // check for suffocation
         let new_suffocation = check_suffocation(world, &voxels, new_pos);
         if new_suffocation {
@@ -180,6 +172,12 @@ pub fn world_physics_tick(world: &World) {
             loc.position[c] = loc.position[c].max(-WORLD_LIMIT).min(WORLD_LIMIT);
         }
     }
+
+    let posttick = Instant::now();
+    let durtick = posttick.saturating_duration_since(pretick);
+    bxw_util::debug_data::DEBUG_DATA
+        .phys_times
+        .push_ns(durtick.as_nanos() as i64);
 }
 
 fn determine_wall_contacts(aabb: AABB, world: &World, voxels: &WVoxels) -> [bool; 6] {

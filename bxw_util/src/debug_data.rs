@@ -16,6 +16,7 @@ pub struct DebugData {
     pub frame_times: TimingRing,
     pub wgen_times: TimingRing,
     pub wmesh_times: TimingRing,
+    pub phys_times: TimingRing,
     // Coordinate info in tenths of a meter
     pub local_player_x: AtomicI64,
     pub local_player_y: AtomicI64,
@@ -71,6 +72,7 @@ impl DebugData {
 FT: {ft}
 Generate: {gen}
 Mesh: {mesh}
+Physics: {phys}
 Pos: {lpx:.1} {lpy:.1} {lpz:.1}
 
 Heap usage: {heap}
@@ -80,6 +82,7 @@ GPU heap usage: {gpuheap}
             ft = &self.frame_times,
             gen = &self.wgen_times,
             mesh = &self.wmesh_times,
+            phys = &self.phys_times,
             lpx = self.local_player_x.load(Ordering::Acquire) as f32 / 10.0,
             lpy = self.local_player_y.load(Ordering::Acquire) as f32 / 10.0,
             lpz = self.local_player_z.load(Ordering::Acquire) as f32 / 10.0,
