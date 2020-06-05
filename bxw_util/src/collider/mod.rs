@@ -142,6 +142,14 @@ impl AABB {
         (self.maxs + self.mins) / 2.0
     }
 
+    /// Extend the box's dimensions by 2*amount for each axis, preserving the center
+    pub fn inflate(&self, amount: f64) -> Self {
+        Self {
+            mins: self.mins.add_scalar(-amount),
+            maxs: self.maxs.add_scalar(amount),
+        }
+    }
+
     pub fn volume(&self) -> f64 {
         let sz = self.size();
         sz.x * sz.y * sz.z

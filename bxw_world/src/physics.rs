@@ -15,7 +15,7 @@ pub const AIR_FRICTION_SQ: f64 = 0.5 * 0.5 * 1.2;
 // 1/2 * pyramid drag coefficient * air density
 pub const SMALL_V_CUTOFF: f64 = 1.0e-6;
 pub const WORLD_LIMIT: f64 = i32::max_value() as f64 / 4.0;
-const TOUCH_EPS: f64 = 1.0e-2;
+pub const TOUCH_EPSILON: f64 = 1.0e-2;
 
 fn check_suffocation(world: &World, voxels: &WVoxels, position: Vector3<f64>) -> bool {
     let bpos = blockpos_from_worldpos(position);
@@ -189,15 +189,15 @@ fn determine_wall_contacts(aabb: AABB, world: &World, voxels: &WVoxels) -> [bool
         let mut maxaabb = aabb;
         for maxis in 0..3 {
             if maxis == axis {
-                minaabb.maxs[maxis] = minaabb.mins[maxis] + TOUCH_EPS;
-                minaabb.mins[maxis] -= TOUCH_EPS;
-                maxaabb.mins[maxis] = maxaabb.maxs[maxis] - TOUCH_EPS;
-                maxaabb.maxs[maxis] += TOUCH_EPS;
+                minaabb.maxs[maxis] = minaabb.mins[maxis] + TOUCH_EPSILON;
+                minaabb.mins[maxis] -= TOUCH_EPSILON;
+                maxaabb.mins[maxis] = maxaabb.maxs[maxis] - TOUCH_EPSILON;
+                maxaabb.maxs[maxis] += TOUCH_EPSILON;
             } else {
-                minaabb.mins[maxis] += TOUCH_EPS;
-                minaabb.maxs[maxis] -= TOUCH_EPS;
-                maxaabb.mins[maxis] += TOUCH_EPS;
-                maxaabb.maxs[maxis] -= TOUCH_EPS;
+                minaabb.mins[maxis] += TOUCH_EPSILON;
+                minaabb.maxs[maxis] -= TOUCH_EPSILON;
+                maxaabb.mins[maxis] += TOUCH_EPSILON;
+                maxaabb.maxs[maxis] -= TOUCH_EPSILON;
             }
         }
         contacts[axis * 2] = aabb_voxel_intersection(minaabb, world, &voxels, None);

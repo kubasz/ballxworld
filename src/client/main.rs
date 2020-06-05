@@ -343,7 +343,10 @@ pub fn client_main() {
                         .unwrap_or(false)
                     {
                         let place_pos = *position + normal.to_vec();
-                        let player_aabb = lp_loc.bounding_shape.aabb(lp_loc.position);
+                        let player_aabb = lp_loc
+                            .bounding_shape
+                            .aabb(lp_loc.position)
+                            .inflate(-world::physics::TOUCH_EPSILON);
                         let voxel_aabb = i_place
                             .collision_shape
                             .translate(place_pos.map(|c| c as f64));
