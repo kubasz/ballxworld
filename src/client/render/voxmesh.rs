@@ -77,12 +77,15 @@ pub fn mesh_from_chunk(
         }
     }
     let vdefs: [&VoxelDefinition; cubed(INFLATED_DIM)] = unsafe { std::mem::transmute(vdefs) }; // Safety: The whole array is initialized in the above for loop
-                                                                                                // pos relative to Chunk@cpos
-    let get_block = |pos: Vector3<i32>| {
-        vdefs[(pos.x + 1) as usize
+
+    // pos relative to Chunk@cpos
+    #[inline(always)]
+    fn get_block_idx(pos: Vector3<i32>) -> usize {
+        (pos.x + 1) as usize
             + (pos.z + 1) as usize * INFLATED_DIM
-            + (pos.y + 1) as usize * INFLATED_DIM * INFLATED_DIM]
-    };
+            + (pos.y + 1) as usize * INFLATED_DIM * INFLATED_DIM
+    }
+    ;
 
     let mut vbuf: Vec<VoxelVertex> = Vec::new();
     let mut ibuf: Vec<u32> = Vec::new();
@@ -106,7 +109,7 @@ pub fn mesh_from_chunk(
 
             let ipos = vec3(cell_x as i32, cell_y as i32, cell_z as i32);
             let vidx = blockidx_from_blockpos(ipos);
-            let vdef = get_block(ipos);
+            let vdef = vdefs[get_block_idx(ipos)];
 
             if !vdef.has_mesh {
                 continue;
@@ -114,7 +117,7 @@ pub fn mesh_from_chunk(
 
             // hidden face removal
             let touchpos = ipos + ioffset;
-            let tdef = get_block(touchpos);
+            let tdef = vdefs[get_block_idx(touchpos)];
             if tdef.has_mesh {
                 continue;
             }
@@ -127,7 +130,7 @@ pub fn mesh_from_chunk(
                 let (ao_s1, ao_s2, ao_c): (bool, bool, bool);
                 {
                     let p_c = ipos + corner;
-                    ao_c = get_block(p_c).has_mesh;
+                    ao_c = vdefs[get_block_idx(p_c)].has_mesh;
                     let (p_s1, p_s2);
                     if ioffset.x != 0 {
                         // y,z sides
@@ -142,8 +145,8 @@ pub fn mesh_from_chunk(
                         p_s1 = ipos + vec3(corner.x, 0, corner.z);
                         p_s2 = ipos + vec3(0, corner.y, corner.z);
                     }
-                    ao_s1 = get_block(p_s1).has_mesh;
-                    ao_s2 = get_block(p_s2).has_mesh;
+                    ao_s1 = vdefs[get_block_idx(p_s1)].has_mesh;
+                    ao_s2 = vdefs[get_block_idx(p_s2)].has_mesh;
                 }
                 let ao = if ao_s1 && ao_s2 {
                     3
