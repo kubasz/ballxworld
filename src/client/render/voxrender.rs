@@ -984,7 +984,7 @@ impl VoxelRenderer {
             mproj = {
                 let fov = 75.0 * std::f32::consts::PI / 180.0;
                 let aspect = sfdim[0] / sfdim[1];
-                let (near, far) = (0.1, 1000.0);
+                let (near, far) = (0.005, 4000.0);
                 let f = 1.0 / (0.5 * fov).tan();
                 let mut mproj: Matrix4<f32> = zero();
                 mproj[(0, 0)] = f / aspect;
