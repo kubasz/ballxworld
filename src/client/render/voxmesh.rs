@@ -8,6 +8,7 @@ use world::{
     blockidx_from_blockpos, chunkpos_from_blockpos, ChunkPosition, UncompressedChunk, VChunkData,
     VoxelDatum, World, CHUNK_DIM,
 };
+use std::time::Instant;
 
 struct CubeSide {
     // counter-clockwise coords of the face
@@ -45,6 +46,8 @@ pub fn mesh_from_chunk(
             }
         }
     }
+    // only time non-trivial chunks
+    let premesh = Instant::now();
     let mut vcache = world.get_vcache();
     let mut chunks: SmallVec<[&UncompressedChunk; 32]> = SmallVec::new();
     for (y, z, x) in iproduct!(-1..=1, -1..=1, -1..=1) {
@@ -225,6 +228,10 @@ pub fn mesh_from_chunk(
             }
         }
     }
+
+    let postmesh = Instant::now();
+    let meshtime = postmesh.saturating_duration_since(premesh);
+    bxw_util::debug_data::DEBUG_DATA.wmesh_times.push_ns(meshtime.as_nanos() as i64);
 
     Some(ChunkBuffers {
         vertices: vbuf,

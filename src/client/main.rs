@@ -16,7 +16,6 @@ use bxw_util::debug_data::DEBUG_DATA;
 use bxw_util::math::*;
 use bxw_util::*;
 use std::borrow::Cow;
-use std::collections::VecDeque;
 use std::f64::consts::PI;
 use std::io::{Read, Write};
 use std::sync::atomic::Ordering;
@@ -78,9 +77,6 @@ pub fn client_main() {
     let mut vctx = Box::new(VoxelRenderer::new(&cfg, &mut rctx, rres.clone()));
     let mut guictx = Box::new(GuiRenderer::new(&cfg, &mut rctx, rres.clone()));
 
-    let mut frametimes = VecDeque::new();
-    let frametime_count: usize = 100;
-
     let mut vxreg = Box::new(world::registry::VoxelRegistry::new());
     register_standard_blocks(&mut vxreg, &|nm| vctx.get_texture_id(nm)); //FIXME
     let vxreg: Arc<world::registry::VoxelRegistry> = Arc::from(vxreg);
@@ -118,17 +114,10 @@ pub fn client_main() {
 
         // avoid any nasty divisions by 0
         let frame_delta_time = 1.0e-6f64.max(current_frame_time - previous_frame_time);
-        while frametimes.len() >= frametime_count {
-            frametimes.pop_front();
-        }
-        frametimes.push_back(frame_delta_time);
-        let ftmax = frametimes.iter().copied().fold(0.0, f64::max) * 1_000_000.0;
-        let ftavg = frametimes.iter().sum::<f64>() * 1_000_000.0 / frametimes.len() as f64;
+        DEBUG_DATA.frame_times.push_sec(frame_delta_time);
         DEBUG_DATA
             .fps
             .store((1.0 / frame_delta_time) as u32, Ordering::Release);
-        DEBUG_DATA.ft_max_us.store(ftmax as u32, Ordering::Release);
-        DEBUG_DATA.ft_avg_us.store(ftavg as u32, Ordering::Release);
 
         physics_accum_time += frame_delta_time;
         previous_frame_time = current_frame_time;
