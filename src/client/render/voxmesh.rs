@@ -26,10 +26,8 @@ const fn cubed(a: usize) -> usize {
 pub fn mesh_from_chunk(
     world: &World,
     cpos: ChunkPosition,
-    lod: u32,
     texture_dim: (u32, u32),
 ) -> Option<ChunkBuffers> {
-    debug_assert!((1u32 << lod) <= CHUNK_DIM as u32);
     let voxels = world.voxels.read();
     let dirty = voxels.chunks.get(&cpos).map(|c| c.dirty).unwrap_or(0);
     let registry: &VoxelRegistry = &world.vregistry;
@@ -69,18 +67,12 @@ pub fn mesh_from_chunk(
             vdefs[idx].as_mut_ptr().write(def); // Safety: Initialize every element with a valid reference
         }
     }
-    let default_vdef = registry.get_definition_from_id(VoxelDatum::default());
     let vdefs: [&VoxelDefinition; cubed(INFLATED_DIM)] = unsafe { std::mem::transmute(vdefs) }; // Safety: The whole array is initialized in the above for loop
                                                                                                 // pos relative to Chunk@cpos
     let get_block = |pos: Vector3<i32>| {
-        let apos = [pos.x, pos.y, pos.z];
-        if apos.iter().any(|&c| c < 0 || c >= CHUNK_DIM as i32) {
-            return default_vdef;
-        }
-        let idx = (pos.x + 1) as usize
+        vdefs[(pos.x + 1) as usize
             + (pos.z + 1) as usize * INFLATED_DIM
-            + (pos.y + 1) as usize * INFLATED_DIM * INFLATED_DIM;
-        vdefs[idx]
+            + (pos.y + 1) as usize * INFLATED_DIM * INFLATED_DIM]
     };
 
     let mut vbuf: Vec<VoxelVertex> = Vec::new();
@@ -99,38 +91,11 @@ pub fn mesh_from_chunk(
         }
     };
 
-    let cells = (CHUNK_DIM >> lod as usize) as u32;
-    let subcells = (1 << lod) as u32;
     for side in &SIDES {
-        let suborder = {
-            let scs = subcells as i32;
-            let mut svec: Vec<Vector3<i32>> = iproduct!(0..scs, 0..scs, 0..scs)
-                .map(|(x, y, z)| vec3(x, y, z))
-                .collect();
-            let ioff = side.ioffset;
-            let (dim, dval) = if ioff[0] != 0 {
-                (0, ioff[0])
-            } else if ioff[1] != 0 {
-                (1, ioff[1])
-            } else {
-                (2, ioff[2])
-            };
-            svec.sort_by_key(|e| if dval < 0 { e[dim] } else { -e[dim] });
-            svec
-        };
-        for (cell_y, cell_z, cell_x) in iproduct!(0..cells, 0..cells, 0..cells) {
-            let (co_y, co_z, co_x) = (cell_y << lod, cell_z << lod, cell_x << lod);
-            let (cf_x, cf_y, cf_z) = (co_x as f32, co_y as f32, co_z as f32);
-
+        for (cell_y, cell_z, cell_x) in iproduct!(0..CHUNK_DIM, 0..CHUNK_DIM, 0..CHUNK_DIM) {
             let ioffset = Vector3::from_row_slice(&side.ioffset);
 
-            let mut ipos = vec3(co_x as i32, co_y as i32, co_z as i32);
-            'subfinder: for subp in suborder.iter() {
-                ipos = vec3(co_x as i32, co_y as i32, co_z as i32) + subp;
-                if get_block(ipos).has_mesh {
-                    break 'subfinder;
-                }
-            }
+            let ipos = vec3(cell_x as i32, cell_y as i32, cell_z as i32);
             let vidx = blockidx_from_blockpos(ipos);
             let vdef = get_block(ipos);
 
@@ -184,12 +149,10 @@ pub fn mesh_from_chunk(
                     _ => 0.6,
                 };
 
-                let scf = subcells as f32;
-                let hf = if lod == 0 { 0.0 } else { scf / 2.0 };
                 let position: [f32; 4] = [
-                    cf_x + hf + scf * side.verts[t * 3],
-                    cf_y + hf + scf * side.verts[t * 3 + 1],
-                    cf_z + hf + scf * side.verts[t * 3 + 2],
+                    ipos.x as f32 + side.verts[t * 3],
+                    ipos.y as f32 + side.verts[t * 3 + 1],
+                    ipos.z as f32 + side.verts[t * 3 + 2],
                     1.0,
                 ];
                 let texid;

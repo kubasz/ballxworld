@@ -34,6 +34,7 @@ pub mod vox {
     use crate::offset_of;
     use ash::vk;
     use std::mem;
+
     pub struct ChunkBuffers {
         pub vertices: Vec<VoxelVertex>,
         pub indices: Vec<u32>,
@@ -111,6 +112,7 @@ pub mod vox {
         pub chunk_offset: [f32; 3],
         pub highlight_index: i32,
     }
+
     impl VoxelPC {
         pub fn pc_ranges() -> [vk::PushConstantRange; 1] {
             [vk::PushConstantRange {
@@ -126,7 +128,6 @@ struct DrawnChunk {
     pub cpos: ChunkPosition,
     pub last_dirty: u64,
     pub buffer: OwnedBuffer,
-    pub lod: u32,
     pub istart: usize,
     pub vcount: u32,
     pub icount: u32,
@@ -150,22 +151,20 @@ type ChunkMsg = (ChunkPosition, DrawnChunk);
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 struct ChunkRenderRequest {
     pos: ChunkPosition,
-    lod: u32,
 }
 
 impl Default for ChunkRenderRequest {
     fn default() -> Self {
-        Self {
-            pos: vec3(0, 0, 0),
-            lod: 0,
-        }
+        Self { pos: vec3(0, 0, 0) }
     }
 }
 
 struct AllocatorPool(vma::AllocatorPool);
 
 unsafe impl Send for AllocatorPool {}
+
 unsafe impl Sync for AllocatorPool {}
+
 impl Clone for AllocatorPool {
     fn clone(&self) -> Self {
         Self(unsafe { std::ptr::read(&self.0 as *const _) })
@@ -671,7 +670,7 @@ impl VoxelRenderer {
             }
 
             for rr in chunk_objs_to_add.drain(..) {
-                let mesh = mesh_from_chunk(&world, rr.pos, rr.lod, texture_dim);
+                let mesh = mesh_from_chunk(&world, rr.pos, texture_dim);
                 if mesh.is_none() {
                     done_chunks.push(rr);
                     continue;
@@ -766,7 +765,6 @@ impl VoxelRenderer {
                         cpos: rr.pos,
                         last_dirty: mesh.dirty,
                         buffer,
-                        lod: rr.lod,
                         istart: v_tot_sz,
                         vcount,
                         icount,
@@ -776,7 +774,6 @@ impl VoxelRenderer {
                         cpos: rr.pos,
                         last_dirty: mesh.dirty,
                         buffer: OwnedBuffer::new(),
-                        lod: rr.lod,
                         istart: 0,
                         vcount: 0,
                         icount: 0,
@@ -836,11 +833,6 @@ impl VoxelRenderer {
             let fk = -dflen * (4.0 - df.angle(&ref_fdir));
             (fk * (CHUNK_DIM as f32)) as i32
         };
-        let lod_fn = |p: &Vector3<i32>| {
-            let d: f32 = (cposition - p).map(|c| c as f32).norm() * (CHUNK_DIM as f32);
-            ((d / 256.0).log2().max(0.0).floor() as u32).min(4)
-        };
-
         let voxels = world.voxels.read();
 
         let mut chunks_to_remove: SmallVec<[ChunkPosition; 16]> = SmallVec::new();
@@ -853,24 +845,19 @@ impl VoxelRenderer {
             .par_iter()
             .map(|(cp, _)| cp)
             .filter(|cpos| !self.drawn_chunks.contains_key(cpos))
-            .map(|pos| ChunkRenderRequest {
-                pos: *pos,
-                lod: lod_fn(pos),
-            })
+            .map(|pos| ChunkRenderRequest { pos: *pos })
             .collect();
         chunks_to_add.append(
             &mut self
                 .drawn_chunks
                 .par_iter()
                 .filter(|(cpos, dch)| {
-                    voxels.chunks.get(cpos).map_or(false, |vch| {
-                        dch.last_dirty != vch.dirty || dch.lod != lod_fn(cpos)
-                    })
+                    voxels
+                        .chunks
+                        .get(cpos)
+                        .map_or(false, |vch| dch.last_dirty != vch.dirty)
                 })
-                .map(|(pos, _)| ChunkRenderRequest {
-                    pos: *pos,
-                    lod: lod_fn(pos),
-                })
+                .map(|(pos, _)| ChunkRenderRequest { pos: *pos })
                 .collect(),
         );
         let real_chunks_to_add: Vec<ChunkRenderRequest> = chunks_to_add
