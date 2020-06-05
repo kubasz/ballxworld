@@ -31,7 +31,7 @@ pub struct WorldLoadGen {
 }
 
 impl WorldLoadGen {
-    pub fn new(world: Arc<World>, seed: u64) -> Self {
+    pub fn new(load_threads: u32, world: Arc<World>, seed: u64) -> Self {
         let mut wlg = Self {
             world,
             loading_queue: Arc::new(Mutex::new(Vec::new())),
@@ -42,21 +42,20 @@ impl WorldLoadGen {
             thread_killer: Arc::new(AtomicBool::new(false)),
             work_receiver: CachedThreadLocal::new(),
         };
-        wlg.init_worker_threads();
+        wlg.init_worker_threads(load_threads);
         wlg
     }
 
-    fn init_worker_threads(&mut self) {
-        const NUM_WORKERS: usize = 2;
+    fn init_worker_threads(&mut self, load_threads: u32) {
         const STACK_SIZE: usize = 4 * 1024 * 1024;
         if !self.worker_threads.is_empty() {
             return;
         }
-        self.worker_threads.reserve_exact(NUM_WORKERS);
+        self.worker_threads.reserve_exact(load_threads as usize);
         let (tx, rx) = mpsc::channel();
         self.work_receiver.clear();
         self.work_receiver.get_or(move || rx);
-        for _ in 0..NUM_WORKERS {
+        for _ in 0..load_threads {
             let tb = thread::Builder::new()
                 .name("bxw-worldgen".to_owned())
                 .stack_size(STACK_SIZE);
@@ -88,7 +87,7 @@ impl WorldLoadGen {
         worldgen_arc: Arc<StdGenerator>,
         load_queue_arc: Arc<Mutex<Vec<(i32, ChunkPosition)>>>,
         progress_set_arc: Arc<Mutex<FnvHashSet<ChunkPosition>>>,
-        submission: mpsc::Sender<ChunkMsg>,
+        _submission: mpsc::Sender<ChunkMsg>,
         killswitch: Arc<AtomicBool>,
     ) {
         let mut done_chunks: Vec<Vector3<i32>> = Vec::new();
@@ -136,10 +135,17 @@ impl WorldLoadGen {
                 bxw_util::debug_data::DEBUG_DATA
                     .wgen_times
                     .push_ns(gentime.as_nanos() as i64);
-                if submission.send(ChunkMsg { chunk }).is_err() {
+                /*if submission.send(ChunkMsg { chunk }).is_err() {
                     return;
+                }*/
+                {
+                    let mut voxels = world_arc.voxels.write();
+                    voxels.chunks.insert(chunk.position, chunk);
                 }
                 done_chunks.push(p);
+                if killswitch.load(Ordering::Relaxed) {
+                    return;
+                }
             }
         }
     }

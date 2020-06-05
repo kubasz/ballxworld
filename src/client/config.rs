@@ -13,6 +13,8 @@ pub struct Config {
 
     pub performance_load_distance: u32,
     pub performance_draw_distance: u32,
+    pub performance_load_threads: u32,
+    pub performance_draw_threads: u32,
 
     pub debug_logging: bool,
     pub vk_debug_layers: bool,
@@ -25,6 +27,8 @@ pub struct Config {
 
 impl Config {
     pub fn new() -> Self {
+        // reserve two cores for the base process and any other threaded activity
+        let cpus = bxw_util::num_cpus::get().saturating_sub(2).max(1) as u32;
         Self {
             window_width: 1280,
             window_height: 720,
@@ -37,6 +41,8 @@ impl Config {
 
             performance_load_distance: 10,
             performance_draw_distance: 10,
+            performance_load_threads: if cpus > 2 { (cpus + 1) / 2 } else { 1 },
+            performance_draw_threads: if cpus > 2 { (cpus + 1) / 2 } else { 1 },
 
             debug_logging: true,
             vk_debug_layers: false,
@@ -91,6 +97,14 @@ impl Config {
             .as_integer()
             .map_or(self.performance_draw_distance, |v| v as u32);
 
+        self.performance_load_threads = toml_doc["performance"]["load_threads"]
+            .as_integer()
+            .map_or(self.performance_load_threads, |v| v as u32);
+
+        self.performance_draw_threads = toml_doc["performance"]["draw_threads"]
+            .as_integer()
+            .map_or(self.performance_draw_threads, |v| v as u32);
+
         self.debug_logging = toml_doc["debug"]["enable_logging"]
             .as_bool()
             .unwrap_or(self.debug_logging);
@@ -127,6 +141,10 @@ impl Config {
             Item::Value(Value::from(self.performance_load_distance as i64));
         toml_doc["performance"]["draw_distance"] =
             Item::Value(Value::from(self.performance_draw_distance as i64));
+        toml_doc["performance"]["load_threads"] =
+            Item::Value(Value::from(self.performance_load_threads as i64));
+        toml_doc["performance"]["draw_threads"] =
+            Item::Value(Value::from(self.performance_draw_threads as i64));
 
         toml_doc["debug"]["enable_logging"] = Item::Value(Value::from(self.debug_logging));
         toml_doc["debug"]["enable_vk_layers"] = Item::Value(Value::from(self.vk_debug_layers));

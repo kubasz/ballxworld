@@ -566,16 +566,16 @@ impl VoxelRenderer {
             .unwrap_or(0)
     }
 
-    pub fn set_world(&mut self, world: Arc<World>, rctx: &RenderingContext) {
+    pub fn set_world(&mut self, config: &Config, world: Arc<World>, rctx: &RenderingContext) {
         // create worker threads
         self.kill_threads();
-        const NUM_WORKERS: usize = 2;
         const STACK_SIZE: usize = 4 * 1024 * 1024;
         let (tx, rx) = mpsc::channel();
-        self.worker_threads.reserve_exact(NUM_WORKERS);
+        let num_workers = config.performance_draw_threads;
+        self.worker_threads.reserve_exact(num_workers as usize);
         self.work_receiver.clear();
         self.work_receiver.get_or(move || rx);
-        for _ in 0..NUM_WORKERS {
+        for _ in 0..num_workers {
             let tb = thread::Builder::new()
                 .name("bxw-voxrender".to_owned())
                 .stack_size(STACK_SIZE);
@@ -780,6 +780,9 @@ impl VoxelRenderer {
                     }
                 };
 
+                if killswitch.load(Ordering::Relaxed) {
+                    return;
+                }
                 if submission.send((rr.pos, dchunk)).is_err() {
                     return;
                 }

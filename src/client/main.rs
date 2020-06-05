@@ -88,8 +88,8 @@ pub fn client_main() {
         let anchor: &mut CLoadAnchor = ents.ecs.get_component_mut(lp).unwrap();
         anchor.radius = cfg.performance_load_distance;
     }
-    vctx.set_world(world.clone(), &rctx);
-    let mut wgen = WorldLoadGen::new(world.clone(), 0);
+    vctx.set_world(&cfg, world.clone(), &rctx);
+    let mut wgen = WorldLoadGen::new(cfg.performance_load_threads, world.clone(), 0);
 
     let pf_mult = 1.0 / sdl_timer.performance_frequency() as f64;
     let mut previous_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;

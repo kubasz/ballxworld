@@ -6,6 +6,7 @@ pub use itertools;
 pub use lazy_static;
 pub use lru;
 pub use nalgebra as na;
+pub use num_cpus;
 pub use num_traits;
 pub use parking_lot;
 pub use rand;
