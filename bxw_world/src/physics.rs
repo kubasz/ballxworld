@@ -1,6 +1,6 @@
 use crate::ecs::*;
 //use crate::raycast::*;
-use crate::{blockpos_from_worldpos, Direction, WVoxels, World};
+use crate::{blockpos_from_worldpos, Direction, OldWorld, WVoxels};
 use bxw_util::collider::AABB;
 use bxw_util::math::*;
 use bxw_util::*;
@@ -18,7 +18,7 @@ pub const SMALL_V_CUTOFF: f64 = 1.0e-6;
 pub const WORLD_LIMIT: f64 = i32::max_value() as f64 / 4.0;
 pub const TOUCH_EPSILON: f64 = 1.0e-2;
 
-fn check_suffocation(world: &World, voxels: &WVoxels, position: Vector3<f64>) -> bool {
+fn check_suffocation(world: &OldWorld, voxels: &WVoxels, position: Vector3<f64>) -> bool {
     let bpos = blockpos_from_worldpos(position);
     let bidx = world.get_vcache().get_block(voxels, bpos);
     if let Some(bidx) = bidx {
@@ -37,7 +37,7 @@ fn drag_force(loc: &CLocation, velocity: Vector3<f64>) -> Vector3<f64> {
     velocity.component_mul(&velocity) * AIR_FRICTION_SQ * area_est
 }
 
-pub fn world_physics_tick(world: &World) {
+pub fn world_physics_tick(world: &OldWorld) {
     let voxels = world.voxels.read();
     let mut entities = world.entities.write();
     let pretick = Instant::now();
@@ -180,7 +180,7 @@ pub fn world_physics_tick(world: &World) {
         .push_ns(durtick.as_nanos() as i64);
 }
 
-fn determine_wall_contacts(aabb: AABB, world: &World, voxels: &WVoxels) -> [bool; 6] {
+fn determine_wall_contacts(aabb: AABB, world: &OldWorld, voxels: &WVoxels) -> [bool; 6] {
     let mut contacts = [false; 6];
     for axis in 0..3 {
         let mut minaabb = aabb;
@@ -206,7 +206,7 @@ fn determine_wall_contacts(aabb: AABB, world: &World, voxels: &WVoxels) -> [bool
 
 pub fn aabb_voxel_intersection(
     entity_aabb: AABB,
-    world: &World,
+    world: &OldWorld,
     voxels: &WVoxels,
     mut out_intersections: Option<&mut Vec<AABB>>,
 ) -> bool {

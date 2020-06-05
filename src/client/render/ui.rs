@@ -9,7 +9,6 @@ use ash::vk;
 use bxw_util::math::*;
 use bxw_util::*;
 use itertools::zip;
-use rayon::prelude::*;
 use std::borrow::Cow;
 use std::ffi::CString;
 use std::ops::Add;
@@ -362,7 +361,7 @@ impl GuiFrame {
 
     pub fn sort(&mut self) {
         self.cmd_list
-            .par_sort_by(|a, b| Ord::cmp(&a.z_index, &b.z_index));
+            .sort_by(|a, b| Ord::cmp(&a.z_index, &b.z_index));
     }
 
     pub fn push_cmd(&mut self, cmd: GuiOrderedCmd) {

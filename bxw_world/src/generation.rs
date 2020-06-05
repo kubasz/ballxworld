@@ -1,11 +1,13 @@
 use crate::ecs::{CLoadAnchor, CLocation, Component, ECSHandler};
 use crate::stdgen::StdGenerator;
-use crate::{chunkpos_from_blockpos, ChunkPosition, UncompressedChunk, VChunk, World};
+use crate::{
+    blockpos_from_worldpos, chunkpos_from_blockpos, ChunkPosition, OldWorld, UncompressedChunk,
+    VChunk,
+};
 use bxw_util::math::*;
 use bxw_util::*;
 use fnv::FnvHashSet;
 use parking_lot::{Mutex, RwLockUpgradableReadGuard};
-use rayon::prelude::*;
 use smallvec::SmallVec;
 use std::iter::FromIterator;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,7 +22,7 @@ struct ChunkMsg {
 }
 
 pub struct WorldLoadGen {
-    pub world: Arc<World>,
+    pub world: Arc<OldWorld>,
     pub loading_queue: Arc<Mutex<Vec<(i32, ChunkPosition)>>>,
     pub progress_set: Arc<Mutex<FnvHashSet<ChunkPosition>>>,
     pub generator: Arc<StdGenerator>,
@@ -31,7 +33,7 @@ pub struct WorldLoadGen {
 }
 
 impl WorldLoadGen {
-    pub fn new(load_threads: u32, world: Arc<World>, seed: u64) -> Self {
+    pub fn new(load_threads: u32, world: Arc<OldWorld>, seed: u64) -> Self {
         let mut wlg = Self {
             world,
             loading_queue: Arc::new(Mutex::new(Vec::new())),
@@ -83,7 +85,7 @@ impl WorldLoadGen {
     }
 
     fn worldgen_worker(
-        world_arc: Arc<World>,
+        world_arc: Arc<OldWorld>,
         worldgen_arc: Arc<StdGenerator>,
         load_queue_arc: Arc<Mutex<Vec<(i32, ChunkPosition)>>>,
         progress_set_arc: Arc<Mutex<FnvHashSet<ChunkPosition>>>,
@@ -202,7 +204,7 @@ impl WorldLoadGen {
             }
             let loc = loc.unwrap();
             let r = anchor.radius as i32;
-            let pos: Vector3<i32> = chunkpos_from_blockpos(loc.position.map(|c| c as i32));
+            let pos: Vector3<i32> = chunkpos_from_blockpos(blockpos_from_worldpos(loc.position));
             for xoff in 0..r {
                 for yoff in 0..r {
                     for zoff in 0..r {
@@ -237,7 +239,7 @@ impl WorldLoadGen {
             .for_each(|p| load_queue.push(p));
 
         // load nearest chunks first
-        load_queue.par_sort_by_key(|p| -p.0);
+        load_queue.sort_by_key(|p| -p.0);
 
         let req_cpos: FnvHashSet<ChunkPosition> =
             FnvHashSet::from_iter(req_positions.iter().map(|c| c.1));

@@ -1,6 +1,6 @@
 use crate::{
-    blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition, Direction, VoxelDatum,
-    WEntities, WVoxels, World, CHUNK_DIM,
+    blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition, Direction, OldWorld, VoxelDatum,
+    WEntities, WVoxels, CHUNK_DIM,
 };
 use bxw_util::math::*;
 use bxw_util::*;
@@ -10,7 +10,7 @@ pub struct RaycastQuery<'q> {
     pub start_point: Vector3<f64>,
     pub direction: Vector3<f64>,
     pub distance_limit: f64,
-    pub world: &'q World,
+    pub world: &'q OldWorld,
     pub hit_voxels: Option<&'q WVoxels>,
     pub hit_entities: Option<&'q WEntities>,
 }
@@ -45,7 +45,7 @@ impl<'q> RaycastQuery<'q> {
         start_point: Vector3<f64>,
         direction: Vector3<f64>,
         distance_limit: f64,
-        world: &'q World,
+        world: &'q OldWorld,
         hit_voxels: Option<&'q WVoxels>,
         hit_entities: Option<&'q WEntities>,
     ) -> Self {
@@ -63,7 +63,7 @@ impl<'q> RaycastQuery<'q> {
         start_point: Vector3<f64>,
         orientation: UnitQuaternion<f64>,
         distance_limit: f64,
-        world: &'q World,
+        world: &'q OldWorld,
         hit_voxels: Option<&'q WVoxels>,
         hit_entities: Option<&'q WEntities>,
     ) -> Self {

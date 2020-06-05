@@ -23,6 +23,6 @@ pub fn create_player(entities: &mut ECS, local: bool, name: String) -> ValidEnti
     physics.control_max_force = vec3(30000.0, 0.0, 30000.0);
     entities.set_component(id, physics);
     entities.set_component(id, CDebugInfo::new(id, name));
-    entities.set_component(id, CLoadAnchor::new(id, 1));
+    entities.set_component(id, CLoadAnchor::new(id, 1, true));
     id
 }

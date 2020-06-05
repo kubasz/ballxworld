@@ -172,11 +172,16 @@ impl Component for CDebugInfo {
 pub struct CLoadAnchor {
     id: ValidEntityID,
     pub radius: u32,
+    pub load_mesh: bool,
 }
 
 impl CLoadAnchor {
-    pub fn new(id: ValidEntityID, radius: u32) -> Self {
-        Self { id, radius }
+    pub fn new(id: ValidEntityID, radius: u32, load_mesh: bool) -> Self {
+        Self {
+            id,
+            radius,
+            load_mesh,
+        }
     }
 }
 

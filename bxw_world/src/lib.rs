@@ -6,6 +6,7 @@ pub mod physics;
 pub mod raycast;
 pub mod registry;
 pub mod stdgen;
+pub mod worldmgr;
 
 use crate::ecs::ECS;
 use bxw_util::math::*;
@@ -392,7 +393,7 @@ pub struct WEntities {
     pub ecs: ECS,
 }
 
-pub struct World {
+pub struct OldWorld {
     pub name: String,
     pub vregistry: Arc<VoxelRegistry>,
     pub vcache: ThreadLocal<RefCell<VCache>>,
@@ -458,7 +459,7 @@ impl WEntities {
     }
 }
 
-impl World {
+impl OldWorld {
     pub fn new(name: String, vregistry: Arc<VoxelRegistry>) -> Self {
         Self {
             name,

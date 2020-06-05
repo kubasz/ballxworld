@@ -15,7 +15,6 @@ use bxw_util::math::*;
 use bxw_util::*;
 use fnv::{FnvHashMap, FnvHashSet};
 use parking_lot::Mutex;
-use rayon::prelude::*;
 use smallvec::SmallVec;
 use std::ffi::CString;
 use std::fmt::{Debug, Formatter};
@@ -27,7 +26,7 @@ use thread_local::CachedThreadLocal;
 use vk_mem as vma;
 use world::ecs::{CLocation, ECSHandler};
 use world::entities::player::PLAYER_EYE_HEIGHT;
-use world::{blockidx_from_blockpos, chunkpos_from_blockpos, World};
+use world::{blockidx_from_blockpos, chunkpos_from_blockpos, OldWorld};
 use world::{ChunkPosition, CHUNK_DIM};
 
 pub mod vox {
@@ -185,7 +184,7 @@ pub struct VoxelRenderer {
     uniform_ds_layout: vk::DescriptorSetLayout,
     uniform_dss: Vec<vk::DescriptorSet>,
     ds_pool: vk::DescriptorPool,
-    world: Option<Arc<World>>,
+    world: Option<Arc<OldWorld>>,
     pub voxel_pipeline_layout: vk::PipelineLayout,
     pub voxel_pipeline: vk::Pipeline,
     atmosphere_renderer: AtmosphereRenderer,
@@ -199,7 +198,7 @@ pub struct VoxelRenderer {
 }
 
 struct VoxWorkerParams {
-    world_w: Weak<World>,
+    world_w: Weak<OldWorld>,
     handles: RenderingHandles,
     alloc_pool: Arc<AllocatorPool>,
     work_queue: Arc<Mutex<Vec<ChunkRenderRequest>>>,
@@ -566,7 +565,7 @@ impl VoxelRenderer {
             .unwrap_or(0)
     }
 
-    pub fn set_world(&mut self, config: &Config, world: Arc<World>, rctx: &RenderingContext) {
+    pub fn set_world(&mut self, config: &Config, world: Arc<OldWorld>, rctx: &RenderingContext) {
         // create worker threads
         self.kill_threads();
         const STACK_SIZE: usize = 4 * 1024 * 1024;
@@ -845,7 +844,7 @@ impl VoxelRenderer {
             .for_each(|p| chunks_to_remove.push(*p));
         let mut chunks_to_add: Vec<ChunkRenderRequest> = voxels
             .chunks
-            .par_iter()
+            .iter()
             .map(|(cp, _)| cp)
             .filter(|cpos| !self.drawn_chunks.contains_key(cpos))
             .map(|pos| ChunkRenderRequest { pos: *pos })
@@ -853,7 +852,7 @@ impl VoxelRenderer {
         chunks_to_add.append(
             &mut self
                 .drawn_chunks
-                .par_iter()
+                .iter()
                 .filter(|(cpos, dch)| {
                     voxels
                         .chunks

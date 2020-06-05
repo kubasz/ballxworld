@@ -22,7 +22,7 @@ const fn cubed(a: usize) -> usize {
     a * a * a
 }
 
-pub fn is_chunk_trivial(chunk: &VChunk, world: &World) -> bool {
+pub fn is_chunk_trivial(chunk: &VChunk, world: &OldWorld) -> bool {
     let VChunkData::QuickCompressed { vox } = &chunk.data;
     if vox.len() == 3 && vox[0] == vox[1] {
         let vdef = world
@@ -37,7 +37,7 @@ pub fn is_chunk_trivial(chunk: &VChunk, world: &World) -> bool {
 
 #[allow(clippy::cognitive_complexity)]
 pub fn mesh_from_chunk(
-    world: &World,
+    world: &OldWorld,
     cpos: ChunkPosition,
     texture_dim: (u32, u32),
 ) -> Option<ChunkBuffers> {
@@ -84,8 +84,7 @@ pub fn mesh_from_chunk(
         (pos.x + 1) as usize
             + (pos.z + 1) as usize * INFLATED_DIM
             + (pos.y + 1) as usize * INFLATED_DIM * INFLATED_DIM
-    }
-    ;
+    };
 
     let mut vbuf: Vec<VoxelVertex> = Vec::new();
     let mut ibuf: Vec<u32> = Vec::new();

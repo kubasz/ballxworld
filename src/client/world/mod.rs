@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use world::ecs::ValidEntityID;
 use world::ecs::{CLocation, ECSHandler};
-use world::{VoxelRegistry, World};
+use world::{OldWorld, VoxelRegistry};
 
 #[derive(Clone, Debug)]
 pub enum CameraSettings {
@@ -15,8 +15,8 @@ pub struct ClientWorld {
 }
 
 impl ClientWorld {
-    pub fn new_world(name: String, registry: Arc<VoxelRegistry>) -> (World, ClientWorld) {
-        let mut world = World::new(name, registry);
+    pub fn new_world(name: String, registry: Arc<VoxelRegistry>) -> (OldWorld, ClientWorld) {
+        let mut world = OldWorld::new(name, registry);
         let entities = world.entities.get_mut();
         let local_player = world::entities::player::create_player(
             &mut entities.ecs,
