@@ -4,7 +4,7 @@ use crate::client::render::vkhelpers::{
     cmd_push_struct_constants, make_pipe_depthstencil, DroppingCommandPool, OnetimeCmdGuard,
     OwnedBuffer, VulkanDeviceObject,
 };
-use crate::client::render::voxmesh::mesh_from_chunk;
+use crate::client::render::voxmesh::{is_chunk_trivial, mesh_from_chunk};
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles, INFLIGHT_FRAMES};
 use crate::client::render::*;
 use crate::client::world::CameraSettings;
@@ -809,7 +809,7 @@ impl VoxelRenderer {
             self.drawn_chunks.clear();
             return;
         }
-        let world = self.world.as_ref().unwrap();
+        let world = self.world.as_ref().unwrap().clone();
 
         let ref_pos; // TODO: Add velocity-based position prediction
         let ref_fdir;
@@ -861,8 +861,26 @@ impl VoxelRenderer {
                 .collect(),
         );
         let real_chunks_to_add: Vec<ChunkRenderRequest> = chunks_to_add
-            .into_par_iter()
-            .filter(|rr| {
+            .into_iter()
+            .filter(|rr: &ChunkRenderRequest| {
+                if let Some(chunk) = voxels.chunks.get(&rr.pos) {
+                    if is_chunk_trivial(chunk, &world) {
+                        self.drawn_chunks.insert(
+                            chunk.position,
+                            DrawnChunk {
+                                cpos: chunk.position,
+                                last_dirty: chunk.dirty,
+                                buffer: OwnedBuffer::new(),
+                                istart: 0,
+                                vcount: 0,
+                                icount: 0,
+                            },
+                        );
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
                 for dx in -1..=1 {
                     for dy in -1..=1 {
                         for dz in -1..=1 {

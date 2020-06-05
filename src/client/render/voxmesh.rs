@@ -22,6 +22,19 @@ const fn cubed(a: usize) -> usize {
     a * a * a
 }
 
+pub fn is_chunk_trivial(chunk: &VChunk, world: &World) -> bool {
+    let VChunkData::QuickCompressed { vox } = &chunk.data;
+    if vox.len() == 3 && vox[0] == vox[1] {
+        let vdef = world
+            .vregistry
+            .get_definition_from_id(VoxelDatum { id: vox[0] });
+        if !vdef.has_mesh {
+            return true;
+        }
+    }
+    false
+}
+
 #[allow(clippy::cognitive_complexity)]
 pub fn mesh_from_chunk(
     world: &World,
@@ -33,16 +46,12 @@ pub fn mesh_from_chunk(
     let registry: &VoxelRegistry = &world.vregistry;
     {
         let chk = voxels.chunks.get(&cpos)?;
-        let VChunkData::QuickCompressed { vox } = &chk.data;
-        if vox.len() == 3 && vox[0] == vox[1] {
-            let vdef = registry.get_definition_from_id(VoxelDatum { id: vox[0] });
-            if !vdef.has_mesh {
-                return Some(ChunkBuffers {
-                    indices: Vec::new(),
-                    vertices: Vec::new(),
-                    dirty,
-                });
-            }
+        if is_chunk_trivial(chk, world) {
+            return Some(ChunkBuffers {
+                indices: Vec::new(),
+                vertices: Vec::new(),
+                dirty,
+            });
         }
     }
     // only time non-trivial chunks
