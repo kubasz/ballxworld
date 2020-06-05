@@ -2,13 +2,10 @@ use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
 use bxw_util::math::*;
 use bxw_util::*;
 use itertools::iproduct;
-use smallvec::SmallVec;
-use world::registry::VoxelRegistry;
-use world::{
-    blockidx_from_blockpos, chunkpos_from_blockpos, ChunkPosition, UncompressedChunk, VChunkData,
-    VoxelDatum, World, CHUNK_DIM,
-};
+use std::mem::MaybeUninit;
 use std::time::Instant;
+use world::registry::VoxelRegistry;
+use world::*;
 
 struct CubeSide {
     // counter-clockwise coords of the face
@@ -19,6 +16,10 @@ struct CubeSide {
     pub ioffset: [i32; 3],
     // texture coordinates (u,v) matched with vertex coordinates
     pub texcs: [f32; 2 * 4],
+}
+
+const fn cubed(a: usize) -> usize {
+    a * a * a
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -49,26 +50,37 @@ pub fn mesh_from_chunk(
     // only time non-trivial chunks
     let premesh = Instant::now();
     let mut vcache = world.get_vcache();
-    let mut chunks: SmallVec<[&UncompressedChunk; 32]> = SmallVec::new();
+    // Safety: uninitialized array of MaybeUninits is safe
+    const INFLATED_DIM: usize = CHUNK_DIM + 2;
+    let mut vdefs: [MaybeUninit<&VoxelDefinition>; cubed(INFLATED_DIM)] =
+        unsafe { MaybeUninit::uninit().assume_init() };
     for (y, z, x) in iproduct!(-1..=1, -1..=1, -1..=1) {
         vcache.ensure_newest_cached(&voxels, cpos + vec3(x, y, z))?;
     }
     drop(voxels);
-    for (y, z, x) in iproduct!(-1..=1, -1..=1, -1..=1) {
-        chunks.push(
-            vcache
-                .peek_uncompressed_chunk(cpos + vec3(x, y, z))
-                .unwrap(),
-        );
-    }
-    // pos relative to Chunk@cpos
-    let get_block = |pos: Vector3<i32>| {
-        let cp = chunkpos_from_blockpos(pos) + vec3(1, 1, 1);
-        if lod != 0 && cp != vec3(1, 1, 1) {
-            return VoxelDatum::default();
+    let cbpos = cpos * CHUNK_DIM as i32;
+    for (y, z, x) in iproduct!(0..INFLATED_DIM, 0..INFLATED_DIM, 0..INFLATED_DIM) {
+        let dat = vcache
+            .peek_block(cbpos + vec3(x as i32 - 1, y as i32 - 1, z as i32 - 1))
+            .unwrap();
+        let def = registry.get_definition_from_id(dat);
+        let idx = x + z * INFLATED_DIM + y * INFLATED_DIM * INFLATED_DIM;
+        unsafe {
+            vdefs[idx].as_mut_ptr().write(def); // Safety: Initialize every element with a valid reference
         }
-        let ch: &UncompressedChunk = &chunks[(cp.x + cp.z * 3 + cp.y * 9) as usize];
-        ch.blocks_yzx[blockidx_from_blockpos(pos)]
+    }
+    let default_vdef = registry.get_definition_from_id(VoxelDatum::default());
+    let vdefs: [&VoxelDefinition; cubed(INFLATED_DIM)] = unsafe { std::mem::transmute(vdefs) }; // Safety: The whole array is initialized in the above for loop
+                                                                                                // pos relative to Chunk@cpos
+    let get_block = |pos: Vector3<i32>| {
+        let apos = [pos.x, pos.y, pos.z];
+        if apos.iter().any(|&c| c < 0 || c >= CHUNK_DIM as i32) {
+            return default_vdef;
+        }
+        let idx = (pos.x + 1) as usize
+            + (pos.z + 1) as usize * INFLATED_DIM
+            + (pos.y + 1) as usize * INFLATED_DIM * INFLATED_DIM;
+        vdefs[idx]
     };
 
     let mut vbuf: Vec<VoxelVertex> = Vec::new();
@@ -115,16 +127,12 @@ pub fn mesh_from_chunk(
             let mut ipos = vec3(co_x as i32, co_y as i32, co_z as i32);
             'subfinder: for subp in suborder.iter() {
                 ipos = vec3(co_x as i32, co_y as i32, co_z as i32) + subp;
-                if registry.get_definition_from_id(get_block(ipos)).has_mesh {
+                if get_block(ipos).has_mesh {
                     break 'subfinder;
                 }
             }
-            let vox = get_block(ipos);
             let vidx = blockidx_from_blockpos(ipos);
-            let vdef = registry.get_definition_from_id(vox);
-            //let x = ipos.x as f32;
-            //let y = ipos.y as f32;
-            //let z = ipos.z as f32;
+            let vdef = get_block(ipos);
 
             if !vdef.has_mesh {
                 continue;
@@ -132,8 +140,7 @@ pub fn mesh_from_chunk(
 
             // hidden face removal
             let touchpos = ipos + ioffset;
-            let tid = get_block(touchpos);
-            let tdef = registry.get_definition_from_id(tid);
+            let tdef = get_block(touchpos);
             if tdef.has_mesh {
                 continue;
             }
@@ -146,7 +153,7 @@ pub fn mesh_from_chunk(
                 let (ao_s1, ao_s2, ao_c): (bool, bool, bool);
                 {
                     let p_c = ipos + corner;
-                    ao_c = registry.get_definition_from_id(get_block(p_c)).has_mesh;
+                    ao_c = get_block(p_c).has_mesh;
                     let (p_s1, p_s2);
                     if ioffset.x != 0 {
                         // y,z sides
@@ -161,8 +168,8 @@ pub fn mesh_from_chunk(
                         p_s1 = ipos + vec3(corner.x, 0, corner.z);
                         p_s2 = ipos + vec3(0, corner.y, corner.z);
                     }
-                    ao_s1 = registry.get_definition_from_id(get_block(p_s1)).has_mesh;
-                    ao_s2 = registry.get_definition_from_id(get_block(p_s2)).has_mesh;
+                    ao_s1 = get_block(p_s1).has_mesh;
+                    ao_s2 = get_block(p_s2).has_mesh;
                 }
                 let ao = if ao_s1 && ao_s2 {
                     3
@@ -186,7 +193,6 @@ pub fn mesh_from_chunk(
                     1.0,
                 ];
                 let texid;
-                use world::TextureMapping;
                 match &vdef.texture_mapping {
                     TextureMapping::TiledSingle(t) => {
                         texid = *t;
@@ -231,7 +237,9 @@ pub fn mesh_from_chunk(
 
     let postmesh = Instant::now();
     let meshtime = postmesh.saturating_duration_since(premesh);
-    bxw_util::debug_data::DEBUG_DATA.wmesh_times.push_ns(meshtime.as_nanos() as i64);
+    bxw_util::debug_data::DEBUG_DATA
+        .wmesh_times
+        .push_ns(meshtime.as_nanos() as i64);
 
     Some(ChunkBuffers {
         vertices: vbuf,

@@ -1,9 +1,9 @@
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use std::alloc::{GlobalAlloc, Layout};
-use std::sync::atomic::*;
 use std::fmt::*;
 use std::mem::MaybeUninit;
+use std::sync::atomic::*;
 
 /// Debug view data for monitoring the behaviour of the game
 #[derive(Debug, Default)]
@@ -149,7 +149,13 @@ impl TimingRing {
 impl Display for TimingRing {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let (min, avg, max) = self.min_avg_max_ns();
-        write!(f, "min {} avg {} max {}", FmtNanoseconds(min), FmtNanoseconds(avg), FmtNanoseconds(max))
+        write!(
+            f,
+            "min {} avg {} max {}",
+            FmtNanoseconds(min),
+            FmtNanoseconds(avg),
+            FmtNanoseconds(max)
+        )
     }
 }
 

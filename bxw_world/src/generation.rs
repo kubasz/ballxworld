@@ -1,9 +1,9 @@
 use crate::ecs::{CLoadAnchor, CLocation, Component, ECSHandler};
 use crate::stdgen::StdGenerator;
 use crate::{chunkpos_from_blockpos, ChunkPosition, UncompressedChunk, VChunk, World};
+use bxw_util::math::*;
 use bxw_util::*;
 use fnv::FnvHashSet;
-use bxw_util::math::*;
 use parking_lot::{Mutex, RwLockUpgradableReadGuard};
 use rayon::prelude::*;
 use smallvec::SmallVec;
@@ -12,8 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
-use thread_local::CachedThreadLocal;
 use std::time::Instant;
+use thread_local::CachedThreadLocal;
 
 struct ChunkMsg {
     chunk: VChunk,
@@ -133,7 +133,9 @@ impl WorldLoadGen {
                 chunk.compress(&ucchunk);
                 let postgen = Instant::now();
                 let gentime = postgen.saturating_duration_since(pregen);
-                bxw_util::debug_data::DEBUG_DATA.wgen_times.push_ns(gentime.as_nanos() as i64);
+                bxw_util::debug_data::DEBUG_DATA
+                    .wgen_times
+                    .push_ns(gentime.as_nanos() as i64);
                 if submission.send(ChunkMsg { chunk }).is_err() {
                     return;
                 }

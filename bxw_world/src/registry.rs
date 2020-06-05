@@ -126,6 +126,7 @@ impl VoxelRegistry {
         }
     }
 
+    #[inline(always)]
     pub fn get_definition_from_id(&self, datum: VoxelDatum) -> &VoxelDefinition {
         self.definitions[datum.id as usize].as_ref().unwrap()
     }
