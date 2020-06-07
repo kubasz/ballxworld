@@ -10,8 +10,10 @@ use parking_lot::*;
 use std::any::*;
 use std::cell::Cell;
 use std::sync::atomic::*;
+use std::sync::mpsc::*;
 
 #[repr(u8)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Debug)]
 pub enum ChunkDataState {
     Unloaded = 0,
     Waiting = 1,
@@ -20,19 +22,8 @@ pub enum ChunkDataState {
 }
 
 impl ChunkDataState {
-    pub fn from_u8(n: u8) -> Option<Self> {
-        use ChunkDataState::*;
-        match n {
-            0 => Some(Unloaded),
-            1 => Some(Waiting),
-            2 => Some(Loaded),
-            3 => Some(Updating),
-            _ => None,
-        }
-    }
-
-    pub fn requires_load_request(n: u8) -> bool {
-        n == ChunkDataState::Unloaded as u8
+    pub fn requires_load_request(self) -> bool {
+        self == ChunkDataState::Unloaded
     }
 }
 
@@ -42,11 +33,15 @@ pub const CHUNK_MESH_DATA: usize = 2;
 
 pub type ChunkBlockData = Option<Arc<VChunk>>;
 pub type ChunkLightData = Option<Arc<()>>;
-type KindsSmallVec = SmallVec<[usize; 4]>;
+type KindsSmallVec = SmallVec<[usize; 6]>;
 
 pub type AnyChunkData = Option<Arc<dyn Any + Send + Sync>>;
 
 pub trait ChunkDataHandler {
+    fn status_array(&self) -> &Vec<ChunkDataState>;
+    fn status_array_mut(&mut self) -> &mut Vec<ChunkDataState>;
+    /// (ChunkDataKind, requires 26 populated neighbors)
+    fn get_dependency(&self) -> Option<(usize, bool)>;
     fn get_data(&self, world: &World, index: usize) -> AnyChunkData;
     /// Returns the old data
     fn swap_data(&mut self, world: &World, index: usize, new_data: AnyChunkData) -> AnyChunkData;
@@ -57,27 +52,74 @@ pub trait ChunkDataHandler {
         world: &World,
         cpos: ChunkPosition,
         index: usize,
-        status_field: Arc<AtomicU8>,
-    ) -> Task;
+    ) -> Option<Task>;
+    fn needs_loading_for_anchor(&self, anchor: &CLoadAnchor) -> bool;
 }
 
-pub struct ChunkData {
-    kind: usize,
-    /// (ChunkDataKind, requires 26 populated neighbors)
-    depends_on: Option<(usize, bool)>,
-    status_array: Vec<Arc<AtomicU8>>,
-    handler: Box<dyn ChunkDataHandler>,
+#[derive(Clone, Default, Debug)]
+pub struct NoopChunkDataHandler {
+    pub statuses: Vec<ChunkDataState>,
 }
+
+impl ChunkDataHandler for NoopChunkDataHandler {
+    fn status_array(&self) -> &Vec<ChunkDataState> {
+        &self.statuses
+    }
+
+    fn status_array_mut(&mut self) -> &mut Vec<ChunkDataState> {
+        &mut self.statuses
+    }
+
+    fn get_dependency(&self) -> Option<(usize, bool)> {
+        None
+    }
+
+    fn get_data(&self, _world: &World, _index: usize) -> AnyChunkData {
+        None
+    }
+
+    fn swap_data(
+        &mut self,
+        _world: &World,
+        _index: usize,
+        _new_data: AnyChunkData,
+    ) -> AnyChunkData {
+        None
+    }
+
+    fn resize_data(&mut self, _world: &World, _new_size: usize) {}
+
+    fn create_chunk_update_task(
+        &mut self,
+        _world: &World,
+        _cpos: ChunkPosition,
+        index: usize,
+    ) -> Option<Task> {
+        self.statuses[index] = ChunkDataState::Loaded;
+        None
+    }
+
+    fn needs_loading_for_anchor(&self, _anchor: &CLoadAnchor) -> bool {
+        false
+    }
+}
+
+pub type SynchronousUpdateTask = Box<dyn FnOnce(&mut World)>;
 
 pub struct World {
     allocation: FnvHashMap<ChunkPosition, usize>,
     chunk_positions: Vec<Option<ChunkPosition>>,
     free_indices: Vec<usize>,
-    data: Vec<Arc<Mutex<ChunkData>>>,
+    data: Vec<RefCell<Box<dyn ChunkDataHandler>>>,
     entities: Arc<RwLock<ECS>>,
     load_data: Arc<Mutex<LoadData>>,
     load_data_busy: Arc<AtomicBool>,
+    tasks_in_pool: Arc<AtomicI32>,
     remaining_deltas: Vec<ChunkDelta>,
+    sync_task_queue: (
+        SyncSender<SynchronousUpdateTask>,
+        Receiver<SynchronousUpdateTask>,
+    ),
 }
 
 #[derive(Clone, Eq, PartialEq, Hash)]
@@ -138,7 +180,7 @@ struct LoadData {
     allocation: FnvHashMap<ChunkPosition, usize>,
     chunk_positions: Vec<Option<ChunkPosition>>,
     busy: Arc<AtomicBool>,
-    status_arrays: Vec<Vec<u8>>,
+    status_arrays: Vec<Vec<ChunkDataState>>,
     anchors: Vec<LoadAnchor>,
     remaining_deltas: Vec<ChunkDelta>,
     dependencies: Vec<Option<(usize, bool)>>,
@@ -148,11 +190,18 @@ impl Default for World {
     fn default() -> Self {
         let default_capacity = 64;
         let busy_arc = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = sync_channel(256);
+        let mut handlers = Vec::new();
+        for _ in 0..8 {
+            handlers.push(RefCell::new(
+                Box::new(NoopChunkDataHandler::default()) as Box<dyn ChunkDataHandler>
+            ));
+        }
         Self {
             allocation: FnvHashMap::with_capacity_and_hasher(default_capacity, Default::default()),
             chunk_positions: Vec::with_capacity(default_capacity),
             free_indices: Vec::with_capacity(default_capacity),
-            data: Vec::with_capacity(8),
+            data: handlers,
             entities: Arc::new(Default::default()),
             load_data: Arc::new(Mutex::new(LoadData {
                 allocation: Default::default(),
@@ -164,7 +213,9 @@ impl Default for World {
                 dependencies: Default::default(),
             })),
             load_data_busy: busy_arc,
+            tasks_in_pool: Arc::new(Default::default()),
             remaining_deltas: Vec::new(),
+            sync_task_queue: (tx, rx),
         }
     }
 }
@@ -172,6 +223,10 @@ impl Default for World {
 impl World {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    pub fn get_sync_task_channel(&self) -> SyncSender<SynchronousUpdateTask> {
+        self.sync_task_queue.0.clone()
     }
 
     fn extend_allocations(&mut self) {
@@ -188,10 +243,9 @@ impl World {
             self.free_indices.push(idx);
         }
         for d in self.data.iter() {
-            let mut d = d.lock();
-            d.status_array
-                .resize_with(ncap, || Arc::new(AtomicU8::new(0)));
-            d.handler.resize_data(self, ncap);
+            let mut d = d.borrow_mut();
+            d.status_array_mut().resize(ncap, ChunkDataState::Unloaded);
+            d.resize_data(self, ncap);
         }
     }
 
@@ -211,6 +265,72 @@ impl World {
 
     pub fn main_loop_tick(&mut self, task_pool: &TaskPool) {
         self.check_load_deltas(task_pool);
+        for _taskn in 0..256 {
+            match self.sync_task_queue.1.try_recv() {
+                Ok(task) => (task)(self),
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+            }
+        }
+        let mut remaining = 256 - self.tasks_in_pool.load(Ordering::SeqCst);
+        let mut tasks = Vec::with_capacity(32);
+        for _deltan in 0..512 {
+            if let Some(delta) = self.remaining_deltas.pop() {
+                let cid = match self.allocation.get(&delta.cpos).copied() {
+                    Some(cid) => cid,
+                    None => {
+                        if delta.unload {
+                            continue;
+                        } else {
+                            self.get_or_allocate_chunk(delta.cpos)
+                        }
+                    }
+                };
+                if delta.unload {
+                    for kind in delta.handlers {
+                        let mut kind = self.data[kind].borrow_mut();
+                        if kind.status_array()[cid] != ChunkDataState::Unloaded {
+                            let arc = kind.swap_data(self, cid, None);
+                            kind.status_array_mut()[cid] = ChunkDataState::Unloaded;
+                            let cnt = self.tasks_in_pool.clone();
+                            tasks.push(Task::new(
+                                move || {
+                                    drop(arc);
+                                    cnt.fetch_sub(1, Ordering::SeqCst);
+                                },
+                                false,
+                                false,
+                            ));
+                        }
+                    }
+                } else {
+                    for kind in delta.handlers {
+                        let mut kind = self.data[kind].borrow_mut();
+                        if kind.status_array()[cid] == ChunkDataState::Loaded {
+                            continue;
+                        } else {
+                            let task = kind.create_chunk_update_task(self, delta.cpos, cid);
+                            if let Some(task) = task {
+                                remaining -= 1;
+                                self.tasks_in_pool.fetch_add(1, Ordering::SeqCst);
+                                let cnt = self.tasks_in_pool.clone();
+                                tasks.push(task.compose_with(Task::new(
+                                    move || {
+                                        cnt.fetch_sub(1, Ordering::SeqCst);
+                                    },
+                                    false,
+                                    false,
+                                )));
+                            }
+                        }
+                    }
+                }
+            } else {
+                break;
+            }
+            if remaining <= 0 {
+                break;
+            }
+        }
     }
 
     fn check_load_deltas(&mut self, task_pool: &TaskPool) {
@@ -223,12 +343,15 @@ impl World {
             let ecs = self.entities.read();
             let mut new_anchors = Vec::with_capacity(load_data.anchors.len());
             let it = ECSHandler::<CLoadAnchor>::iter(&*ecs);
-            let kinds_nomesh: KindsSmallVec =
-                SmallVec::from_slice(&[CHUNK_BLOCK_DATA, CHUNK_LIGHT_DATA]);
-            let kinds_mesh: KindsSmallVec =
-                SmallVec::from_slice(&[CHUNK_BLOCK_DATA, CHUNK_LIGHT_DATA, CHUNK_MESH_DATA]);
 
             for anchor in it {
+                let mut anchor_kinds = SmallVec::new();
+                for (kid, kind) in self.data.iter().enumerate() {
+                    let kind = kind.borrow();
+                    if kind.needs_loading_for_anchor(anchor) {
+                        anchor_kinds.push(kid);
+                    }
+                }
                 let loc: Option<&CLocation> = ecs.get_component(anchor.entity_id());
                 if loc.is_none() {
                     continue;
@@ -238,30 +361,26 @@ impl World {
                     eid: anchor.entity_id().u64(),
                     cpos: chunkpos_from_blockpos(blockpos_from_worldpos(loc.position)),
                     radius: anchor.radius,
-                    requested_kinds: if anchor.load_mesh {
-                        kinds_mesh.clone()
-                    } else {
-                        kinds_nomesh.clone()
-                    },
+                    requested_kinds: anchor_kinds,
                 });
             }
             drop(ecs);
             new_anchors.sort();
-            if new_anchors != load_data.anchors {
+            //if new_anchors != load_data.anchors {
+            {
                 load_data
                     .status_arrays
                     .resize_with(self.data.len(), Vec::new);
-                load_data.chunk_positions = self.chunk_positions.clone();
-                load_data.allocation = self.allocation.clone();
-                load_data.dependencies = self.data.iter().map(|d| d.lock().depends_on).collect();
+                load_data.chunk_positions.clone_from(&self.chunk_positions);
+                load_data.allocation.clone_from(&self.allocation);
+                load_data.dependencies = self
+                    .data
+                    .iter()
+                    .map(|d| d.borrow().get_dependency())
+                    .collect();
                 for (i, status_array) in load_data.status_arrays.iter_mut().enumerate() {
-                    let orig = self.data[i].lock();
-                    status_array.clear();
-                    status_array.resize(orig.status_array.len(), 0);
-                    status_array
-                        .iter_mut()
-                        .enumerate()
-                        .for_each(|(i, v)| *v = orig.status_array[i].load(Ordering::Relaxed));
+                    let orig = self.data[i].borrow_mut();
+                    status_array.clone_from(orig.status_array());
                 }
                 self.load_data_busy.store(true, Ordering::SeqCst);
                 load_data.anchors = new_anchors;
@@ -354,7 +473,8 @@ fn recalculate_load_deltas(load_data: Arc<Mutex<LoadData>>) {
             min_anchor_distance: min_anchor_distance.get(),
         });
     }
-    load_data.remaining_deltas.sort();
+    load_data.remaining_deltas.sort_unstable();
+    load_data.remaining_deltas.reverse();
     load_data.busy.store(false, Ordering::SeqCst);
 }
 
