@@ -8,17 +8,13 @@ pub mod registry;
 pub mod stdgen;
 pub mod worldmgr;
 
-use crate::ecs::ECS;
 use bxw_util::math::*;
 use bxw_util::*;
 use divrem::{DivFloor, RemFloor};
-use fnv::FnvHashMap;
 use lru::LruCache;
-use parking_lot::RwLock;
 pub use registry::VoxelRegistry;
 use std::cell::{RefCell, RefMut};
 use std::sync::Arc;
-use thread_local::ThreadLocal;
 
 pub const CHUNK_DIM: usize = 32;
 pub const CHUNK_DIM2: usize = CHUNK_DIM * CHUNK_DIM;
@@ -70,79 +66,6 @@ impl Default for UncompressedChunk {
 impl UncompressedChunk {
     pub fn new() -> Self {
         Default::default()
-    }
-}
-
-/// Stored per-thread in the corresponding world object
-pub struct VCache {
-    uncompressed_chunks: LruCache<ChunkPosition, Box<UncompressedChunk>>,
-}
-
-impl Default for VCache {
-    fn default() -> Self {
-        Self {
-            uncompressed_chunks: LruCache::new(64),
-        }
-    }
-}
-
-impl VCache {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn ensure_newest_cached(&mut self, voxels: &WVoxels, cpos: ChunkPosition) -> Option<()> {
-        let newest = voxels.chunks.get(&cpos)?;
-        let cached = self.uncompressed_chunks.get_mut(&cpos);
-        if let Some(cached) = cached {
-            if cached.dirty < newest.dirty {
-                *cached = newest.decompress();
-            }
-            Some(())
-        } else {
-            self.uncompressed_chunks.put(cpos, newest.decompress());
-            Some(())
-        }
-    }
-
-    /// Cached
-    pub fn get_uncompressed_chunk(
-        &mut self,
-        voxels: &WVoxels,
-        cpos: ChunkPosition,
-    ) -> Option<&UncompressedChunk> {
-        self.ensure_newest_cached(voxels, cpos)?;
-        self.uncompressed_chunks
-            .get(&cpos)
-            .map(|x| x as &UncompressedChunk)
-    }
-
-    pub fn get_uncompressed_chunk_mut(
-        &mut self,
-        voxels: &WVoxels,
-        cpos: ChunkPosition,
-    ) -> Option<&mut UncompressedChunk> {
-        self.ensure_newest_cached(voxels, cpos)?;
-        self.uncompressed_chunks
-            .get_mut(&cpos)
-            .map(|x| x as &mut UncompressedChunk)
-    }
-
-    pub fn peek_uncompressed_chunk(&self, cpos: ChunkPosition) -> Option<&UncompressedChunk> {
-        self.uncompressed_chunks
-            .peek(&cpos)
-            .map(|x| x as &UncompressedChunk)
-    }
-
-    pub fn get_block(&mut self, voxels: &WVoxels, bpos: BlockPosition) -> Option<VoxelDatum> {
-        let cpos = chunkpos_from_blockpos(bpos);
-        self.ensure_newest_cached(voxels, cpos)?;
-        Some(self.uncompressed_chunks.get(&cpos)?.blocks_yzx[blockidx_from_blockpos(bpos)])
-    }
-
-    pub fn peek_block(&self, bpos: BlockPosition) -> Option<VoxelDatum> {
-        let cpos = chunkpos_from_blockpos(bpos);
-        Some(self.uncompressed_chunks.peek(&cpos)?.blocks_yzx[blockidx_from_blockpos(bpos)])
     }
 }
 
@@ -383,25 +306,7 @@ impl VoxelDefinition {
     }
 }
 
-#[derive(Default)]
-pub struct WVoxels {
-    pub chunks: FnvHashMap<ChunkPosition, VChunk>,
-}
-
-#[derive(Default)]
-pub struct WEntities {
-    pub ecs: ECS,
-}
-
-pub struct OldWorld {
-    pub name: String,
-    pub vregistry: Arc<VoxelRegistry>,
-    pub vcache: ThreadLocal<RefCell<VCache>>,
-    pub voxels: RwLock<WVoxels>,
-    pub entities: RwLock<WEntities>,
-}
-
-impl WVoxels {
+/*impl WVoxels {
     pub fn new() -> Self {
         Default::default()
     }
@@ -457,24 +362,4 @@ impl WEntities {
     pub fn new() -> Self {
         Default::default()
     }
-}
-
-impl OldWorld {
-    pub fn new(name: String, vregistry: Arc<VoxelRegistry>) -> Self {
-        Self {
-            name,
-            vregistry,
-            vcache: ThreadLocal::new(),
-            voxels: RwLock::new(WVoxels::new()),
-            entities: RwLock::new(WEntities::new()),
-        }
-    }
-
-    pub fn get_vcache(&self) -> RefMut<'_, VCache> {
-        self.vcache.get_or_default().borrow_mut()
-    }
-
-    pub fn physics_tick(&self) {
-        physics::world_physics_tick(self);
-    }
-}
+}*/

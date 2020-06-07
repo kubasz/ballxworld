@@ -1,7 +1,6 @@
-use crate::{
-    blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition, Direction, OldWorld, VoxelDatum,
-    WEntities, WVoxels, CHUNK_DIM,
-};
+use crate::generation::WorldBlocks;
+use crate::worldmgr::{World, CHUNK_BLOCK_DATA};
+use crate::*;
 use bxw_util::math::*;
 use bxw_util::*;
 
@@ -10,9 +9,9 @@ pub struct RaycastQuery<'q> {
     pub start_point: Vector3<f64>,
     pub direction: Vector3<f64>,
     pub distance_limit: f64,
-    pub world: &'q OldWorld,
-    pub hit_voxels: Option<&'q WVoxels>,
-    pub hit_entities: Option<&'q WEntities>,
+    pub world: &'q World,
+    pub hit_voxels: bool,
+    pub hit_entities: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -45,9 +44,9 @@ impl<'q> RaycastQuery<'q> {
         start_point: Vector3<f64>,
         direction: Vector3<f64>,
         distance_limit: f64,
-        world: &'q OldWorld,
-        hit_voxels: Option<&'q WVoxels>,
-        hit_entities: Option<&'q WEntities>,
+        world: &'q World,
+        hit_voxels: bool,
+        hit_entities: bool,
     ) -> Self {
         Self {
             start_point,
@@ -63,9 +62,9 @@ impl<'q> RaycastQuery<'q> {
         start_point: Vector3<f64>,
         orientation: UnitQuaternion<f64>,
         distance_limit: f64,
-        world: &'q OldWorld,
-        hit_voxels: Option<&'q WVoxels>,
-        hit_entities: Option<&'q WEntities>,
+        world: &'q World,
+        hit_voxels: bool,
+        hit_entities: bool,
     ) -> Self {
         let direction = glm::quat_rotate_vec3(&orientation, &Vector3::z_axis());
         Self {
@@ -87,7 +86,9 @@ impl<'q> RaycastQuery<'q> {
         // fast voxel traversal
         // https://www.gamedev.net/blogs/entry/2265248-voxel-traversal-algorithm-ray-casting/
         // http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.42.3443&rep=rep1&type=pdf
-        if let Some(voxels) = self.hit_voxels {
+        if self.hit_voxels {
+            let voxels = self.world.get_handler(CHUNK_BLOCK_DATA).borrow();
+            let voxels = voxels.as_any().downcast_ref::<WorldBlocks>().unwrap();
             let offset_start: Vector3<f64> = self.start_point + vec3(0.5, 0.5, 0.5);
             let mut bpos: Vector3<i32> = offset_start.map(|c| c.floor() as i32);
             let mut cpos: Vector3<i32> = chunkpos_from_blockpos(bpos);
@@ -122,8 +123,8 @@ impl<'q> RaycastQuery<'q> {
 
             let ichunk_dim = CHUNK_DIM as i32;
             bpos -= cpos * ichunk_dim;
-            let mut vcache = self.world.get_vcache();
-            let mut chunk = vcache.get_uncompressed_chunk(voxels, cpos);
+            let mut vcache = voxels.get_vcache();
+            let mut chunk = vcache.get_uncompressed_chunk(self.world, voxels, cpos);
             let mut normal_datum = None;
             let mut t_total = 0.0;
 
@@ -132,7 +133,7 @@ impl<'q> RaycastQuery<'q> {
                 if let Some(chunk) = chunk {
                     let bidx = blockidx_from_blockpos(bpos);
                     let datum = chunk.blocks_yzx[bidx];
-                    let vdef = self.world.vregistry.get_definition_from_id(datum);
+                    let vdef = voxels.voxel_registry.get_definition_from_id(datum);
                     if vdef.has_hitbox {
                         let block_position = bpos + cpos * ichunk_dim;
                         let intersect_pos = self.start_point + direction * t_total;
@@ -174,7 +175,7 @@ impl<'q> RaycastQuery<'q> {
                 if bpos[min_tmax] < 0 || bpos[min_tmax] >= ichunk_dim {
                     bpos[min_tmax] -= ichunk_dim * step[min_tmax];
                     cpos[min_tmax] += step[min_tmax];
-                    chunk = vcache.get_uncompressed_chunk(voxels, cpos);
+                    chunk = vcache.get_uncompressed_chunk(self.world, voxels, cpos);
                 }
                 t_total = t_max[min_tmax];
                 t_max[min_tmax] += t_delta[min_tmax];

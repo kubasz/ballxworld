@@ -130,6 +130,24 @@ fn byte_slice_from<T: Sized>(data: &[T]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(start_ptr as *const u8, bytes_len) }
 }
 
+pub struct AllocatorPool(pub vma::AllocatorPool);
+
+unsafe impl Send for AllocatorPool {}
+
+unsafe impl Sync for AllocatorPool {}
+
+impl Clone for AllocatorPool {
+    fn clone(&self) -> Self {
+        Self(unsafe { std::ptr::read(&self.0 as *const _) })
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        unsafe {
+            std::ptr::copy_nonoverlapping(&source.0 as *const _, &mut self.0 as *mut _, 1);
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct OwnedBuffer {
     pub buffer: vk::Buffer,

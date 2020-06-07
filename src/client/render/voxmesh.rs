@@ -2,7 +2,9 @@ use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
 use bxw_util::math::*;
 use bxw_util::*;
 use itertools::iproduct;
+use std::iter::FromIterator;
 use std::mem::MaybeUninit;
+use std::sync::Arc;
 use std::time::Instant;
 use world::registry::VoxelRegistry;
 use world::*;
@@ -22,12 +24,10 @@ const fn cubed(a: usize) -> usize {
     a * a * a
 }
 
-pub fn is_chunk_trivial(chunk: &VChunk, world: &OldWorld) -> bool {
+pub fn is_chunk_trivial(chunk: &VChunk, registry: &VoxelRegistry) -> bool {
     let VChunkData::QuickCompressed { vox } = &chunk.data;
     if vox.len() == 3 && vox[0] == vox[1] {
-        let vdef = world
-            .vregistry
-            .get_definition_from_id(VoxelDatum { id: vox[0] });
+        let vdef = registry.get_definition_from_id(VoxelDatum { id: vox[0] });
         if !vdef.has_mesh {
             return true;
         }
@@ -37,39 +37,31 @@ pub fn is_chunk_trivial(chunk: &VChunk, world: &OldWorld) -> bool {
 
 #[allow(clippy::cognitive_complexity)]
 pub fn mesh_from_chunk(
-    world: &OldWorld,
-    cpos: ChunkPosition,
+    registry: &VoxelRegistry,
+    chunks: &[Arc<VChunk>],
     texture_dim: (u32, u32),
 ) -> Option<ChunkBuffers> {
-    let voxels = world.voxels.read();
-    let dirty = voxels.chunks.get(&cpos).map(|c| c.dirty).unwrap_or(0);
-    let registry: &VoxelRegistry = &world.vregistry;
-    {
-        let chk = voxels.chunks.get(&cpos)?;
-        if is_chunk_trivial(chk, world) {
-            return Some(ChunkBuffers {
-                indices: Vec::new(),
-                vertices: Vec::new(),
-                dirty,
-            });
-        }
-    }
-    // only time non-trivial chunks
+    assert_eq!(chunks.len(), 27);
     let premesh = Instant::now();
-    let mut vcache = world.get_vcache();
+    let ucchunks: Vec<Box<UncompressedChunk>> =
+        Vec::from_iter(chunks.iter().map(|c| c.decompress()));
     // Safety: uninitialized array of MaybeUninits is safe
     const INFLATED_DIM: usize = CHUNK_DIM + 2;
     let mut vdefs: [MaybeUninit<&VoxelDefinition>; cubed(INFLATED_DIM)] =
         unsafe { MaybeUninit::uninit().assume_init() };
-    for (y, z, x) in iproduct!(-1..=1, -1..=1, -1..=1) {
-        vcache.ensure_newest_cached(&voxels, cpos + vec3(x, y, z))?;
-    }
-    drop(voxels);
-    let cbpos = cpos * CHUNK_DIM as i32;
     for (y, z, x) in iproduct!(0..INFLATED_DIM, 0..INFLATED_DIM, 0..INFLATED_DIM) {
-        let dat = vcache
-            .peek_block(cbpos + vec3(x as i32 - 1, y as i32 - 1, z as i32 - 1))
-            .unwrap();
+        let rcpos = vec3(x, y, z).map(|c| {
+            if c == 0 {
+                0
+            } else if c <= CHUNK_DIM {
+                1
+            } else {
+                2
+            }
+        });
+        let cidx = rcpos.x + rcpos.z * 3 + rcpos.y * 9;
+        let bpos = blockidx_from_blockpos(vec3(x as i32 - 1, y as i32 - 1, z as i32 - 1));
+        let dat = ucchunks[cidx].blocks_yzx[bpos];
         let def = registry.get_definition_from_id(dat);
         let idx = x + z * INFLATED_DIM + y * INFLATED_DIM * INFLATED_DIM;
         unsafe {
@@ -218,7 +210,6 @@ pub fn mesh_from_chunk(
     Some(ChunkBuffers {
         vertices: vbuf,
         indices: ibuf,
-        dirty,
     })
 }
 

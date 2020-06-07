@@ -23,10 +23,13 @@ use std::sync::Arc;
 use world::blocks::register_standard_blocks;
 use world::ecs::*;
 use world::entities::player::PLAYER_EYE_HEIGHT;
-use world::generation::WorldLoadGen;
-use world::{blockidx_from_blockpos, chunkpos_from_blockpos, BlockPosition};
+use world::generation::WorldBlocks;
+use world::BlockPosition;
 
+use crate::client::render::voxrender::MeshDataHandler;
 use bxw_util::collider::AABB;
+use std::cell::RefCell;
+use std::rc::Rc;
 use world::physics::SMALL_V_CUTOFF;
 use world::physics::TIMESTEP as PHYSICS_FRAME_TIME;
 
@@ -72,24 +75,34 @@ pub fn client_main() {
         eprintln!("Adjusting settings for renderdoc");
     }
 
+    let task_pool = bxw_util::taskpool::TaskPool::new(cfg.performance_load_threads as usize);
     let mut rctx = Box::new(RenderingContext::new(&sdl_vid, &cfg));
     let rres = Arc::new(RenderingResources::load(&cfg, &mut rctx));
-    let mut vctx = Box::new(VoxelRenderer::new(&cfg, &mut rctx, rres.clone()));
+    let vctx = Rc::new(RefCell::new(VoxelRenderer::new(
+        &cfg,
+        &mut rctx,
+        rres.clone(),
+    )));
     let mut guictx = Box::new(GuiRenderer::new(&cfg, &mut rctx, rres.clone()));
 
-    let mut vxreg = Box::new(world::registry::VoxelRegistry::new());
-    register_standard_blocks(&mut vxreg, &|nm| vctx.get_texture_id(nm)); //FIXME
+    let mut vxreg: Box<world::registry::VoxelRegistry> = Box::default();
+    {
+        let vctx = vctx.borrow();
+        register_standard_blocks(&mut vxreg, &|nm| vctx.get_texture_id(nm));
+    }
     let vxreg: Arc<world::registry::VoxelRegistry> = Arc::from(vxreg);
-    let (world, mut client_world) = ClientWorld::new_world("world".to_owned(), vxreg.clone());
-    let world = Arc::new(world);
+    let (mut world, mut client_world) = ClientWorld::new_world("world".to_owned(), vxreg.clone());
     {
         let lp = client_world.local_player;
-        let mut ents = world.entities.write();
-        let anchor: &mut CLoadAnchor = ents.ecs.get_component_mut(lp).unwrap();
+        let mut ents = world.ecs().write();
+        let anchor: &mut CLoadAnchor = ents.get_component_mut(lp).unwrap();
         anchor.radius = cfg.performance_load_distance;
     }
-    vctx.set_world(&cfg, world.clone(), &rctx);
-    let mut wgen = WorldLoadGen::new(cfg.performance_load_threads, world.clone(), 0);
+    world.replace_handler(
+        world::worldmgr::CHUNK_MESH_DATA,
+        Box::new(MeshDataHandler::new(vctx.clone(), &rctx.handles)),
+    );
+    let wgen = WorldBlocks::new(vxreg.clone(), 0);
 
     let pf_mult = 1.0 / sdl_timer.performance_frequency() as f64;
     let mut previous_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
@@ -149,24 +162,25 @@ pub fn client_main() {
             let (pitch, yaw) = (*pitch, *yaw);
 
             if let Some(bpos) = click_pos {
-                let mut voxels = world.voxels.write();
-                let mut vcache = world.get_vcache();
+                //let mut voxels = world.voxels.write();
+                //let mut vcache = world.get_vcache();
                 click_pos = None;
                 // place block
-                let cpos = chunkpos_from_blockpos(bpos);
+                /*let cpos = chunkpos_from_blockpos(bpos);
                 let ch = vcache.get_uncompressed_chunk_mut(&voxels, cpos).unwrap();
                 let bidx = blockidx_from_blockpos(bpos);
                 let i_used = if click_place { i_place } else { i_destroy };
                 ch.blocks_yzx[bidx].id = i_used.id;
                 let rch = voxels.chunks.get_mut(&cpos).unwrap();
                 rch.compress(&ch);
-                voxels.dirtify(bpos);
+                voxels.dirtify(bpos);*/
+                // TODO: Voxel changing
             }
 
             for _pfrm in 0..physics_frames {
                 // do physics tick
-                let mut entities = world.entities.write();
-                let lp_loc: &mut CLocation = entities.ecs.get_component_mut(local_player).unwrap();
+                let mut entities = world.ecs().write();
+                let lp_loc: &mut CLocation = entities.get_component_mut(local_player).unwrap();
                 // position
                 let qyaw = Quaternion::from_polar_decomposition(1.0, yaw, Vector3::y_axis());
                 let qpitch = Quaternion::from_polar_decomposition(1.0, pitch, Vector3::x_axis());
@@ -195,7 +209,7 @@ pub fn client_main() {
                 } else {
                     tvel.y = 0.0;
                 }
-                let lp_phys: &mut CPhysics = entities.ecs.get_component_mut(local_player).unwrap();
+                let lp_phys: &mut CPhysics = entities.get_component_mut(local_player).unwrap();
                 lp_phys.control_target_velocity = if tspeed < SMALL_V_CUTOFF {
                     zero()
                 } else {
@@ -208,14 +222,17 @@ pub fn client_main() {
                 //lp_loc.velocity = (PHYSICS_FRAME_TIME as f32) * wvel;
                 drop(entities);
                 //
-                world.physics_tick();
+                world::physics::world_physics_tick(&world);
             }
-            wgen.load_tick();
         }
 
+        world.main_loop_tick(&task_pool);
+        task_pool.main_thread_tick();
+
         if let Some(mut fc) = rctx.frame_begin_prepass(&cfg, &client_world, frame_delta_time) {
+            let mut vctx = vctx.borrow_mut();
             fc.begin_region([0.7, 0.7, 0.1, 1.0], || "vctx.prepass_draw");
-            vctx.prepass_draw(&mut fc);
+            vctx.prepass_draw(&mut fc, &world);
             fc.end_region();
             fc.begin_region([0.5, 0.5, 0.5, 1.0], || "gui.prepass_draw");
             let gui = guictx.prepass_draw(&mut fc);
@@ -261,7 +278,7 @@ pub fn client_main() {
             fc.end_region();
             let mut fc = RenderingContext::frame_goto_pass(fc);
             fc.begin_region([0.3, 0.3, 0.8, 1.0], || "vctx.inpass_draw");
-            vctx.inpass_draw(&mut fc);
+            vctx.inpass_draw(&mut fc, &world);
             fc.end_region();
 
             fc.begin_region([0.5, 0.5, 0.5, 1.0], || "gui.inpass_draw");
@@ -286,11 +303,8 @@ pub fn client_main() {
         let player_pos;
         let player_ang;
         {
-            let entities = world.entities.read();
-            let lp_loc: &CLocation = entities
-                .ecs
-                .get_component(client_world.local_player)
-                .unwrap();
+            let entities = world.ecs().read();
+            let lp_loc: &CLocation = entities.get_component(client_world.local_player).unwrap();
             player_pos = lp_loc.position;
             player_ang = lp_loc.orientation;
             DEBUG_DATA
@@ -302,8 +316,6 @@ pub fn client_main() {
             DEBUG_DATA
                 .local_player_z
                 .store((lp_loc.position.z * 10.0) as i64, Ordering::Release);
-
-            let voxels = world.voxels.read();
 
             let primary = input_mgr.input_state.primary_action.get_and_reset_pressed();
             let secondary = input_mgr
@@ -318,8 +330,8 @@ pub fn client_main() {
                 fwd,
                 32.0,
                 &world,
-                Some(&voxels),
-                None,
+                true,
+                false,
             )
             .execute();
             if let raycast::Hit::Voxel { position, .. } = &rc.hit {
@@ -338,7 +350,7 @@ pub fn client_main() {
                     if !click_place {
                         click_pos = Some(*position);
                     } else if normal_datum
-                        .map(|d| !world.vregistry.get_definition_from_id(d).has_hitbox)
+                        .map(|d| !vxreg.get_definition_from_id(d).has_hitbox)
                         .unwrap_or(false)
                     {
                         let place_pos = *position + normal.to_vec();
@@ -368,6 +380,11 @@ pub fn client_main() {
         }
     }
 
+    drop(world);
+    let vctx = Rc::try_unwrap(vctx)
+        .ok()
+        .expect("Remaining references to VoxelRenderer")
+        .into_inner();
     vctx.destroy(&rctx.handles);
     guictx.destroy(&rctx.handles);
     Arc::try_unwrap(rres)

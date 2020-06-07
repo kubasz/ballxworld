@@ -24,7 +24,6 @@ pub struct VoxelDefinitionBuilder<'a> {
     texture_mapping: TextureMapping<u32>,
 }
 
-#[derive(Default)]
 pub struct VoxelRegistry {
     definitions: Vec<Option<Arc<VoxelDefinition>>>,
     name_lut: HashMap<String, Arc<VoxelDefinition>>,
@@ -96,15 +95,25 @@ impl<'a> VoxelDefinitionBuilder<'a> {
     }
 }
 
-impl VoxelRegistry {
-    pub fn new() -> VoxelRegistry {
-        let mut reg: VoxelRegistry = Default::default();
+impl Default for VoxelRegistry {
+    fn default() -> Self {
+        let mut reg = VoxelRegistry {
+            definitions: Default::default(),
+            name_lut: Default::default(),
+            last_free_id: 0,
+        };
         reg.build_definition()
             .name("core:void")
             .debug_color(0.0, 0.0, 0.0)
             .finish()
             .unwrap();
         reg
+    }
+}
+
+impl VoxelRegistry {
+    pub fn new() -> VoxelRegistry {
+        Default::default()
     }
 
     pub fn build_definition(&mut self) -> VoxelDefinitionBuilder {

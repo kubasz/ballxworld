@@ -111,14 +111,19 @@ impl TaskPool {
     }
 
     pub fn main_thread_tick(&self) {
+        let mut wake_up = false;
         if let Some(mut queue) = self.queue.0.try_lock_for(Duration::from_micros(500)) {
             if let Some(task) = queue.front() {
+                wake_up = true;
                 if task.allowed_on_main_thread {
                     let task = queue.pop_front().unwrap();
                     drop(queue);
                     task.execute();
                 }
             }
+        }
+        if wake_up {
+            self.queue.1.notify_all();
         }
     }
 

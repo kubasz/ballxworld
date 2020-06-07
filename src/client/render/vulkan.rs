@@ -18,7 +18,7 @@ use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::os::raw::c_char;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use vk_mem as vma;
 
 pub fn allocation_cbs() -> Option<&'static vk::AllocationCallbacks> {
@@ -78,7 +78,7 @@ pub struct DebugExts {
 }
 
 /// Vector of queues for object destruction, one per inflight frame
-pub type VDODestroyQueue = Vec<Vec<Box<dyn VulkanDeviceObject + Send>>>;
+pub type VDODestroyQueue = Vec<Box<dyn VulkanDeviceObject + Send>>;
 
 #[derive(Clone)]
 pub struct RenderingHandles {
@@ -100,6 +100,7 @@ pub struct RenderingHandles {
     pub oneoff_cmd_pool: Arc<Mutex<vk::CommandPool>>,
     pub inflight_index: u32,
     pub destroy_queue: Arc<Mutex<VDODestroyQueue>>,
+    pub frame_destroy_queues: Arc<Mutex<Vec<VDODestroyQueue>>>,
 }
 
 pub struct Swapchain {
@@ -487,8 +488,8 @@ impl RenderingHandles {
                 .expect("Couldn't create one-off command pool")
         };
 
-        let mut destroy_queue: VDODestroyQueue = Default::default();
-        destroy_queue.resize_with(INFLIGHT_FRAMES as usize, Default::default);
+        let mut destroy_queues: Vec<VDODestroyQueue> = Default::default();
+        destroy_queues.resize_with(INFLIGHT_FRAMES as usize, Default::default);
 
         (
             window,
@@ -510,7 +511,8 @@ impl RenderingHandles {
                 mainpass,
                 oneoff_cmd_pool: Arc::new(Mutex::new(oneoff_cmd_pool)),
                 inflight_index: 0,
-                destroy_queue: Arc::new(Mutex::new(destroy_queue)),
+                destroy_queue: Arc::new(Mutex::new(Vec::default())),
+                frame_destroy_queues: Arc::new(Mutex::new(destroy_queues)),
             },
         )
     }
@@ -633,12 +635,19 @@ impl RenderingHandles {
     }
 
     pub fn enqueue_destroy(&self, vdo: Box<dyn VulkanDeviceObject + Send>) {
-        self.destroy_queue.lock()[self.inflight_index as usize].push(vdo);
+        self.destroy_queue.lock().push(vdo);
+    }
+
+    pub fn get_destroy_queue_handle(&self) -> Weak<Mutex<VDODestroyQueue>> {
+        Arc::downgrade(&self.destroy_queue)
     }
 
     pub fn flush_destroy_queue(&self) {
         let mut vmalloc = self.vmalloc.lock();
-        for queue in self.destroy_queue.lock().iter_mut() {
+        for mut vdo in self.destroy_queue.lock().drain(..) {
+            vdo.destroy(&mut vmalloc, &self);
+        }
+        for queue in self.frame_destroy_queues.lock().iter_mut() {
             for mut vdo in queue.drain(..) {
                 vdo.destroy(&mut vmalloc, &self);
             }
@@ -1107,11 +1116,20 @@ impl RenderingContext {
                 .store(memstats.total.usedBytes as i64, Ordering::Release);
         }
 
-        for mut vdo in self.handles.destroy_queue.lock()[old_inflight_index as usize].drain(..) {
+        for mut vdo in
+            self.handles.frame_destroy_queues.lock()[old_inflight_index as usize].drain(..)
+        {
             vdo.destroy(&mut vmalloc, &self.handles);
         }
         vmalloc.set_current_frame_index(self.frame_index).unwrap();
         drop(vmalloc);
+        let mut dq = self.handles.destroy_queue.lock();
+        std::mem::swap(
+            &mut self.handles.frame_destroy_queues.lock()[old_inflight_index as usize],
+            &mut dq,
+        );
+        dq.clear();
+        drop(dq);
         self.frame_index = self.frame_index.wrapping_add(1);
 
         let dims = {

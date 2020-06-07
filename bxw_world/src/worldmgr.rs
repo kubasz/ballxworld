@@ -3,10 +3,9 @@ use crate::*;
 use bxw_util::fnv::*;
 use bxw_util::itertools::*;
 use bxw_util::math::*;
+use bxw_util::parking_lot::*;
 use bxw_util::smallvec::*;
 use bxw_util::taskpool::{Task, TaskPool};
-use bxw_util::*;
-use parking_lot::*;
 use std::any::*;
 use std::cell::Cell;
 use std::sync::atomic::*;
@@ -16,7 +15,7 @@ use std::sync::mpsc::*;
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Debug)]
 pub enum ChunkDataState {
     Unloaded = 0,
-    Waiting = 1,
+    Loading = 1,
     Loaded = 2,
     Updating = 3,
 }
@@ -36,6 +35,7 @@ pub type ChunkLightData = Option<Arc<()>>;
 type KindsSmallVec = SmallVec<[usize; 6]>;
 
 pub type AnyChunkData = Option<Arc<dyn Any + Send + Sync>>;
+pub type AnyChunkDataArc = Arc<dyn Any + Send + Sync>;
 
 pub trait ChunkDataHandler {
     fn status_array(&self) -> &Vec<ChunkDataState>;
@@ -54,6 +54,8 @@ pub trait ChunkDataHandler {
         index: usize,
     ) -> Option<Task>;
     fn needs_loading_for_anchor(&self, anchor: &CLoadAnchor) -> bool;
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 #[derive(Clone, Default, Debug)]
@@ -102,15 +104,24 @@ impl ChunkDataHandler for NoopChunkDataHandler {
     fn needs_loading_for_anchor(&self, _anchor: &CLoadAnchor) -> bool {
         false
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
-pub type SynchronousUpdateTask = Box<dyn FnOnce(&mut World)>;
+pub type SynchronousUpdateTask = Box<dyn FnOnce(&mut World) + Send + 'static>;
 
 pub struct World {
+    pub name: String,
     allocation: FnvHashMap<ChunkPosition, usize>,
     chunk_positions: Vec<Option<ChunkPosition>>,
     free_indices: Vec<usize>,
-    data: Vec<RefCell<Box<dyn ChunkDataHandler>>>,
+    handlers: Vec<RefCell<Box<dyn ChunkDataHandler>>>,
     entities: Arc<RwLock<ECS>>,
     load_data: Arc<Mutex<LoadData>>,
     load_data_busy: Arc<AtomicBool>,
@@ -142,7 +153,7 @@ impl PartialOrd for LoadAnchor {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 struct ChunkDelta {
     unload: bool,
     cpos: ChunkPosition,
@@ -152,15 +163,7 @@ struct ChunkDelta {
 
 impl Ord for ChunkDelta {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        use std::cmp::Ordering::*;
-        // unloads before loads
-        if self.unload != other.unload {
-            if self.unload {
-                Less
-            } else {
-                Greater
-            }
-        } else if self.unload {
+        if self.unload {
             // Unload farthest first
             Ord::cmp(&other.min_anchor_distance, &self.min_anchor_distance)
         } else {
@@ -186,8 +189,8 @@ struct LoadData {
     dependencies: Vec<Option<(usize, bool)>>,
 }
 
-impl Default for World {
-    fn default() -> Self {
+impl World {
+    pub fn new(name: String) -> Self {
         let default_capacity = 64;
         let busy_arc = Arc::new(AtomicBool::new(false));
         let (tx, rx) = sync_channel(256);
@@ -198,10 +201,11 @@ impl Default for World {
             ));
         }
         Self {
+            name,
             allocation: FnvHashMap::with_capacity_and_hasher(default_capacity, Default::default()),
             chunk_positions: Vec::with_capacity(default_capacity),
             free_indices: Vec::with_capacity(default_capacity),
-            data: handlers,
+            handlers,
             entities: Arc::new(Default::default()),
             load_data: Arc::new(Mutex::new(LoadData {
                 allocation: Default::default(),
@@ -218,15 +222,25 @@ impl Default for World {
             sync_task_queue: (tx, rx),
         }
     }
-}
 
-impl World {
-    pub fn new() -> Self {
-        Default::default()
+    pub fn get_handler(&self, id: usize) -> &RefCell<Box<dyn ChunkDataHandler>> {
+        &self.handlers[id]
+    }
+
+    pub fn replace_handler(&mut self, id: usize, handler: Box<dyn ChunkDataHandler>) {
+        self.handlers[id] = RefCell::new(handler);
     }
 
     pub fn get_sync_task_channel(&self) -> SyncSender<SynchronousUpdateTask> {
         self.sync_task_queue.0.clone()
+    }
+
+    pub fn get_chunk_index(&self, cpos: ChunkPosition) -> Option<usize> {
+        self.allocation.get(&cpos).copied()
+    }
+
+    pub fn ecs(&self) -> &RwLock<ECS> {
+        &self.entities
     }
 
     fn extend_allocations(&mut self) {
@@ -242,7 +256,7 @@ impl World {
         for idx in ocap..ncap {
             self.free_indices.push(idx);
         }
-        for d in self.data.iter() {
+        for d in self.handlers.iter() {
             let mut d = d.borrow_mut();
             d.status_array_mut().resize(ncap, ChunkDataState::Unloaded);
             d.resize_data(self, ncap);
@@ -263,6 +277,11 @@ impl World {
         }
     }
 
+    fn free_chunk_index(&mut self, cpos: ChunkPosition, cid: usize) {
+        self.allocation.remove(&cpos);
+        self.free_indices.push(cid);
+    }
+
     pub fn main_loop_tick(&mut self, task_pool: &TaskPool) {
         self.check_load_deltas(task_pool);
         for _taskn in 0..256 {
@@ -273,7 +292,7 @@ impl World {
         }
         let mut remaining = 256 - self.tasks_in_pool.load(Ordering::SeqCst);
         let mut tasks = Vec::with_capacity(32);
-        for _deltan in 0..512 {
+        for _deltan in 0..4096 {
             if let Some(delta) = self.remaining_deltas.pop() {
                 let cid = match self.allocation.get(&delta.cpos).copied() {
                     Some(cid) => cid,
@@ -287,7 +306,7 @@ impl World {
                 };
                 if delta.unload {
                     for kind in delta.handlers {
-                        let mut kind = self.data[kind].borrow_mut();
+                        let mut kind = self.handlers[kind].borrow_mut();
                         if kind.status_array()[cid] != ChunkDataState::Unloaded {
                             let arc = kind.swap_data(self, cid, None);
                             kind.status_array_mut()[cid] = ChunkDataState::Unloaded;
@@ -300,11 +319,22 @@ impl World {
                                 false,
                                 false,
                             ));
+                            remaining -= 1;
                         }
+                    }
+                    let mut any_loaded = false;
+                    for kind in self.handlers.iter() {
+                        if kind.borrow().status_array()[cid] != ChunkDataState::Unloaded {
+                            any_loaded = true;
+                            break;
+                        }
+                    }
+                    if !any_loaded {
+                        self.free_chunk_index(delta.cpos, cid);
                     }
                 } else {
                     for kind in delta.handlers {
-                        let mut kind = self.data[kind].borrow_mut();
+                        let mut kind = self.handlers[kind].borrow_mut();
                         if kind.status_array()[cid] == ChunkDataState::Loaded {
                             continue;
                         } else {
@@ -331,6 +361,7 @@ impl World {
                 break;
             }
         }
+        task_pool.push_tasks(tasks.into_iter());
     }
 
     fn check_load_deltas(&mut self, task_pool: &TaskPool) {
@@ -346,7 +377,7 @@ impl World {
 
             for anchor in it {
                 let mut anchor_kinds = SmallVec::new();
-                for (kid, kind) in self.data.iter().enumerate() {
+                for (kid, kind) in self.handlers.iter().enumerate() {
                     let kind = kind.borrow();
                     if kind.needs_loading_for_anchor(anchor) {
                         anchor_kinds.push(kid);
@@ -370,16 +401,16 @@ impl World {
             {
                 load_data
                     .status_arrays
-                    .resize_with(self.data.len(), Vec::new);
+                    .resize_with(self.handlers.len(), Vec::new);
                 load_data.chunk_positions.clone_from(&self.chunk_positions);
                 load_data.allocation.clone_from(&self.allocation);
                 load_data.dependencies = self
-                    .data
+                    .handlers
                     .iter()
                     .map(|d| d.borrow().get_dependency())
                     .collect();
                 for (i, status_array) in load_data.status_arrays.iter_mut().enumerate() {
-                    let orig = self.data[i].borrow_mut();
+                    let orig = self.handlers[i].borrow_mut();
                     status_array.clone_from(orig.status_array());
                 }
                 self.load_data_busy.store(true, Ordering::SeqCst);
@@ -412,11 +443,15 @@ fn recalculate_load_deltas(load_data: Arc<Mutex<LoadData>>) {
                 }
             }
         }
+        let mut unload_kinds: KindsSmallVec = SmallVec::new();
         for (kind, statuses) in load_data.status_arrays.iter().enumerate() {
             let is_loaded = !ChunkDataState::requires_load_request(statuses[cid]);
             if is_loaded && !kind_should_be_loaded[kind] {
-                chunks_to_unload.insert(cpos, (Default::default(), min_dist));
+                unload_kinds.push(kind);
             }
+        }
+        if !unload_kinds.is_empty() {
+            chunks_to_unload.insert(cpos, (unload_kinds, min_dist));
         }
     }
     let mut chunks_to_load: FnvHashMap<ChunkPosition, (KindsSmallVec, Cell<i32>)> =
@@ -457,23 +492,34 @@ fn recalculate_load_deltas(load_data: Arc<Mutex<LoadData>>) {
     if old_cap < new_cap {
         load_data.remaining_deltas.reserve(new_cap - old_cap);
     }
-    for (cpos, (unload_kinds, min_anchor_distance)) in chunks_to_unload {
-        load_data.remaining_deltas.push(ChunkDelta {
-            unload: true,
-            cpos,
-            handlers: unload_kinds,
-            min_anchor_distance,
-        });
+    let mut unload_iter = chunks_to_unload.into_iter();
+    let mut load_iter = chunks_to_load.into_iter();
+    let mut cont = true;
+    while cont {
+        cont = false;
+        if let Some((cpos, (unload_kinds, min_anchor_distance))) = unload_iter.next() {
+            cont = true;
+            load_data.remaining_deltas.push(ChunkDelta {
+                unload: true,
+                cpos,
+                handlers: unload_kinds,
+                min_anchor_distance,
+            });
+        }
+        if let Some((cpos, (load_kinds, min_anchor_distance))) = load_iter.next() {
+            cont = true;
+            if load_kinds.len() == 0 {
+                continue;
+            }
+            load_data.remaining_deltas.push(ChunkDelta {
+                unload: false,
+                cpos,
+                handlers: load_kinds,
+                min_anchor_distance: min_anchor_distance.get(),
+            });
+        }
     }
-    for (cpos, (load_kinds, min_anchor_distance)) in chunks_to_load {
-        load_data.remaining_deltas.push(ChunkDelta {
-            unload: false,
-            cpos,
-            handlers: load_kinds,
-            min_anchor_distance: min_anchor_distance.get(),
-        });
-    }
-    load_data.remaining_deltas.sort_unstable();
+    load_data.remaining_deltas.sort();
     load_data.remaining_deltas.reverse();
     load_data.busy.store(false, Ordering::SeqCst);
 }
@@ -489,18 +535,21 @@ fn iter_coords_to_load(loader: &LoadAnchor) -> Box<dyn Iterator<Item = ChunkPosi
 }
 
 fn does_anchor_load_coords(loader: &LoadAnchor, cpos: ChunkPosition) -> bool {
-    (cpos - loader.cpos).map(|x| x * x).sum() <= loader.radius as i32
+    (cpos - loader.cpos).map(|x| x * x).sum() <= (loader.radius * loader.radius) as i32
 }
 
-fn iter_neighbors(cpos: ChunkPosition) -> Box<dyn Iterator<Item = ChunkPosition>> {
+pub fn iter_neighbors(
+    cpos: ChunkPosition,
+    include_self: bool,
+) -> Box<dyn Iterator<Item = ChunkPosition>> {
     Box::new(
         iproduct!(
-            cpos.x - 1..=cpos.x + 1,
             cpos.y - 1..=cpos.y + 1,
-            cpos.z - 1..=cpos.z + 1
+            cpos.z - 1..=cpos.z + 1,
+            cpos.x - 1..=cpos.x + 1
         )
-        .filter(move |&(x, y, z)| x != cpos.x || y != cpos.y || z != cpos.z)
-        .map(|(x, y, z)| vec3(x, y, z)),
+        .filter(move |&(y, z, x)| include_self || x != cpos.x || y != cpos.y || z != cpos.z)
+        .map(|(y, z, x)| vec3(x, y, z)),
     )
 }
 
@@ -518,7 +567,7 @@ fn can_request_load(
         };
         let statuses = &load_data.status_arrays[depkind];
         if neighbours {
-            !iter_neighbors(cpos).any(|npos| {
+            !iter_neighbors(cpos, false).any(|npos| {
                 load_data
                     .allocation
                     .get(&npos)

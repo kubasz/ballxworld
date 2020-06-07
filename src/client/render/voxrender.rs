@@ -1,32 +1,31 @@
 use crate::client::config::Config;
 use crate::client::render::resources::RenderingResources;
-use crate::client::render::vkhelpers::{
-    cmd_push_struct_constants, make_pipe_depthstencil, DroppingCommandPool, OnetimeCmdGuard,
-    OwnedBuffer, VulkanDeviceObject,
-};
+use crate::client::render::vkhelpers::*;
 use crate::client::render::voxmesh::{is_chunk_trivial, mesh_from_chunk};
-use crate::client::render::vulkan::{allocation_cbs, RenderingHandles, INFLIGHT_FRAMES};
+use crate::client::render::vulkan::{
+    allocation_cbs, RenderingHandles, VDODestroyQueue, INFLIGHT_FRAMES,
+};
 use crate::client::render::*;
 use crate::client::world::CameraSettings;
 use ash::version::DeviceV1_0;
 use ash::vk;
 use bxw_util::math::vec3;
 use bxw_util::math::*;
+use bxw_util::taskpool::Task;
 use bxw_util::*;
-use fnv::{FnvHashMap, FnvHashSet};
 use parking_lot::Mutex;
-use smallvec::SmallVec;
+use smallvec::alloc::rc::Rc;
+use std::any::Any;
+use std::cell::RefCell;
 use std::ffi::CString;
-use std::fmt::{Debug, Formatter};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::sync::{mpsc, Weak};
-use std::thread;
-use thread_local::CachedThreadLocal;
+use std::sync::Weak;
 use vk_mem as vma;
-use world::ecs::{CLocation, ECSHandler};
+use world::ecs::{CLoadAnchor, CLocation, ECSHandler};
 use world::entities::player::PLAYER_EYE_HEIGHT;
-use world::{blockidx_from_blockpos, chunkpos_from_blockpos, OldWorld};
+use world::generation::WorldBlocks;
+use world::worldmgr::*;
+use world::{blockidx_from_blockpos, chunkpos_from_blockpos};
 use world::{ChunkPosition, CHUNK_DIM};
 
 pub mod vox {
@@ -37,7 +36,6 @@ pub mod vox {
     pub struct ChunkBuffers {
         pub vertices: Vec<VoxelVertex>,
         pub indices: Vec<u32>,
-        pub dirty: u64,
     }
 
     #[derive(Copy, Clone, Default)]
@@ -130,49 +128,19 @@ struct DrawnChunk {
     pub istart: usize,
     pub vcount: u32,
     pub icount: u32,
+    pub destroy_handle: Weak<Mutex<VDODestroyQueue>>,
 }
 
-impl Debug for DrawnChunk {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "DrawnChunk {{ last_dirty: {} }}", self.last_dirty)
-    }
-}
-
-impl DrawnChunk {
-    fn enqueue_destroy(self, handles: &RenderingHandles) {
-        let Self { buffer, .. } = self;
-        handles.enqueue_destroy(Box::new(buffer));
-    }
-}
-
-type ChunkMsg = (ChunkPosition, DrawnChunk);
-
-#[derive(Clone, Eq, PartialEq, Hash, Debug)]
-struct ChunkRenderRequest {
-    pos: ChunkPosition,
-}
-
-impl Default for ChunkRenderRequest {
-    fn default() -> Self {
-        Self { pos: vec3(0, 0, 0) }
-    }
-}
-
-struct AllocatorPool(vma::AllocatorPool);
-
-unsafe impl Send for AllocatorPool {}
-
-unsafe impl Sync for AllocatorPool {}
-
-impl Clone for AllocatorPool {
-    fn clone(&self) -> Self {
-        Self(unsafe { std::ptr::read(&self.0 as *const _) })
-    }
-
-    fn clone_from(&mut self, source: &Self) {
-        unsafe {
-            std::ptr::copy_nonoverlapping(&source.0 as *const _, &mut self.0 as *mut _, 1);
+impl Drop for DrawnChunk {
+    fn drop(&mut self) {
+        let buffer = std::mem::take(&mut self.buffer);
+        let destroy_handle = std::mem::take(&mut self.destroy_handle);
+        if let Some(destroy_handle) = destroy_handle.upgrade() {
+            destroy_handle.lock().push(Box::new(buffer));
         }
+        self.vcount = 0;
+        self.icount = 0;
+        self.istart = 0;
     }
 }
 
@@ -184,28 +152,255 @@ pub struct VoxelRenderer {
     uniform_ds_layout: vk::DescriptorSetLayout,
     uniform_dss: Vec<vk::DescriptorSet>,
     ds_pool: vk::DescriptorPool,
-    world: Option<Arc<OldWorld>>,
     pub voxel_pipeline_layout: vk::PipelineLayout,
     pub voxel_pipeline: vk::Pipeline,
     atmosphere_renderer: AtmosphereRenderer,
-    drawn_chunks: FnvHashMap<ChunkPosition, DrawnChunk>,
+    drawn_chunks: Vec<Option<Arc<DrawnChunk>>>,
     pub ubuffer: OwnedBuffer,
-    draw_queue: Arc<Mutex<Vec<ChunkRenderRequest>>>,
-    progress_set: Arc<Mutex<FnvHashSet<ChunkRenderRequest>>>,
-    worker_threads: Vec<thread::JoinHandle<()>>,
-    thread_killer: Arc<AtomicBool>,
-    work_receiver: CachedThreadLocal<mpsc::Receiver<ChunkMsg>>,
 }
 
-struct VoxWorkerParams {
-    world_w: Weak<OldWorld>,
-    handles: RenderingHandles,
-    alloc_pool: Arc<AllocatorPool>,
-    work_queue: Arc<Mutex<Vec<ChunkRenderRequest>>>,
-    progress_set: Arc<Mutex<FnvHashSet<ChunkRenderRequest>>>,
-    submission: mpsc::Sender<ChunkMsg>,
-    killswitch: Arc<AtomicBool>,
-    texture_dim: (u32, u32),
+pub struct MeshDataHandler {
+    pub renderer: Rc<RefCell<VoxelRenderer>>,
+    pub status_array: Vec<ChunkDataState>,
+    pub rendering_handles: RenderingHandles,
+}
+
+impl MeshDataHandler {
+    pub fn new(renderer: Rc<RefCell<VoxelRenderer>>, handles: &RenderingHandles) -> Self {
+        Self {
+            renderer,
+            status_array: Vec::new(),
+            rendering_handles: handles.clone(),
+        }
+    }
+}
+
+impl ChunkDataHandler for MeshDataHandler {
+    fn status_array(&self) -> &Vec<ChunkDataState> {
+        &self.status_array
+    }
+
+    fn status_array_mut(&mut self) -> &mut Vec<ChunkDataState> {
+        &mut self.status_array
+    }
+
+    fn get_dependency(&self) -> Option<(usize, bool)> {
+        Some((CHUNK_BLOCK_DATA, true))
+    }
+
+    fn get_data(&self, _world: &World, index: usize) -> AnyChunkData {
+        self.renderer.borrow().drawn_chunks[index]
+            .clone()
+            .map(|x| x as AnyChunkDataArc)
+    }
+
+    fn swap_data(&mut self, _world: &World, index: usize, new_data: AnyChunkData) -> AnyChunkData {
+        let mut vctx = self.renderer.borrow_mut();
+        let new_data = new_data.map(|d| d.downcast::<DrawnChunk>().unwrap());
+        let old_data = std::mem::replace(&mut vctx.drawn_chunks[index], new_data);
+        old_data.map(|x| x as AnyChunkDataArc)
+    }
+
+    fn resize_data(&mut self, _world: &World, new_size: usize) {
+        let mut vctx = self.renderer.borrow_mut();
+        vctx.drawn_chunks.resize(new_size, None);
+    }
+
+    #[allow(clippy::cast_ptr_alignment)]
+    fn create_chunk_update_task(
+        &mut self,
+        world: &World,
+        cpos: ChunkPosition,
+        index: usize,
+    ) -> Option<Task> {
+        let blocks = world.get_handler(CHUNK_BLOCK_DATA).borrow();
+        let blocks = blocks.as_any().downcast_ref::<WorldBlocks>().unwrap();
+
+        let registry = blocks.voxel_registry.clone();
+        let mut neighbors = Vec::new();
+        for npos in iter_neighbors(cpos, true) {
+            let chunk = match blocks.get_chunk(world, npos) {
+                Some(c) => c,
+                None => return None,
+            };
+            neighbors.push(chunk);
+        }
+
+        self.status_array[index] = match self.status_array[index] {
+            ChunkDataState::Unloaded => ChunkDataState::Loading,
+            _ => ChunkDataState::Updating,
+        };
+        let mut vctx = self.renderer.borrow_mut();
+        let texture_dim = vctx.resources.voxel_texture_array_params.dims;
+        let handles = self.rendering_handles.clone();
+        let destroy_handle = handles.get_destroy_queue_handle();
+
+        if is_chunk_trivial(&neighbors[13], &registry) {
+            self.status_array[index] = ChunkDataState::Loaded;
+            vctx.drawn_chunks[index] = Some(Arc::new(DrawnChunk {
+                cpos,
+                last_dirty: 0,
+                buffer: OwnedBuffer::new(),
+                istart: 0,
+                vcount: 0,
+                icount: 0,
+                destroy_handle,
+            }));
+            return None;
+        }
+
+        let alloc_pool = vctx.chunk_pool.clone();
+        let submit_channel = world.get_sync_task_channel();
+
+        Some(Task::new(
+            move || {
+                let cpci = vk::CommandPoolCreateInfo::builder()
+                    .queue_family_index(handles.queues.get_gtransfer_family())
+                    .flags(vk::CommandPoolCreateFlags::TRANSIENT);
+                let cmd_pool = DroppingCommandPool::new(&handles, &cpci);
+                drop(cpci);
+                let mesh = match mesh_from_chunk(&registry, &neighbors, texture_dim) {
+                    Some(m) => m,
+                    None => return,
+                };
+                let vcount = mesh.vertices.len() as u32;
+                let icount = mesh.indices.len() as u32;
+                let v_sz = std::mem::size_of::<vox::VoxelVertex>();
+                let i_sz = std::mem::size_of::<u32>();
+                let v_tot_sz = v_sz * (vcount as usize);
+                let i_tot_sz = i_sz * (icount as usize);
+                let tot_sz = v_tot_sz + i_tot_sz;
+                let dchunk = if tot_sz > 0 {
+                    let qfs = [handles.queues.get_primary_family()];
+                    let mut staging = {
+                        let bi = vk::BufferCreateInfo::builder()
+                            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+                            .size(tot_sz as u64)
+                            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                            .queue_family_indices(&qfs)
+                            .build();
+                        let ai = vma::AllocationCreateInfo {
+                            usage: vma::MemoryUsage::CpuOnly,
+                            flags: vma::AllocationCreateFlags::MAPPED
+                                | vma::AllocationCreateFlags::DEDICATED_MEMORY,
+                            ..Default::default()
+                        };
+                        OwnedBuffer::from(&mut handles.vmalloc.lock(), &bi, &ai)
+                    };
+                    let buffer = {
+                        let pool = &alloc_pool.0;
+                        let bi = vk::BufferCreateInfo::builder()
+                            .usage(
+                                vk::BufferUsageFlags::TRANSFER_DST
+                                    | vk::BufferUsageFlags::VERTEX_BUFFER
+                                    | vk::BufferUsageFlags::INDEX_BUFFER,
+                            )
+                            .size(tot_sz as u64)
+                            .queue_family_indices(&qfs)
+                            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+                        let ai = vma::AllocationCreateInfo {
+                            usage: vma::MemoryUsage::GpuOnly,
+                            pool: Some(pool.clone()),
+                            ..Default::default()
+                        };
+                        OwnedBuffer::from(&mut handles.vmalloc.lock(), &bi, &ai)
+                    };
+                    buffer.give_name(&handles, || {
+                        format!("chunk({},{},{})", cpos.x, cpos.y, cpos.z)
+                    });
+                    // write to staging
+                    {
+                        let ai = staging.allocation.as_ref().unwrap();
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                mesh.vertices.as_ptr(),
+                                ai.1.get_mapped_data() as *mut vox::VoxelVertex,
+                                mesh.vertices.len(),
+                            );
+                            std::ptr::copy_nonoverlapping(
+                                mesh.indices.as_ptr(),
+                                ai.1.get_mapped_data().add(v_tot_sz) as *mut u32,
+                                mesh.indices.len(),
+                            );
+                        }
+                        handles
+                            .vmalloc
+                            .lock()
+                            .flush_allocation(&ai.0, 0, tot_sz)
+                            .unwrap();
+                    }
+                    // copy from staging to gpu
+                    {
+                        let cmd = OnetimeCmdGuard::new(&handles, Some(cmd_pool.pool));
+                        let bci = vk::BufferCopy::builder()
+                            .size(tot_sz as vk::DeviceSize)
+                            .build();
+                        unsafe {
+                            handles.device.cmd_copy_buffer(
+                                cmd.handle(),
+                                staging.buffer,
+                                buffer.buffer,
+                                &[bci],
+                            );
+                        }
+                        cmd.execute(&handles.queues.lock_gtransfer_queue());
+                    }
+                    staging.destroy(&mut handles.vmalloc.lock(), &handles);
+
+                    DrawnChunk {
+                        cpos,
+                        last_dirty: 0,
+                        buffer,
+                        istart: v_tot_sz,
+                        vcount,
+                        icount,
+                        destroy_handle,
+                    }
+                } else {
+                    DrawnChunk {
+                        cpos,
+                        last_dirty: 0,
+                        buffer: OwnedBuffer::new(),
+                        istart: 0,
+                        vcount: 0,
+                        icount: 0,
+                        destroy_handle,
+                    }
+                };
+                let dchunk = Arc::new(dchunk);
+                submit_channel
+                    .send(Box::new(move |world| {
+                        let index = match world.get_chunk_index(cpos) {
+                            Some(i) => i,
+                            None => return,
+                        };
+                        let mut vctx = world.get_handler(CHUNK_MESH_DATA).borrow_mut();
+                        let vctx: &mut Self = vctx.as_any_mut().downcast_mut().unwrap();
+                        // request was cancelled
+                        if vctx.status_array[index] == ChunkDataState::Unloaded {
+                            return;
+                        }
+                        vctx.status_array[index] = ChunkDataState::Loaded;
+                        vctx.renderer.borrow_mut().drawn_chunks[index] = Some(dchunk);
+                    }))
+                    .unwrap_or(());
+            },
+            false,
+            false,
+        ))
+    }
+
+    fn needs_loading_for_anchor(&self, anchor: &CLoadAnchor) -> bool {
+        anchor.load_mesh
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 impl VoxelRenderer {
@@ -492,32 +687,20 @@ impl VoxelRenderer {
             uniform_ds_layout,
             uniform_dss,
             ds_pool,
-            world: None,
             voxel_pipeline_layout: pipeline_layout,
             voxel_pipeline,
             atmosphere_renderer: AtmosphereRenderer::new(cfg, rctx),
-            drawn_chunks: FnvHashMap::default(),
+            drawn_chunks: Default::default(),
             ubuffer,
-            draw_queue: Arc::new(Mutex::new(Vec::new())),
-            progress_set: Arc::new(Mutex::new(FnvHashSet::default())),
-            worker_threads: Vec::new(),
-            thread_killer: Arc::new(AtomicBool::new(false)),
-            work_receiver: CachedThreadLocal::new(),
         }
     }
 
     pub fn destroy(mut self, handles: &RenderingHandles) {
-        self.kill_threads();
         unsafe {
             handles.device.device_wait_idle().unwrap();
         }
         self.atmosphere_renderer.destroy(handles);
-        for ch in self.work_receiver.get().unwrap().try_iter() {
-            ch.1.enqueue_destroy(handles);
-        }
-        for (_cpos, ch) in self.drawn_chunks.drain() {
-            ch.enqueue_destroy(handles);
-        }
+        self.drawn_chunks.clear();
         handles.flush_destroy_queue();
         unsafe {
             handles
@@ -547,16 +730,6 @@ impl VoxelRenderer {
         }
     }
 
-    fn kill_threads(&mut self) {
-        self.thread_killer.store(true, Ordering::SeqCst);
-        let old_threads = std::mem::replace(&mut self.worker_threads, Vec::new());
-        for t in old_threads.into_iter() {
-            t.thread().unpark();
-            drop(t.join());
-        }
-        self.thread_killer.store(false, Ordering::SeqCst);
-    }
-
     pub fn get_texture_id(&self, name: &str) -> u32 {
         self.resources
             .voxel_texture_name_map
@@ -565,377 +738,21 @@ impl VoxelRenderer {
             .unwrap_or(0)
     }
 
-    pub fn set_world(&mut self, config: &Config, world: Arc<OldWorld>, rctx: &RenderingContext) {
-        // create worker threads
-        self.kill_threads();
-        const STACK_SIZE: usize = 4 * 1024 * 1024;
-        let (tx, rx) = mpsc::channel();
-        let num_workers = config.performance_draw_threads;
-        self.worker_threads.reserve_exact(num_workers as usize);
-        self.work_receiver.clear();
-        self.work_receiver.get_or(move || rx);
-        for _ in 0..num_workers {
-            let tb = thread::Builder::new()
-                .name("bxw-voxrender".to_owned())
-                .stack_size(STACK_SIZE);
-            let ttx = tx.clone();
-            let vwparams = VoxWorkerParams {
-                world_w: Arc::downgrade(&world),
-                handles: rctx.handles.clone(),
-                alloc_pool: self.chunk_pool.clone(),
-                work_queue: self.draw_queue.clone(),
-                progress_set: self.progress_set.clone(),
-                submission: ttx,
-                killswitch: self.thread_killer.clone(),
-                texture_dim: self.resources.voxel_texture_array_params.dims,
-            };
-            let thr = tb
-                .spawn(move || Self::vox_worker(vwparams))
-                .expect("Could not create voxrender worker thread");
-            self.worker_threads.push(thr);
-        }
-        self.world = Some(world);
-    }
-
-    #[allow(clippy::cast_ptr_alignment)]
-    fn vox_worker(params: VoxWorkerParams) {
-        let VoxWorkerParams {
-            world_w,
-            handles,
-            alloc_pool,
-            work_queue,
-            progress_set,
-            submission,
-            killswitch,
-            texture_dim,
-        } = params;
-        let cpci = vk::CommandPoolCreateInfo::builder()
-            .queue_family_index(handles.queues.get_gtransfer_family())
-            .flags(vk::CommandPoolCreateFlags::TRANSIENT);
-        let cmd_pool = DroppingCommandPool::new(&handles, &cpci);
-        drop(cpci);
-        let mut done_chunks: Vec<ChunkRenderRequest> = Vec::new();
-        let mut chunks_to_add = Vec::new();
-        let mut chunk_objs_to_add = Vec::new();
-        loop {
-            if killswitch.load(Ordering::SeqCst) {
-                return;
-            }
-            let world = world_w.upgrade();
-            if world.is_none() {
-                return;
-            }
-            let world = world.unwrap();
-            let mut work_queue = work_queue.lock();
-            let mut progress_set = progress_set.lock();
-
-            for p in done_chunks.iter() {
-                progress_set.remove(p);
-            }
-            done_chunks.clear();
-
-            if work_queue.is_empty() {
-                drop(work_queue);
-                drop(progress_set);
-                thread::park();
-                if killswitch.load(Ordering::SeqCst) {
-                    return;
-                }
-                continue;
-            }
-
-            chunks_to_add.clear();
-            let len = work_queue.len().min(10);
-            for p in work_queue.iter().rev().take(len) {
-                chunks_to_add.push(p.clone());
-                progress_set.insert(p.clone());
-            }
-            let tgtlen = work_queue.len() - len;
-            work_queue.resize(tgtlen, Default::default());
-            drop(progress_set);
-            drop(work_queue);
-
-            chunk_objs_to_add.clear();
-            {
-                let voxels = world.voxels.read();
-                for rr in chunks_to_add.drain(..) {
-                    let chunk_opt = voxels.chunks.get(&rr.pos);
-                    if chunk_opt.is_none() {
-                        done_chunks.push(rr);
-                        continue;
-                    }
-                    chunk_objs_to_add.push(rr);
-                }
-            }
-
-            for rr in chunk_objs_to_add.drain(..) {
-                let mesh = mesh_from_chunk(&world, rr.pos, texture_dim);
-                if mesh.is_none() {
-                    done_chunks.push(rr);
-                    continue;
-                }
-                let mesh = mesh.unwrap();
-                let vcount = mesh.vertices.len() as u32;
-                let icount = mesh.indices.len() as u32;
-                let v_sz = std::mem::size_of::<vox::VoxelVertex>();
-                let i_sz = std::mem::size_of::<u32>();
-                let v_tot_sz = v_sz * (vcount as usize);
-                let i_tot_sz = i_sz * (icount as usize);
-                let tot_sz = v_tot_sz + i_tot_sz;
-
-                let dchunk = if tot_sz > 0 {
-                    let qfs = [handles.queues.get_primary_family()];
-                    let mut staging = {
-                        let bi = vk::BufferCreateInfo::builder()
-                            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
-                            .size(tot_sz as u64)
-                            .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                            .queue_family_indices(&qfs)
-                            .build();
-                        let ai = vma::AllocationCreateInfo {
-                            usage: vma::MemoryUsage::CpuOnly,
-                            flags: vma::AllocationCreateFlags::MAPPED
-                                | vma::AllocationCreateFlags::DEDICATED_MEMORY,
-                            ..Default::default()
-                        };
-                        OwnedBuffer::from(&mut handles.vmalloc.lock(), &bi, &ai)
-                    };
-                    let buffer = {
-                        let pool = &alloc_pool.0;
-                        let bi = vk::BufferCreateInfo::builder()
-                            .usage(
-                                vk::BufferUsageFlags::TRANSFER_DST
-                                    | vk::BufferUsageFlags::VERTEX_BUFFER
-                                    | vk::BufferUsageFlags::INDEX_BUFFER,
-                            )
-                            .size(tot_sz as u64)
-                            .queue_family_indices(&qfs)
-                            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-                        let ai = vma::AllocationCreateInfo {
-                            usage: vma::MemoryUsage::GpuOnly,
-                            pool: Some(pool.clone()),
-                            ..Default::default()
-                        };
-                        OwnedBuffer::from(&mut handles.vmalloc.lock(), &bi, &ai)
-                    };
-                    buffer.give_name(&handles, || {
-                        format!("chunk({},{},{})", rr.pos.x, rr.pos.y, rr.pos.z)
-                    });
-                    // write to staging
-                    {
-                        let ai = staging.allocation.as_ref().unwrap();
-                        unsafe {
-                            std::ptr::copy_nonoverlapping(
-                                mesh.vertices.as_ptr(),
-                                ai.1.get_mapped_data() as *mut vox::VoxelVertex,
-                                mesh.vertices.len(),
-                            );
-                            std::ptr::copy_nonoverlapping(
-                                mesh.indices.as_ptr(),
-                                ai.1.get_mapped_data().add(v_tot_sz) as *mut u32,
-                                mesh.indices.len(),
-                            );
-                        }
-                        handles
-                            .vmalloc
-                            .lock()
-                            .flush_allocation(&ai.0, 0, tot_sz)
-                            .unwrap();
-                    }
-                    // copy from staging to gpu
-                    {
-                        let cmd = OnetimeCmdGuard::new(&handles, Some(cmd_pool.pool));
-                        let bci = vk::BufferCopy::builder()
-                            .size(tot_sz as vk::DeviceSize)
-                            .build();
-                        unsafe {
-                            handles.device.cmd_copy_buffer(
-                                cmd.handle(),
-                                staging.buffer,
-                                buffer.buffer,
-                                &[bci],
-                            );
-                        }
-                        cmd.execute(&handles.queues.lock_gtransfer_queue());
-                    }
-                    staging.destroy(&mut handles.vmalloc.lock(), &handles);
-
-                    DrawnChunk {
-                        cpos: rr.pos,
-                        last_dirty: mesh.dirty,
-                        buffer,
-                        istart: v_tot_sz,
-                        vcount,
-                        icount,
-                    }
-                } else {
-                    DrawnChunk {
-                        cpos: rr.pos,
-                        last_dirty: mesh.dirty,
-                        buffer: OwnedBuffer::new(),
-                        istart: 0,
-                        vcount: 0,
-                        icount: 0,
-                    }
-                };
-
-                if killswitch.load(Ordering::Relaxed) {
-                    return;
-                }
-                if submission.send((rr.pos, dchunk)).is_err() {
-                    return;
-                }
-                done_chunks.push(rr);
-            }
-        }
-    }
-
     pub fn drawn_chunks_number(&self) -> usize {
         self.drawn_chunks.len()
     }
 
-    pub fn progress_set_len(&self) -> usize {
-        self.progress_set.lock().len()
-    }
-
-    pub fn prepass_draw(&mut self, fctx: &mut PrePassFrameContext) {
-        if let Some(work_receiver) = self.work_receiver.get() {
-            for (p, dc) in work_receiver.try_iter() {
-                if let Some(ch) = self.drawn_chunks.insert(p, dc) {
-                    ch.enqueue_destroy(&fctx.rctx.handles);
-                }
-            }
-        }
-
-        if self.world.is_none() {
-            self.drawn_chunks.clear();
-            return;
-        }
-        let world = self.world.as_ref().unwrap().clone();
-
-        let ref_pos; // TODO: Add velocity-based position prediction
-        let ref_fdir;
-        {
-            let entities = world.entities.read();
-            let lp_loc: &CLocation = entities
-                .ecs
-                .get_component(fctx.client_world.local_player)
-                .unwrap();
-            ref_pos = lp_loc.position;
-            let mrot = glm::quat_to_mat3(&lp_loc.orientation)
-                .transpose()
-                .map(|c| c as f32);
-            ref_fdir = mrot * vec3(0.0, 0.0, 1.0);
-        }
-        let cposition = chunkpos_from_blockpos(ref_pos.map(|x| x as i32));
-        let dist_key = |p: &Vector3<i32>| {
-            let d = cposition - p;
-            let df = d.map(|c| c as f32);
-            let dflen = df.norm();
-            let fk = -dflen * (4.0 - df.angle(&ref_fdir));
-            (fk * (CHUNK_DIM as f32)) as i32
-        };
-        let voxels = world.voxels.read();
-
-        let mut chunks_to_remove: SmallVec<[ChunkPosition; 16]> = SmallVec::new();
-        self.drawn_chunks
-            .keys()
-            .filter(|p| !voxels.chunks.contains_key(p))
-            .for_each(|p| chunks_to_remove.push(*p));
-        let mut chunks_to_add: Vec<ChunkRenderRequest> = voxels
-            .chunks
-            .iter()
-            .map(|(cp, _)| cp)
-            .filter(|cpos| !self.drawn_chunks.contains_key(cpos))
-            .map(|pos| ChunkRenderRequest { pos: *pos })
-            .collect();
-        chunks_to_add.append(
-            &mut self
-                .drawn_chunks
-                .iter()
-                .filter(|(cpos, dch)| {
-                    voxels
-                        .chunks
-                        .get(cpos)
-                        .map_or(false, |vch| dch.last_dirty != vch.dirty)
-                })
-                .map(|(pos, _)| ChunkRenderRequest { pos: *pos })
-                .collect(),
-        );
-        let real_chunks_to_add: Vec<ChunkRenderRequest> = chunks_to_add
-            .into_iter()
-            .filter(|rr: &ChunkRenderRequest| {
-                if let Some(chunk) = voxels.chunks.get(&rr.pos) {
-                    if is_chunk_trivial(chunk, &world) {
-                        self.drawn_chunks.insert(
-                            chunk.position,
-                            DrawnChunk {
-                                cpos: chunk.position,
-                                last_dirty: chunk.dirty,
-                                buffer: OwnedBuffer::new(),
-                                istart: 0,
-                                vcount: 0,
-                                icount: 0,
-                            },
-                        );
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
-                for dx in -1..=1 {
-                    for dy in -1..=1 {
-                        for dz in -1..=1 {
-                            let npos = rr.pos + vec3(dx, dy, dz);
-                            if !voxels.chunks.contains_key(&npos) {
-                                return false;
-                            }
-                        }
-                    }
-                }
-                true
-            })
-            .collect();
-        drop(voxels);
-
-        let mut draw_queue = self.draw_queue.lock();
-        let progress_set = self.progress_set.lock();
-        draw_queue.clear();
-        for c in real_chunks_to_add.into_iter() {
-            if !progress_set.contains(&c) {
-                draw_queue.push(c);
-            }
-        }
-        drop(progress_set);
-        // Load nearest chunks first
-        draw_queue.sort_unstable_by_key(|d| dist_key(&d.pos));
-        // Unload farthest chunks first
-        chunks_to_remove.sort_unstable_by_key(&dist_key);
-        let new_cmds = !draw_queue.is_empty();
-        drop(draw_queue);
-
-        for cpos in chunks_to_remove.into_iter().take(32) {
-            if let Some(ch) = self.drawn_chunks.remove(&cpos) {
-                ch.enqueue_destroy(&fctx.rctx.handles);
-            }
-        }
-
-        if new_cmds {
-            for t in self.worker_threads.iter() {
-                t.thread().unpark();
-            }
-        }
-    }
+    pub fn prepass_draw(&mut self, _fctx: &mut PrePassFrameContext, _world: &World) {}
 
     #[allow(clippy::cast_ptr_alignment)]
-    pub fn inpass_draw(&mut self, fctx: &mut InPassFrameContext) {
+    pub fn inpass_draw(&mut self, fctx: &mut InPassFrameContext, world: &World) {
         let (mut hichunk, mut hiidx) = (vec3(0, 0, 0), -1);
-        let mut fwd: Vector3<f32> = zero();
-        let mut player_pos = zero();
-        let mview = if let Some(world) = &self.world {
+        let fwd: Vector3<f32>;
+        let player_pos;
+        let mview = {
             let client = fctx.client_world;
-            let entities = world.entities.read();
-            let lp_loc: &CLocation = entities.ecs.get_component(client.local_player).unwrap();
+            let entities = world.ecs().read();
+            let lp_loc: &CLocation = entities.get_component(client.local_player).unwrap();
             player_pos = lp_loc.position;
             let player_ang = lp_loc.orientation;
             let mview: Matrix4<f32>;
@@ -951,7 +768,6 @@ impl VoxelRenderer {
                 }
             }
 
-            let voxels = world.voxels.read();
             use world::raycast;
             fwd = mrot.transpose() * vec3(0.0, 0.0, 1.0);
             let rc = raycast::RaycastQuery::new_directed(
@@ -959,8 +775,8 @@ impl VoxelRenderer {
                 fwd.map(|c| c as f64),
                 32.0,
                 &world,
-                Some(&voxels),
-                None,
+                true,
+                false,
             )
             .execute();
             if let raycast::Hit::Voxel { position, .. } = rc.hit {
@@ -968,8 +784,6 @@ impl VoxelRenderer {
                 hiidx = blockidx_from_blockpos(position) as i32;
             }
             mview
-        } else {
-            Matrix4::identity()
         };
 
         let mproj: Matrix4<f32>;
@@ -1039,7 +853,14 @@ impl VoxelRenderer {
         }
 
         let always_dist = (CHUNK_DIM * CHUNK_DIM * 5) as f32;
-        for (pos, chunk) in self.drawn_chunks.iter().filter(|c| c.1.icount > 0) {
+        for chunk in self.drawn_chunks.iter() {
+            let (pos, chunk) = match chunk {
+                Some(dchunk) => (dchunk.cpos, dchunk),
+                None => continue,
+            };
+            if chunk.icount == 0 {
+                continue;
+            }
             let ch_offset = pos.map(|x| (x as f32) * (CHUNK_DIM as f32));
             let rpos = ch_offset - (player_pos.map(|c| c as f32) - fwd * (CHUNK_DIM as f32));
             let ang = fwd.dot(&rpos);
