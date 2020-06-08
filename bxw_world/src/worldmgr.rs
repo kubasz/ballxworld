@@ -1,4 +1,5 @@
 use crate::ecs::*;
+use crate::generation::WorldBlocks;
 use crate::*;
 use bxw_util::fnv::*;
 use bxw_util::itertools::*;
@@ -8,6 +9,7 @@ use bxw_util::smallvec::*;
 use bxw_util::taskpool::{Task, TaskPool};
 use std::any::*;
 use std::cell::Cell;
+use std::iter::FromIterator;
 use std::sync::atomic::*;
 use std::sync::mpsc::*;
 
@@ -133,15 +135,11 @@ pub struct World {
     ),
 }
 
-pub enum WorldChangeRequest {
-    BlockChange {
-        bpos: BlockPosition,
-        from: VoxelDatum,
-        to: VoxelDatum,
-    },
-    EntityChange {
-        eid: EntityID,
-    },
+#[derive(Clone, PartialEq, Debug)]
+pub struct VoxelChange {
+    pub bpos: BlockPosition,
+    pub from: VoxelDatum,
+    pub to: VoxelDatum,
 }
 
 #[derive(Clone, Eq, PartialEq, Hash)]
@@ -262,6 +260,54 @@ impl World {
         self.entities.apply_entity_changes(changes);
     }
 
+    pub fn apply_voxel_changes(&mut self, changes: &[VoxelChange]) {
+        let mut changes: Vec<(ChunkPosition, VoxelChange)> = Vec::from_iter(
+            changes
+                .iter()
+                .map(|vc| (chunkpos_from_blockpos(vc.bpos), vc.clone())),
+        );
+        changes.sort_unstable_by(|(p1, _), (p2, _)| {
+            std::cmp::Ord::cmp(p1.as_ref() as &[i32; 3], p2.as_ref() as &[i32; 3])
+        });
+        let mut blocks_ref = self.get_handler(CHUNK_BLOCK_DATA).borrow_mut();
+        let blocks: &mut WorldBlocks = blocks_ref.as_any_mut().downcast_mut().unwrap();
+        for (&cpos, group) in &changes.iter().group_by(|(p, _)| p) {
+            if self.get_chunk_index(cpos).is_none() {
+                continue;
+            }
+            blocks.modify_chunk(self, cpos, group.map(|g| &g.1));
+        }
+        drop(blocks_ref);
+        let mut chunks_to_update: FnvHashSet<ChunkPosition> = Default::default();
+        for (_, change) in changes.iter() {
+            for upos in dirty_chunkpos_from_blockpos(change.bpos) {
+                chunks_to_update.insert(upos);
+            }
+        }
+        for handler_i in 0..self.handlers.len() {
+            if handler_i == CHUNK_BLOCK_DATA {
+                continue;
+            }
+            let handler = &self.handlers[handler_i];
+            for &cpos in &chunks_to_update {
+                let cid = match self.get_chunk_index(cpos) {
+                    Some(i) => i,
+                    None => continue,
+                };
+                let mut h = handler.borrow_mut();
+                if h.status_array()[cid] == ChunkDataState::Unloaded {
+                    continue;
+                }
+                let upd_task = h.create_chunk_update_task(self, cpos, cid);
+                drop(h);
+                if let Some(task) = upd_task {
+                    task.execute();
+                }
+            }
+            self.flush_sync_tasks();
+        }
+    }
+
     fn extend_allocations(&mut self) {
         let ocap = self.chunk_positions.len();
         let ncap = (ocap + 1) * 2;
@@ -301,14 +347,18 @@ impl World {
         self.free_indices.push(cid);
     }
 
-    pub fn main_loop_tick(&mut self, task_pool: &TaskPool) {
-        self.check_load_deltas(task_pool);
+    fn flush_sync_tasks(&mut self) {
         for _taskn in 0..256 {
             match self.sync_task_queue.1.try_recv() {
                 Ok(task) => (task)(self),
                 Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
             }
         }
+    }
+
+    pub fn main_loop_tick(&mut self, task_pool: &TaskPool) {
+        self.check_load_deltas(task_pool);
+        self.flush_sync_tasks();
         let mut remaining = 256 - self.tasks_in_pool.load(Ordering::SeqCst);
         let mut tasks = Vec::with_capacity(32);
         for _deltan in 0..4096 {

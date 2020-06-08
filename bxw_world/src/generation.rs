@@ -29,12 +29,37 @@ impl WorldBlocks {
     pub fn get_vcache(&self) -> RefMut<'_, VCache> {
         self.cache.borrow_mut()
     }
-}
 
-impl WorldBlocks {
     pub fn get_chunk(&self, world: &World, cpos: ChunkPosition) -> Option<Arc<VChunk>> {
         let idx = world.get_chunk_index(cpos);
         idx.and_then(|i| Some(self.compressed_storage[i].as_ref()?.clone()))
+    }
+
+    pub(crate) fn modify_chunk<'a, I: IntoIterator<Item = &'a VoxelChange>>(
+        &mut self,
+        world: &World,
+        cpos: ChunkPosition,
+        changes: I,
+    ) {
+        let mut cache = self.cache.borrow_mut();
+        let cidx = world
+            .get_chunk_index(cpos)
+            .expect("Trying to modify a chunk that is not loaded");
+        let chunk = cache.get_uncompressed_chunk_mut(world, self, cpos);
+        if let Some(chunk) = chunk {
+            for change in changes {
+                let bidx = blockidx_from_blockpos(change.bpos);
+                if chunk.blocks_yzx[bidx] == change.from {
+                    chunk.blocks_yzx[bidx] = change.to;
+                }
+            }
+            let mut vchunk = VChunk::new();
+            vchunk.position = cpos;
+            vchunk.compress(chunk);
+            self.compressed_storage[cidx] = Some(Arc::new(vchunk));
+        } else {
+            panic!("Trying to modify a chunk that is not loaded");
+        }
     }
 }
 

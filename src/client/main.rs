@@ -126,6 +126,7 @@ pub fn client_main() {
     let mut look_pos: BlockPosition = zero();
     let mut look_precise_pos: Vector3<f64> = zero();
     let mut click_pos: Option<BlockPosition> = None;
+    let mut click_datum: world::VoxelDatum = Default::default();
     let mut click_place = false;
 
     let mut event_pump = sdl_ctx.event_pump().unwrap();
@@ -173,19 +174,15 @@ pub fn client_main() {
             let (pitch, yaw) = (*pitch, *yaw);
 
             if let Some(bpos) = click_pos {
-                //let mut voxels = world.voxels.write();
-                //let mut vcache = world.get_vcache();
                 click_pos = None;
                 // place block
-                /*let cpos = chunkpos_from_blockpos(bpos);
-                let ch = vcache.get_uncompressed_chunk_mut(&voxels, cpos).unwrap();
-                let bidx = blockidx_from_blockpos(bpos);
                 let i_used = if click_place { i_place } else { i_destroy };
-                ch.blocks_yzx[bidx].id = i_used.id;
-                let rch = voxels.chunks.get_mut(&cpos).unwrap();
-                rch.compress(&ch);
-                voxels.dirtify(bpos);*/
-                // TODO: Voxel changing
+                let change = world::worldmgr::VoxelChange {
+                    bpos,
+                    from: click_datum,
+                    to: world::VoxelDatum { id: i_used.id() },
+                };
+                world.apply_voxel_changes(&[change]);
             }
 
             for _pfrm in 0..physics_frames {
@@ -365,13 +362,14 @@ pub fn client_main() {
                 click_place = secondary;
                 if let raycast::Hit::Voxel {
                     position,
+                    datum,
                     normal,
                     normal_datum,
-                    ..
                 } = &rc.hit
                 {
                     if !click_place {
                         click_pos = Some(*position);
+                        click_datum = *datum;
                     } else if normal_datum
                         .map(|d| !vxreg.get_definition_from_id(d).has_hitbox)
                         .unwrap_or(false)
@@ -387,6 +385,7 @@ pub fn client_main() {
                         let intersecting = AABB::intersection(player_aabb, voxel_aabb).is_some();
                         if !intersecting {
                             click_pos = Some(place_pos);
+                            click_datum = normal_datum.unwrap();
                         }
                     }
                 }

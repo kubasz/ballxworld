@@ -22,6 +22,7 @@ pub const CHUNK_DIM3: usize = CHUNK_DIM * CHUNK_DIM * CHUNK_DIM;
 
 use bxw_util::collider::AABB;
 pub use bxw_util::collider::{Direction, ALL_DIRS};
+use smallvec::SmallVec;
 
 pub type ChunkPosition = Vector3<i32>;
 pub type BlockPosition = Vector3<i32>;
@@ -39,6 +40,33 @@ pub fn blockidx_from_blockpos(bpos: BlockPosition) -> usize {
     let cd = CHUNK_DIM as i32;
     let innerpos = bpos.map(|p| p.rem_floor(cd) as usize);
     innerpos.x + CHUNK_DIM * innerpos.z + CHUNK_DIM2 * innerpos.y
+}
+
+pub fn dirty_chunkpos_from_blockpos(bpos: BlockPosition) -> SmallVec<[ChunkPosition; 8]> {
+    let cpos = chunkpos_from_blockpos(bpos);
+    let mut dirty = SmallVec::new();
+    dirty.push(cpos);
+    let ipos = bpos - (CHUNK_DIM as i32) * cpos;
+    let maxdim = CHUNK_DIM as i32 - 1;
+    if ipos.x == 0 {
+        dirty.push(cpos + vec3(-1, 0, 0));
+    }
+    if ipos.x == maxdim {
+        dirty.push(cpos + vec3(1, 0, 0));
+    }
+    if ipos.y == 0 {
+        dirty.push(cpos + vec3(0, -1, 0));
+    }
+    if ipos.y == maxdim {
+        dirty.push(cpos + vec3(0, 1, 0));
+    }
+    if ipos.z == 0 {
+        dirty.push(cpos + vec3(0, 0, -1));
+    }
+    if ipos.z == maxdim {
+        dirty.push(cpos + vec3(0, 0, 1));
+    }
+    dirty
 }
 
 #[derive(Debug, Copy, Clone, Default, Eq, PartialEq, Hash)]
@@ -93,8 +121,6 @@ impl Default for VChunkData {
 pub struct VChunk {
     /// Chunk "mip-maps" by level - 0 is VOXEL_CHUNK_DIM-wide, 1 is 1/2 of that, etc.
     pub data: VChunkData,
-    /// A number increased after each change to this chunk while it's loaded
-    pub dirty: u64,
     pub position: ChunkPosition,
 }
 
@@ -102,7 +128,6 @@ impl Default for VChunk {
     fn default() -> Self {
         Self {
             data: Default::default(),
-            dirty: 1,
             position: vec3(0, 0, 0),
         }
     }
@@ -236,7 +261,6 @@ impl VChunk {
     pub fn compress(&mut self, from: &UncompressedChunk) {
         debug_assert_eq!(self.position, from.position);
         let voxdat = compress_rle(from.blocks_yzx.iter().map(|v| v.id));
-        self.dirty = from.dirty;
         self.data = VChunkData::QuickCompressed { vox: voxdat };
     }
 
@@ -244,7 +268,6 @@ impl VChunk {
     pub fn decompress(&self) -> Box<UncompressedChunk> {
         let mut uc: Box<UncompressedChunk> = Box::default();
         uc.position = self.position;
-        uc.dirty = self.dirty;
         let VChunkData::QuickCompressed { vox } = &self.data;
         decompress_rle(vox, &mut uc.blocks_yzx, |v| VoxelDatum { id: v });
         uc
@@ -305,61 +328,3 @@ impl VoxelDefinition {
         None
     }
 }
-
-/*impl WVoxels {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
-    pub fn dirtify(&mut self, bpos: BlockPosition) {
-        let cpos = chunkpos_from_blockpos(bpos);
-        let ipos = bpos - (CHUNK_DIM as i32) * cpos;
-        let maxdim = CHUNK_DIM as i32 - 1;
-        self.chunks
-            .get_mut(&cpos)
-            .into_iter()
-            .for_each(|c| c.dirty += 1);
-        if ipos.x == 0 {
-            self.chunks
-                .get_mut(&(cpos + vec3(-1, 0, 0)))
-                .into_iter()
-                .for_each(|c| c.dirty += 1);
-        }
-        if ipos.x == maxdim {
-            self.chunks
-                .get_mut(&(cpos + vec3(1, 0, 0)))
-                .into_iter()
-                .for_each(|c| c.dirty += 1);
-        }
-        if ipos.y == 0 {
-            self.chunks
-                .get_mut(&(cpos + vec3(0, -1, 0)))
-                .into_iter()
-                .for_each(|c| c.dirty += 1);
-        }
-        if ipos.y == maxdim {
-            self.chunks
-                .get_mut(&(cpos + vec3(0, 1, 0)))
-                .into_iter()
-                .for_each(|c| c.dirty += 1);
-        }
-        if ipos.z == 0 {
-            self.chunks
-                .get_mut(&(cpos + vec3(0, 0, -1)))
-                .into_iter()
-                .for_each(|c| c.dirty += 1);
-        }
-        if ipos.z == maxdim {
-            self.chunks
-                .get_mut(&(cpos + vec3(0, 0, 1)))
-                .into_iter()
-                .for_each(|c| c.dirty += 1);
-        }
-    }
-}
-
-impl WEntities {
-    pub fn new() -> Self {
-        Default::default()
-    }
-}*/
