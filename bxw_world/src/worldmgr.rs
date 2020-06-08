@@ -163,13 +163,17 @@ struct ChunkDelta {
 
 impl Ord for ChunkDelta {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        if self.unload {
-            // Unload farthest first
-            Ord::cmp(&other.min_anchor_distance, &self.min_anchor_distance)
+        let self_dist = if self.unload {
+            -self.min_anchor_distance
         } else {
-            // Load nearest first
-            Ord::cmp(&self.min_anchor_distance, &other.min_anchor_distance)
-        }
+            self.min_anchor_distance
+        };
+        let other_dist = if other.unload {
+            -other.min_anchor_distance
+        } else {
+            other.min_anchor_distance
+        };
+        Ord::cmp(&self_dist, &other_dist)
     }
 }
 

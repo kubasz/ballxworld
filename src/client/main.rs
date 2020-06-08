@@ -75,7 +75,7 @@ pub fn client_main() {
         eprintln!("Adjusting settings for renderdoc");
     }
 
-    let task_pool = bxw_util::taskpool::TaskPool::new(cfg.performance_load_threads as usize);
+    let task_pool = bxw_util::taskpool::TaskPool::new(cfg.performance_threads as usize);
     let mut rctx = Box::new(RenderingContext::new(&sdl_vid, &cfg));
     let rres = Arc::new(RenderingResources::load(&cfg, &mut rctx));
     let vctx = Rc::new(RefCell::new(VoxelRenderer::new(
@@ -381,6 +381,7 @@ pub fn client_main() {
     }
 
     drop(world);
+    drop(task_pool);
     let vctx = Rc::try_unwrap(vctx)
         .ok()
         .expect("Remaining references to VoxelRenderer")
