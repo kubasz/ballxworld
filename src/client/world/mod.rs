@@ -1,6 +1,6 @@
+use bxw_util::change::Change;
 use std::sync::Arc;
-use world::ecs::ValidEntityID;
-use world::ecs::{CLocation, ECSHandler};
+use world::ecs::*;
 use world::generation::WorldBlocks;
 use world::worldmgr::*;
 use world::VoxelRegistry;
@@ -20,24 +20,28 @@ impl ClientWorld {
     pub fn new_world(name: String, registry: Arc<VoxelRegistry>) -> (World, ClientWorld) {
         let mut world = World::new(name);
         world.replace_handler(CHUNK_BLOCK_DATA, Box::new(WorldBlocks::new(registry, 0)));
-        let mut entities = world.ecs().write();
-        let local_player = world::entities::player::create_player(
-            &mut entities,
-            true,
-            String::from("@local_player"),
-        );
-        let loc: &mut CLocation = entities.get_component_mut(local_player).unwrap();
-        loc.position.x = 300.0;
-        loc.position.y = 32.0;
-        loc.position.z = 28.0;
+        let entities = world.ecs();
+        let mut local_player =
+            world::entities::player::create_player(entities, true, String::from("@local_player"));
+        let eid;
+        match local_player.location {
+            Change::Create { ref mut new } => {
+                new.position.x = 300.0;
+                new.position.y = 32.0;
+                new.position.z = 28.0;
+                eid = new.entity_id();
+            }
+            _ => unreachable!(),
+        };
+
+        world.apply_entity_changes(&[local_player]);
         let cw = ClientWorld {
-            local_player,
+            local_player: eid,
             camera_settings: CameraSettings::FPS {
                 pitch: 0.0,
                 yaw: 0.0,
             },
         };
-        drop(entities);
         (world, cw)
     }
 }

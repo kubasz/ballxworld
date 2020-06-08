@@ -27,6 +27,7 @@ use world::generation::WorldBlocks;
 use world::BlockPosition;
 
 use crate::client::render::voxrender::MeshDataHandler;
+use bxw_util::change::Change;
 use bxw_util::collider::AABB;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -94,9 +95,19 @@ pub fn client_main() {
     let (mut world, mut client_world) = ClientWorld::new_world("world".to_owned(), vxreg.clone());
     {
         let lp = client_world.local_player;
-        let mut ents = world.ecs().write();
-        let anchor: &mut CLoadAnchor = ents.get_component_mut(lp).unwrap();
-        anchor.radius = cfg.performance_load_distance;
+        let ents = world.ecs();
+        let anchor: &CLoadAnchor = ents.get_component(lp).unwrap();
+        let mut new_anchor = anchor.clone();
+        new_anchor.radius = cfg.performance_load_distance;
+        let change = [EntityChange {
+            kind: EntityChangeKind::UpdateEntity(anchor.entity_id()),
+            load_anchor: Change::Update {
+                old: anchor.clone(),
+                new: new_anchor,
+            },
+            ..Default::default()
+        }];
+        world.apply_entity_changes(&change);
     }
     world.replace_handler(
         world::worldmgr::CHUNK_MESH_DATA,
@@ -179,14 +190,15 @@ pub fn client_main() {
 
             for _pfrm in 0..physics_frames {
                 // do physics tick
-                let mut entities = world.ecs().write();
-                let lp_loc: &mut CLocation = entities.get_component_mut(local_player).unwrap();
+                let entities = world.ecs();
+                let lp_loc: &CLocation = entities.get_component(local_player).unwrap();
+                let mut new_loc: CLocation = lp_loc.clone();
                 // position
                 let qyaw = Quaternion::from_polar_decomposition(1.0, yaw, Vector3::y_axis());
                 let qpitch = Quaternion::from_polar_decomposition(1.0, pitch, Vector3::x_axis());
-                lp_loc.orientation = UnitQuaternion::new_normalize(qpitch * qyaw);
+                new_loc.orientation = UnitQuaternion::new_normalize(qpitch * qyaw);
 
-                let mview = glm::quat_to_mat3(&lp_loc.orientation).transpose();
+                let mview = glm::quat_to_mat3(&new_loc.orientation).transpose();
 
                 let mut wvel = Vector3::new(
                     input_mgr.input_state.walk.x as f64,
@@ -204,25 +216,36 @@ pub fn client_main() {
                 let tspeed = tvel.magnitude();
 
                 if input_mgr.input_state.noclip {
-                    lp_loc.position += tvel * PHYSICS_FRAME_TIME;
-                    lp_loc.velocity = tvel;
+                    new_loc.position += tvel * PHYSICS_FRAME_TIME;
+                    new_loc.velocity = tvel;
                 } else {
                     tvel.y = 0.0;
                 }
-                let lp_phys: &mut CPhysics = entities.get_component_mut(local_player).unwrap();
-                lp_phys.control_target_velocity = if tspeed < SMALL_V_CUTOFF {
+                let lp_phys: &CPhysics = entities.get_component(local_player).unwrap();
+                let mut new_phys: CPhysics = lp_phys.clone();
+                new_phys.control_target_velocity = if tspeed < SMALL_V_CUTOFF {
                     zero()
                 } else {
                     tvel.normalize() * tspeed
                 };
-                lp_phys.frozen = input_mgr.input_state.noclip;
-                if input_mgr.input_state.jump.is_active() && lp_phys.against_wall[2] {
-                    lp_phys.control_frame_impulse.y = 250.0;
+                new_phys.frozen = input_mgr.input_state.noclip;
+                if input_mgr.input_state.jump.is_active() && new_phys.against_wall[2] {
+                    new_phys.control_frame_impulse.y = 250.0;
                 }
-                //lp_loc.velocity = (PHYSICS_FRAME_TIME as f32) * wvel;
-                drop(entities);
-                //
-                world::physics::world_physics_tick(&world);
+                let change = [EntityChange {
+                    kind: EntityChangeKind::UpdateEntity(lp_loc.entity_id()),
+                    location: Change::Update {
+                        old: lp_loc.clone(),
+                        new: new_loc,
+                    },
+                    physics: Change::Update {
+                        old: lp_phys.clone(),
+                        new: new_phys,
+                    },
+                    ..Default::default()
+                }];
+                world.apply_entity_changes(&change);
+                world::physics::world_physics_tick(&mut world);
             }
         }
 
@@ -303,7 +326,7 @@ pub fn client_main() {
         let player_pos;
         let player_ang;
         {
-            let entities = world.ecs().read();
+            let entities = world.ecs();
             let lp_loc: &CLocation = entities.get_component(client_world.local_player).unwrap();
             player_pos = lp_loc.position;
             player_ang = lp_loc.orientation;

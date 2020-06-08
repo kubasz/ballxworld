@@ -122,7 +122,7 @@ pub struct World {
     chunk_positions: Vec<Option<ChunkPosition>>,
     free_indices: Vec<usize>,
     handlers: Vec<RefCell<Box<dyn ChunkDataHandler>>>,
-    entities: Arc<RwLock<ECS>>,
+    entities: ECS,
     load_data: Arc<Mutex<LoadData>>,
     load_data_busy: Arc<AtomicBool>,
     tasks_in_pool: Arc<AtomicI32>,
@@ -131,6 +131,17 @@ pub struct World {
         SyncSender<SynchronousUpdateTask>,
         Receiver<SynchronousUpdateTask>,
     ),
+}
+
+pub enum WorldChangeRequest {
+    BlockChange {
+        bpos: BlockPosition,
+        from: VoxelDatum,
+        to: VoxelDatum,
+    },
+    EntityChange {
+        eid: EntityID,
+    },
 }
 
 #[derive(Clone, Eq, PartialEq, Hash)]
@@ -210,7 +221,7 @@ impl World {
             chunk_positions: Vec::with_capacity(default_capacity),
             free_indices: Vec::with_capacity(default_capacity),
             handlers,
-            entities: Arc::new(Default::default()),
+            entities: Default::default(),
             load_data: Arc::new(Mutex::new(LoadData {
                 allocation: Default::default(),
                 chunk_positions: Default::default(),
@@ -243,19 +254,23 @@ impl World {
         self.allocation.get(&cpos).copied()
     }
 
-    pub fn ecs(&self) -> &RwLock<ECS> {
+    pub fn ecs(&self) -> &ECS {
         &self.entities
+    }
+
+    pub fn apply_entity_changes(&mut self, changes: &[EntityChange]) {
+        self.entities.apply_entity_changes(changes);
     }
 
     fn extend_allocations(&mut self) {
         let ocap = self.chunk_positions.len();
         let ncap = (ocap + 1) * 2;
         if self.allocation.capacity() < ncap {
-            self.allocation.reserve(ncap - self.allocation.capacity());
+            self.allocation.reserve(ncap - self.allocation.len());
         }
         self.chunk_positions.resize(ncap, None);
         if self.free_indices.capacity() < ncap {
-            self.free_indices.reserve(ncap);
+            self.free_indices.reserve(ncap - self.free_indices.len());
         }
         for idx in ocap..ncap {
             self.free_indices.push(idx);
@@ -375,9 +390,9 @@ impl World {
                 std::mem::swap(&mut self.remaining_deltas, &mut load_data.remaining_deltas);
                 load_data.remaining_deltas.clear();
             }
-            let ecs = self.entities.read();
+            let ecs = &self.entities;
             let mut new_anchors = Vec::with_capacity(load_data.anchors.len());
-            let it = ECSHandler::<CLoadAnchor>::iter(&*ecs);
+            let it = ECSHandler::<CLoadAnchor>::iter(ecs);
 
             for anchor in it {
                 let mut anchor_kinds = SmallVec::new();
@@ -399,7 +414,6 @@ impl World {
                     requested_kinds: anchor_kinds,
                 });
             }
-            drop(ecs);
             new_anchors.sort();
             //if new_anchors != load_data.anchors {
             {
@@ -491,7 +505,7 @@ fn recalculate_load_deltas(load_data: Arc<Mutex<LoadData>>) {
         }
     }
     load_data.remaining_deltas.clear();
-    let old_cap = load_data.remaining_deltas.capacity();
+    let old_cap = load_data.remaining_deltas.len();
     let new_cap = chunks_to_load.len();
     if old_cap < new_cap {
         load_data.remaining_deltas.reserve(new_cap - old_cap);
@@ -512,7 +526,7 @@ fn recalculate_load_deltas(load_data: Arc<Mutex<LoadData>>) {
         }
         if let Some((cpos, (load_kinds, min_anchor_distance))) = load_iter.next() {
             cont = true;
-            if load_kinds.len() == 0 {
+            if load_kinds.is_empty() {
                 continue;
             }
             load_data.remaining_deltas.push(ChunkDelta {

@@ -3,6 +3,7 @@ use crate::ecs::*;
 use crate::generation::WorldBlocks;
 use crate::worldmgr::*;
 use crate::{blockpos_from_worldpos, chunkpos_from_blockpos, Direction};
+use bxw_util::change::Change;
 use bxw_util::collider::AABB;
 use bxw_util::math::*;
 use bxw_util::*;
@@ -39,49 +40,57 @@ fn drag_force(loc: &CLocation, velocity: Vector3<f64>) -> Vector3<f64> {
     velocity.component_mul(&velocity) * AIR_FRICTION_SQ * area_est
 }
 
-pub fn world_physics_tick(world: &World) {
-    let voxels = world.get_handler(CHUNK_BLOCK_DATA).borrow();
-    let voxels = voxels.as_any().downcast_ref::<WorldBlocks>().unwrap();
-    let mut entities = world.ecs().write();
+pub fn world_physics_tick(world: &mut World) {
+    let voxels_ref = world.get_handler(CHUNK_BLOCK_DATA).borrow();
+    let voxels = voxels_ref.as_any().downcast_ref::<WorldBlocks>().unwrap();
+    let entities = world.ecs();
     let pretick = Instant::now();
     let mut intersections = Vec::with_capacity(10);
-    for (phys, loc) in entities.iter_mut_physics() {
-        if phys.frozen {
+    let mut changes: Vec<EntityChange> = Vec::new();
+    for old_phys in ECSHandler::<CPhysics>::iter(&entities as &ECS) {
+        let eid = old_phys.entity_id();
+        let old_loc: &CLocation = match entities.get_component(eid) {
+            Some(loc) => loc,
+            None => continue,
+        };
+        if old_phys.frozen {
             continue;
         }
-        let mass = phys.mass;
+        let mut new_phys = old_phys.clone();
+        let mut new_loc = old_loc.clone();
+        let mass = new_phys.mass;
 
-        let old_pos = loc.position;
+        let old_pos = new_loc.position;
         let old_cpos = chunkpos_from_blockpos(blockpos_from_worldpos(old_pos));
         // don't calculate physics where blocks aren't loaded yet
         if voxels.get_chunk(world, old_cpos).is_none() {
             continue;
         }
-        let old_vel = loc.velocity;
-        let old_aabb = loc.bounding_shape.aabb(old_pos);
+        let old_vel = new_loc.velocity;
+        let old_aabb = new_loc.bounding_shape.aabb(old_pos);
         let mut new_accel = vec3(0.0, 0.0, 0.0);
         // determine wall contacts
 
-        phys.against_wall = determine_wall_contacts(old_aabb, world, &voxels);
+        new_phys.against_wall = determine_wall_contacts(old_aabb, world, &voxels);
 
         // air friction
-        new_accel -= drag_force(loc, old_vel) / mass;
+        new_accel -= drag_force(&new_loc, old_vel) / mass;
         // gravity
         new_accel += vec3(0.0, -GRAVITY_ACCEL, 0.0);
         // control impulse
-        new_accel += phys.control_frame_impulse;
-        phys.control_frame_impulse /= 2.0; // exponential backoff
-        if phys.control_frame_impulse.magnitude_squared() < SMALL_V_CUTOFF * SMALL_V_CUTOFF {
-            phys.control_frame_impulse = zero();
+        new_accel += new_phys.control_frame_impulse;
+        new_phys.control_frame_impulse /= 2.0; // exponential backoff
+        if new_phys.control_frame_impulse.magnitude_squared() < SMALL_V_CUTOFF * SMALL_V_CUTOFF {
+            new_phys.control_frame_impulse = zero();
         }
         // control force
-        let control_dv = phys.control_target_velocity - old_vel;
+        let control_dv = new_phys.control_target_velocity - old_vel;
         let control_da = {
             let mut control_da = control_dv / TIMESTEP;
             for comp in 0..3 {
                 control_da[comp] = control_da[comp]
-                    .min(phys.control_max_force[comp] / mass)
-                    .max(-phys.control_max_force[comp] / mass);
+                    .min(new_phys.control_max_force[comp] / mass)
+                    .max(-new_phys.control_max_force[comp] / mass);
             }
             control_da
         };
@@ -89,8 +98,10 @@ pub fn world_physics_tick(world: &World) {
         let pred_vel = old_vel + new_accel * TIMESTEP;
         // don't accelerate towards a wall if you're already touching it
         for axis in 0..3 {
-            if new_accel[axis] < 0.0 && pred_vel[axis] <= 0.0 && phys.against_wall[axis * 2]
-                || new_accel[axis] > 0.0 && pred_vel[axis] >= 0.0 && phys.against_wall[axis * 2 + 1]
+            if new_accel[axis] < 0.0 && pred_vel[axis] <= 0.0 && new_phys.against_wall[axis * 2]
+                || new_accel[axis] > 0.0
+                    && pred_vel[axis] >= 0.0
+                    && new_phys.against_wall[axis * 2 + 1]
             {
                 new_accel[axis] = 0.0;
             }
@@ -102,8 +113,8 @@ pub fn world_physics_tick(world: &World) {
                 new_vel[axis] = 0.0;
             }
             // don't move towards walls
-            if new_vel[axis] < 0.0 && phys.against_wall[axis * 2]
-                || new_vel[axis] > 0.0 && phys.against_wall[axis * 2 + 1]
+            if new_vel[axis] < 0.0 && new_phys.against_wall[axis * 2]
+                || new_vel[axis] > 0.0 && new_phys.against_wall[axis * 2 + 1]
             {
                 new_vel[axis] = 0.0;
             }
@@ -115,7 +126,7 @@ pub fn world_physics_tick(world: &World) {
         let mut new_pos = old_pos + new_vel * TIMESTEP;
         {
             for _iter in 0..4 {
-                let new_aabb = loc.bounding_shape.aabb(new_pos);
+                let new_aabb = new_loc.bounding_shape.aabb(new_pos);
                 if !aabb_voxel_intersection(new_aabb, world, &voxels, Some(&mut intersections)) {
                     break;
                 }
@@ -173,13 +184,32 @@ pub fn world_physics_tick(world: &World) {
             }
         }
         // store new values
-        loc.position = new_pos;
-        loc.velocity = new_vel;
+        new_loc.position = new_pos;
+        new_loc.velocity = new_vel;
         // clamp position to avoid any overflow problems
         for c in 0..3 {
-            loc.position[c] = loc.position[c].max(-WORLD_LIMIT).min(WORLD_LIMIT);
+            new_loc.position[c] = new_loc.position[c].max(-WORLD_LIMIT).min(WORLD_LIMIT);
+        }
+        // !(a==b) is true when there are NaNs present
+        if !(new_loc == *old_loc) || !(new_phys == *old_phys) {
+            changes.push(EntityChange {
+                kind: EntityChangeKind::UpdateEntity(eid),
+                location: Change::Update {
+                    old: old_loc.clone(),
+                    new: new_loc,
+                },
+                physics: Change::Update {
+                    old: old_phys.clone(),
+                    new: new_phys,
+                },
+                debug_info: Default::default(),
+                load_anchor: Default::default(),
+            });
         }
     }
+    drop(voxels_ref);
+    world.apply_entity_changes(&changes);
+    drop(changes);
 
     let posttick = Instant::now();
     let durtick = posttick.saturating_duration_since(pretick);

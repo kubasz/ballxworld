@@ -1,6 +1,9 @@
+use bxw_util::change::Change;
 use bxw_util::collider::AABB;
+use bxw_util::fnv::*;
 use bxw_util::math::*;
-use std::collections::HashMap;
+use bxw_util::sparsevec::*;
+use std::cell::*;
 use std::marker::PhantomData;
 
 #[repr(u64)]
@@ -56,12 +59,12 @@ impl ValidEntityID {
     }
 }
 
-pub trait Component {
+pub trait Component: Clone + PartialEq {
     fn name() -> &'static str;
     fn entity_id(&self) -> ValidEntityID;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum BoundingShape {
     Point { offset: Vector3<f64> },
     AxisAlignedBox(AABB),
@@ -78,7 +81,7 @@ impl BoundingShape {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CLocation {
     id: ValidEntityID,
     pub position: Vector3<f64>,
@@ -109,7 +112,7 @@ impl Component for CLocation {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CPhysics {
     id: ValidEntityID,
     pub frozen: bool,
@@ -146,7 +149,7 @@ impl Component for CPhysics {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CDebugInfo {
     id: ValidEntityID,
     pub ent_name: String,
@@ -168,7 +171,7 @@ impl Component for CDebugInfo {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CLoadAnchor {
     id: ValidEntityID,
     pub radius: u32,
@@ -195,10 +198,12 @@ impl Component for CLoadAnchor {
     }
 }
 
-#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
-pub struct ComponentId<T>(usize, PhantomData<T>);
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
+pub struct ComponentId<T: Component>(usize, PhantomData<T>);
 
-impl<T> ComponentId<T> {
+impl<T: Component> Copy for ComponentId<T> {}
+
+impl<T: Component> ComponentId<T> {
     pub fn new(i: usize) -> Self {
         Self(i, PhantomData)
     }
@@ -217,6 +222,28 @@ pub struct Entity {
     pub load_anchor: Option<ComponentId<CLoadAnchor>>,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum EntityChangeKind {
+    NewEntity(ValidEntityID),
+    UpdateEntity(ValidEntityID),
+    DeleteEntity(ValidEntityID),
+}
+
+impl Default for EntityChangeKind {
+    fn default() -> Self {
+        Self::NewEntity(ValidEntityID(0))
+    }
+}
+
+#[derive(Default, Clone, PartialEq)]
+pub struct EntityChange {
+    pub kind: EntityChangeKind,
+    pub location: Change<CLocation>,
+    pub physics: Change<CPhysics>,
+    pub debug_info: Change<CDebugInfo>,
+    pub load_anchor: Change<CLoadAnchor>,
+}
+
 impl Entity {
     fn new(id: ValidEntityID) -> Self {
         Self {
@@ -232,39 +259,13 @@ impl Entity {
 #[derive(Clone, Debug, Default)]
 pub struct ECS {
     // ECS variables
-    entities: HashMap<ValidEntityID, Entity>,
-    last_nonfree_ids: [u64; 4],
+    entities: FnvHashMap<ValidEntityID, Entity>,
+    last_nonfree_ids: Cell<[u64; 4]>,
     // components
-    locations: Vec<CLocation>,
-    physicss: Vec<CPhysics>,
-    debug_infos: Vec<CDebugInfo>,
-    load_anchors: Vec<CLoadAnchor>,
-}
-
-pub struct ECSPhysicsIteratorMut<'e> {
-    it: std::slice::IterMut<'e, CPhysics>,
-    locs: &'e mut [CLocation],
-    ents: &'e mut HashMap<ValidEntityID, Entity>,
-}
-
-impl<'e> Iterator for ECSPhysicsIteratorMut<'e> {
-    type Item = (&'e mut CPhysics, &'e mut CLocation);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let nxt = self.it.next();
-            if let Some(phys) = nxt {
-                if let Some(locid) = &self.ents.get(&phys.entity_id()).unwrap().location {
-                    // Safety: The vectors and hashmaps can't be modified while this iterator holds an 'e reference to the ECS object
-                    let loc: &'e mut CLocation =
-                        unsafe { &mut *(&mut self.locs[locid.index()] as *mut CLocation) };
-                    return Some((phys, loc));
-                }
-            } else {
-                return None;
-            }
-        }
-    }
+    locations: SparseVec<CLocation>,
+    physicss: SparseVec<CPhysics>,
+    debug_infos: SparseVec<CDebugInfo>,
+    load_anchors: SparseVec<CLoadAnchor>,
 }
 
 impl ECS {
@@ -280,25 +281,23 @@ impl ECS {
         self.entities.values_mut()
     }
 
-    pub fn iter_mut_physics(&mut self) -> ECSPhysicsIteratorMut {
-        ECSPhysicsIteratorMut {
-            it: self.physicss.iter_mut(),
-            locs: &mut self.locations,
-            ents: &mut self.entities,
-        }
-    }
-
-    pub fn add_new_entity(&mut self, domain: EntityDomain) -> ValidEntityID {
+    pub fn allocate_id(&self, domain: EntityDomain) -> ValidEntityID {
         let nfi = domain.number();
-        let mut sub_id = self.last_nonfree_ids[nfi] + 1;
+        let mut sub_id = self.last_nonfree_ids.get()[nfi] + 1;
         while self
             .entities
             .contains_key(&ValidEntityID::from_parts(domain, sub_id).unwrap())
         {
             sub_id += 1;
         }
-        self.last_nonfree_ids[nfi] = sub_id;
-        let id = ValidEntityID::from_parts(domain, sub_id).unwrap();
+        let mut nfis = self.last_nonfree_ids.get();
+        nfis[nfi] = sub_id;
+        self.last_nonfree_ids.set(nfis);
+        ValidEntityID::from_parts(domain, sub_id).unwrap()
+    }
+
+    pub fn add_new_entity(&mut self, domain: EntityDomain) -> ValidEntityID {
+        let id = self.allocate_id(domain);
         let iret = self.entities.insert(id, Entity::new(id));
         assert!(iret.is_none());
         id
@@ -309,14 +308,56 @@ impl ECS {
         let id = ValidEntityID::from_raw(raw_id).ok_or(())?;
         let sub_id = id.sub_id();
         let nfi = id.domain().number();
-        if self.last_nonfree_ids[nfi] < sub_id {
-            self.last_nonfree_ids[nfi] = sub_id;
+        if self.last_nonfree_ids.get()[nfi] < sub_id {
+            self.last_nonfree_ids.get_mut()[nfi] = sub_id;
         }
         if self.entities.contains_key(&id) {
             Err(())
         } else {
             self.entities.insert(id, Entity::new(id));
             Ok(id)
+        }
+    }
+
+    fn add_entity_with_preallocated_id(&mut self, id: ValidEntityID) -> ValidEntityID {
+        self.add_entity_with_id(id.u64()).unwrap()
+    }
+
+    pub fn delete_entity(&mut self, id: ValidEntityID) {
+        let ent = self.entities.remove(&id).unwrap();
+        if let Some(ComponentId(cid, _)) = ent.physics {
+            self.physicss.remove(cid);
+        }
+        if let Some(ComponentId(cid, _)) = ent.location {
+            self.locations.remove(cid);
+        }
+        if let Some(ComponentId(cid, _)) = ent.debug_info {
+            self.debug_infos.remove(cid);
+        }
+        if let Some(ComponentId(cid, _)) = ent.load_anchor {
+            self.load_anchors.remove(cid);
+        }
+    }
+
+    pub fn apply_entity_changes(&mut self, changes: &[EntityChange]) {
+        for change in changes {
+            let eid = match change.kind {
+                EntityChangeKind::NewEntity(id) => self.add_entity_with_preallocated_id(id),
+                EntityChangeKind::UpdateEntity(id) => id,
+                EntityChangeKind::DeleteEntity(id) => {
+                    if self.entities.contains_key(&id) {
+                        self.delete_entity(id);
+                    }
+                    continue;
+                }
+            };
+            if !self.entities.contains_key(&eid) {
+                continue;
+            }
+            self.change_component(eid, change.location.clone());
+            self.change_component(eid, change.physics.clone());
+            self.change_component(eid, change.debug_info.clone());
+            self.change_component(eid, change.load_anchor.clone());
         }
     }
 }
@@ -326,8 +367,10 @@ pub trait ECSHandler<C: Component> {
     fn get_component(&self, e: ValidEntityID) -> Option<&C>;
     fn get_component_mut(&mut self, e: ValidEntityID) -> Option<&mut C>;
     fn set_component(&mut self, e: ValidEntityID, c: C);
-    fn iter(&self) -> std::slice::Iter<C>;
-    fn iter_mut(&mut self) -> std::slice::IterMut<C>;
+    fn remove_component(&mut self, e: ValidEntityID);
+    fn change_component(&mut self, e: ValidEntityID, change: Change<C>);
+    fn iter(&self) -> SparseVecIter<C>;
+    fn iter_mut(&mut self) -> SparseVecIterMut<C>;
 }
 
 macro_rules! impl_ecs_fns {
@@ -348,29 +391,59 @@ macro_rules! impl_ecs_fns {
                 cid.map(move |i| &mut self.$plural_name[i.0])
             }
 
-            fn iter(&self) -> std::slice::Iter<$t> {
+            fn iter(&self) -> SparseVecIter<$t> {
                 self.$plural_name.iter()
             }
 
-            fn iter_mut(&mut self) -> std::slice::IterMut<$t> {
+            fn iter_mut(&mut self) -> SparseVecIterMut<$t> {
                 self.$plural_name.iter_mut()
             }
 
             fn set_component(&mut self, e: ValidEntityID, c: $t) {
-                let cid = self
-                    .entities
-                    .get(&e)
-                    .clone()
-                    .and_then(|e| e.$snake_name.clone());
+                let cid = self.entities.get(&e).and_then(|e| e.$snake_name);
                 match cid {
                     Some(cid) => {
                         self.$plural_name[cid.0] = c;
                     }
                     None => {
-                        let cid = ComponentId::new(self.$plural_name.len());
-                        self.$plural_name.push(c);
+                        let cid = ComponentId::new(self.$plural_name.add(c));
                         self.entities.get_mut(&e).unwrap().$snake_name = Some(cid);
                     }
+                }
+            }
+
+            fn remove_component(&mut self, e: ValidEntityID) {
+                let cid = self.entities.get(&e).and_then(|e| e.$snake_name);
+                match cid {
+                    Some(cidv) => {
+                        self.$plural_name.remove(cidv.0);
+                        self.entities.get_mut(&e).unwrap().$snake_name = None;
+                    }
+                    None => {
+                        panic!(
+                            "Trying to remove non-existing component {} on entity {:?}",
+                            <$t>::name(),
+                            e
+                        );
+                    }
+                }
+            }
+
+            fn change_component(&mut self, e: ValidEntityID, change: Change<$t>) {
+                let old_value: Option<&$t> = self.get_component(e);
+                if change.is_valid(old_value) {
+                    let old_some = old_value.is_some();
+                    change.apply_with(|new_value| {
+                        match (old_some, new_value) {
+                            (false, None) => {} // no-op
+                            (_, Some(nc)) => {
+                                self.set_component(e, nc);
+                            } // set
+                            (true, None) => {
+                                <Self as ECSHandler<$t>>::remove_component(self, e);
+                            } // delete
+                        };
+                    })
                 }
             }
         }

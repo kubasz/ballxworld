@@ -751,7 +751,7 @@ impl VoxelRenderer {
         let player_pos;
         let mview = {
             let client = fctx.client_world;
-            let entities = world.ecs().read();
+            let entities = world.ecs();
             let lp_loc: &CLocation = entities.get_component(client.local_player).unwrap();
             player_pos = lp_loc.position;
             let player_ang = lp_loc.orientation;
