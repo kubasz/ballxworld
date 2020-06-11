@@ -130,7 +130,16 @@ pub fn client_main() {
 
     let mut event_pump = sdl_ctx.event_pump().unwrap();
 
-    let i_place = vxreg.get_definition_from_name("core:diamond_ore").unwrap();
+    let i_placeable = [
+        vxreg.get_definition_from_name("core:grass").unwrap(),
+        vxreg.get_definition_from_name("core:snow_grass").unwrap(),
+        vxreg.get_definition_from_name("core:dirt").unwrap(),
+        vxreg.get_definition_from_name("core:stone").unwrap(),
+        vxreg.get_definition_from_name("core:diamond_ore").unwrap(),
+        vxreg.get_definition_from_name("core:water").unwrap(),
+        vxreg.get_definition_from_name("core:table").unwrap(),
+    ];
+    let mut i_place = 4;
     let i_destroy = vxreg.get_definition_from_name("core:void").unwrap();
 
     'running: loop {
@@ -175,7 +184,11 @@ pub fn client_main() {
             if let Some(bpos) = click_pos {
                 click_pos = None;
                 // place block
-                let i_used = if click_place { i_place } else { i_destroy };
+                let i_used = if click_place {
+                    i_placeable[i_place]
+                } else {
+                    i_destroy
+                };
                 let change = world::worldmgr::VoxelChange {
                     bpos,
                     from: click_datum,
@@ -267,15 +280,6 @@ pub fn client_main() {
                 z_index: GUI_Z_LAYER_BACKGROUND + GUI_Z_OFFSET_CONTROL,
                 color: GUI_BLACK,
                 cmd: GuiCmd::FreeText {
-                    text: Cow::from("Hello, BXW!"),
-                    scale: 0.5,
-                    start_at: gv2((0.0, 10.0), (0.0, 10.0)),
-                },
-            });
-            gui.push_cmd(GuiOrderedCmd {
-                z_index: GUI_Z_LAYER_BACKGROUND + GUI_Z_OFFSET_CONTROL,
-                color: GUI_BLACK,
-                cmd: GuiCmd::FreeText {
                     text: Cow::from(format!(
                         "{}\nLookV: {:?}\nLookP: {:?}",
                         DEBUG_DATA.hud_format(),
@@ -283,7 +287,7 @@ pub fn client_main() {
                         look_precise_pos
                     )),
                     scale: 0.5,
-                    start_at: gv2((0.0, 10.0), (0.0, 30.0)),
+                    start_at: gv2((0.0, 10.0), (0.0, 10.0)),
                 },
             });
             gui.push_cmd(GuiOrderedCmd {
@@ -295,6 +299,45 @@ pub fn client_main() {
                         .gui_rect_centered(GuiVec2(GuiCoord(0.5, 0.0), GuiCoord(0.5, 0.0))),
                 },
             });
+            {
+                let bsize = 48.0;
+                let bgap = 10.0;
+                let mut x = -(i_placeable.len() as f32) / 2.0 * (bsize + bgap);
+                let y = -bsize - bgap - 8.0;
+                for (i, &def) in i_placeable.iter().enumerate() {
+                    gui.push_cmd(GuiOrderedCmd {
+                        z_index: GUI_Z_LAYER_HUD + GUI_Z_OFFSET_CONTROL,
+                        color: GUI_WHITE,
+                        cmd: GuiCmd::VoxelPreview {
+                            texture: def.texture_mapping.clone(),
+                            rect: GuiRect::from_xywh(
+                                (0.5, x + bgap / 2.0),
+                                (1.0, y),
+                                (0.0, bsize),
+                                (0.0, bsize),
+                            ),
+                        },
+                    });
+                    gui.push_cmd(GuiOrderedCmd {
+                        z_index: GUI_Z_LAYER_HUD + GUI_Z_OFFSET_BG,
+                        color: GUI_WHITE,
+                        cmd: GuiCmd::Rectangle {
+                            style: if i == i_place {
+                                GuiControlStyle::Window
+                            } else {
+                                GuiControlStyle::Button
+                            },
+                            rect: GuiRect::from_xywh(
+                                (0.5, x),
+                                (1.0, y - bgap / 2.0),
+                                (0.0, bsize + bgap),
+                                (0.0, bsize + bgap),
+                            ),
+                        },
+                    });
+                    x += bsize + bgap;
+                }
+            }
             fc.end_region();
             let mut fc = RenderingContext::frame_goto_pass(fc);
             fc.begin_region([0.3, 0.3, 0.8, 1.0], || "vctx.inpass_draw");
@@ -314,6 +357,9 @@ pub fn client_main() {
             input_mgr.process(&mut rctx, event);
         }
         input_mgr.post_events_update(&mut rctx);
+        i_place = ((-input_mgr.input_state.scroller % i_placeable.len() as i32
+            + i_placeable.len() as i32) as usize)
+            % i_placeable.len();
 
         if input_mgr.input_state.requesting_exit {
             input_mgr.input_state.requesting_exit = false;
@@ -379,7 +425,7 @@ pub fn client_main() {
                             .bounding_shape
                             .aabb(lp_loc.position)
                             .inflate(-world::physics::TOUCH_EPSILON);
-                        let voxel_aabb = i_place
+                        let voxel_aabb = i_placeable[i_place]
                             .collision_shape
                             .translate(place_pos.map(|c| c as f64));
                         let intersecting = AABB::intersection(player_aabb, voxel_aabb).is_some();

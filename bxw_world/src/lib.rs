@@ -300,6 +300,54 @@ impl<T> TextureMapping<T> {
             },
         }
     }
+
+    pub fn top(&self) -> &T {
+        use TextureMapping::*;
+        match self {
+            TiledSingle(x) => x,
+            TiledTSB { top, .. } => top,
+        }
+    }
+
+    pub fn front(&self) -> &T {
+        use TextureMapping::*;
+        match self {
+            TiledSingle(x) => x,
+            TiledTSB { side, .. } => side,
+        }
+    }
+
+    pub fn left(&self) -> &T {
+        use TextureMapping::*;
+        match self {
+            TiledSingle(x) => x,
+            TiledTSB { side, .. } => side,
+        }
+    }
+
+    pub fn right(&self) -> &T {
+        use TextureMapping::*;
+        match self {
+            TiledSingle(x) => x,
+            TiledTSB { side, .. } => side,
+        }
+    }
+
+    pub fn back(&self) -> &T {
+        use TextureMapping::*;
+        match self {
+            TiledSingle(x) => x,
+            TiledTSB { side, .. } => side,
+        }
+    }
+
+    pub fn bottom(&self) -> &T {
+        use TextureMapping::*;
+        match self {
+            TiledSingle(x) => x,
+            TiledTSB { bottom, .. } => bottom,
+        }
+    }
 }
 
 #[derive(Clone)]

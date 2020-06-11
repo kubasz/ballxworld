@@ -58,4 +58,18 @@ pub fn register_standard_blocks(vxreg: &mut VoxelRegistry, texmapper: &dyn Fn(&s
         .has_physical_properties()
         .finish()
         .unwrap();
+    vxreg
+        .build_definition()
+        .name("core:table")
+        .texture_names(
+            texmapper,
+            TextureMapping::TiledTSB {
+                top: "table",
+                side: "wood",
+                bottom: "table",
+            },
+        )
+        .has_physical_properties()
+        .finish()
+        .unwrap();
 }

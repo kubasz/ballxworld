@@ -14,6 +14,7 @@ use std::ffi::CString;
 use std::ops::{Add, Neg, Sub};
 use std::sync::Arc;
 use vk_mem as vma;
+use world::TextureMapping;
 
 pub mod z {
     pub const GUI_Z_OFFSET_BG: i32 = 0;
@@ -230,6 +231,13 @@ impl Default for GuiColor {
     }
 }
 
+impl GuiColor {
+    fn rgbmul(self, factor: f32) -> Self {
+        let [r, g, b, a] = self.0;
+        Self([r * factor, g * factor, b * factor, a])
+    }
+}
+
 pub const GUI_WHITE: GuiColor = GuiColor([1.0, 1.0, 1.0, 1.0]);
 pub const GUI_BLACK: GuiColor = GuiColor([0.0, 0.0, 0.0, 1.0]);
 
@@ -243,6 +251,10 @@ pub enum GuiCmd {
         text: Cow<'static, str>,
         scale: f32,
         start_at: GuiVec2,
+    },
+    VoxelPreview {
+        texture: TextureMapping<u32>,
+        rect: GuiRect,
     },
 }
 
@@ -313,11 +325,33 @@ impl GuiVtxWriter {
         self.indxs
             .extend_from_slice(&[idx, idx + 1, idx + 2, idx + 3, u32::max_value()]);
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn put_quad(
+        &mut self,
+        verts: [Vector2<f32>; 4],
+        texture: [Vector2<f32>; 4],
+        texture_z: f32,
+        texselect: i32,
+        color: [f32; 4],
+    ) {
+        let idx = self.verts.len() as u32;
+        // top-left
+        for i in 0..4 {
+            self.verts.push(UiVertex {
+                position: [verts[i].x, verts[i].y],
+                color,
+                texcoord: [texture[i].x, texture[i].y, texture_z],
+                texselect,
+            });
+        }
+        self.indxs
+            .extend_from_slice(&[idx, idx + 1, idx + 2, idx + 3, u32::max_value()]);
+    }
 }
 
 const TEXSELECT_GUI: i32 = 0;
 const TEXSELECT_FONT: i32 = 1;
-#[allow(dead_code)] // TODO: Remove once voxels are rendered in gui
 const TEXSELECT_VOX: i32 = 2;
 
 impl GuiOrderedCmd {
@@ -407,6 +441,57 @@ impl GuiOrderedCmd {
                         color,
                     );
                 });
+            }
+            GuiCmd::VoxelPreview { texture, rect } => {
+                let (tl, br) = rect.to_absolute_from_rctx(rctx);
+                let w = br.x - tl.x;
+                let h = br.y - tl.y;
+                let v_top = tl + vec2(w * 0.6, 0.0);
+                let v_tl = tl + vec2(0.0, h * 0.1);
+                let v_mid = tl + vec2(w * 0.3, h * 0.3);
+                let v_tr = tl + vec2(w, h * 0.15);
+                let v_bl = tl + vec2(0.0, h * 0.65);
+                let v_bot = tl + vec2(w * 0.3, h);
+                let v_br = tl + vec2(w, h * 0.8);
+                // top
+                writer.put_quad(
+                    [v_tl, v_top, v_mid, v_tr],
+                    [
+                        vec2(0.0, 0.0),
+                        vec2(1.0, 0.0),
+                        vec2(0.0, 1.0),
+                        vec2(1.0, 1.0),
+                    ],
+                    *texture.top() as f32,
+                    TEXSELECT_VOX,
+                    self.color.rgbmul(0.9).0,
+                );
+                // left
+                writer.put_quad(
+                    [v_tl, v_mid, v_bl, v_bot],
+                    [
+                        vec2(0.0, 0.0),
+                        vec2(1.0, 0.0),
+                        vec2(0.0, 1.0),
+                        vec2(1.0, 1.0),
+                    ],
+                    *texture.left() as f32,
+                    TEXSELECT_VOX,
+                    self.color.rgbmul(0.8).0,
+                );
+                // front/right
+                writer.put_quad(
+                    [v_mid, v_tr, v_bot, v_br],
+                    [
+                        vec2(0.0, 0.0),
+                        vec2(1.0, 0.0),
+                        vec2(0.0, 1.0),
+                        vec2(1.0, 1.0),
+                    ],
+                    *texture.front() as f32,
+                    TEXSELECT_VOX,
+                    color,
+                );
             }
         }
     }
