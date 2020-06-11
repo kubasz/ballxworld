@@ -3,7 +3,7 @@ use bxw_util::change::Change;
 use bxw_util::collider::AABB;
 use bxw_util::math::*;
 
-pub const PLAYER_WIDTH: f64 = 0.9;
+pub const PLAYER_WIDTH: f64 = 0.6;
 pub const PLAYER_HEIGHT: f64 = 1.95;
 pub const PLAYER_EYE_HEIGHT: f64 = 1.8;
 

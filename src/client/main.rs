@@ -4,11 +4,10 @@
 use crate::client::config::Config;
 use crate::client::input::InputManager;
 use crate::client::render::resources::RenderingResources;
-use crate::client::render::ui::z::{
-    GUI_Z_LAYER_BACKGROUND, GUI_Z_LAYER_CURSOR, GUI_Z_OFFSET_CONTROL,
-};
+use crate::client::render::ui::z::*;
 use crate::client::render::ui::{
-    gv2, GuiCmd, GuiControlStyle, GuiOrderedCmd, GuiRect, GuiRenderer, GUI_BLACK, GUI_WHITE,
+    gv2, GuiCmd, GuiControlStyle, GuiCoord, GuiOrderedCmd, GuiRect, GuiRenderer, GuiVec2,
+    GUI_BLACK, GUI_WHITE,
 };
 use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::client::world::{CameraSettings, ClientWorld};
@@ -288,11 +287,12 @@ pub fn client_main() {
                 },
             });
             gui.push_cmd(GuiOrderedCmd {
-                z_index: GUI_Z_LAYER_CURSOR,
+                z_index: GUI_Z_LAYER_BACKGROUND + GUI_Z_OFFSET_CONTROL,
                 color: GUI_WHITE,
                 cmd: GuiCmd::Rectangle {
                     style: GuiControlStyle::Crosshair,
-                    rect: GuiRect::from_xywh((0.5, -7.0), (0.5, -7.0), (0.0, 14.0), (0.0, 14.0)),
+                    rect: GuiControlStyle::Crosshair
+                        .gui_rect_centered(GuiVec2(GuiCoord(0.5, 0.0), GuiCoord(0.5, 0.0))),
                 },
             });
             fc.end_region();

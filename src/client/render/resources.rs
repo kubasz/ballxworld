@@ -197,7 +197,7 @@ impl RenderingResources {
         // create vulkan image array
         let mut vmalloc = rctx.handles.vmalloc.lock();
         let qfis = [rctx.handles.queues.get_primary_family()];
-        let mip_lvls = (f64::from(idim.0.min(idim.1)).log2().floor() as u32).max(1);
+        let mip_lvls = (f64::from(idim.0.min(idim.1)).log2().floor() as u32 + 1).max(1);
         let img_extent = vk::Extent3D {
             width: idim.0,
             height: idim.1,

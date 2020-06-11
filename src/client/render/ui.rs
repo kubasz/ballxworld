@@ -11,7 +11,7 @@ use bxw_util::*;
 use itertools::zip;
 use std::borrow::Cow;
 use std::ffi::CString;
-use std::ops::Add;
+use std::ops::{Add, Neg, Sub};
 use std::sync::Arc;
 use vk_mem as vma;
 
@@ -31,6 +31,8 @@ pub mod z {
     pub const GUI_Z_LAYER_OVERLAY: i32 = GUI_Z_LAYER_UI_POPUP + GUI_ZFACTOR_LAYER;
     pub const GUI_Z_LAYER_CURSOR: i32 = i32::max_value() - GUI_ZFACTOR_LAYER;
 }
+
+const GUI_ATLAS_DIM: f32 = 128.0;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum GuiControlStyle {
@@ -58,7 +60,9 @@ enum ControlStyleRenderInfo {
 
 impl GuiControlStyle {
     fn render_info(self) -> ControlStyleRenderInfo {
-        let p = |x| (x as f32) / 128.0;
+        fn p(x: i32) -> f32 {
+            (x as f32) / GUI_ATLAS_DIM
+        }
         let p4 = |a, b, c, d| ControlStyleRenderInfo::LRTB([p(a), p(b), p(c), p(d)]);
         let p8 = |a, b, c, d, e, f, g, h| {
             ControlStyleRenderInfo::Box9(
@@ -81,11 +85,32 @@ impl GuiControlStyle {
             GuiControlStyle::Window => p8(50, 59, 73, 82, 0, 9, 23, 32),
         }
     }
+
+    /// Dimensions in pixels of the texture associated with this style
+    pub fn dimensions(self) -> (i32, i32) {
+        let ri = self.render_info();
+        fn p(x: f32) -> i32 {
+            (x * GUI_ATLAS_DIM).round() as i32
+        }
+        match ri {
+            ControlStyleRenderInfo::LRTB([l, r, t, b]) => (p(r - l), p(b - t)),
+            ControlStyleRenderInfo::Box9(_, [lm, rm, tm, bm]) => (lm + rm + 2, tm + bm + 2),
+        }
+    }
+
+    pub fn gui_rect_centered(self, center: GuiVec2) -> GuiRect {
+        let (w, h) = self.dimensions();
+        let hoff = GuiVec2(GuiCoord(0.0, (w / 2) as f32), GuiCoord(0.0, (h / 2) as f32));
+        GuiRect {
+            top_left: center - hoff,
+            bottom_right: center + hoff,
+        }
+    }
 }
 
 /// A single gui coordinate with relative and absolute positioning parts
 #[derive(Copy, Clone, Default, Debug, PartialEq)]
-pub struct GuiCoord(f32, f32);
+pub struct GuiCoord(pub f32, pub f32);
 
 impl GuiCoord {
     pub fn to_absolute_from_dim(self, dimension: u32) -> f32 {
@@ -96,18 +121,55 @@ impl GuiCoord {
     }
 }
 
+impl Add for GuiCoord {
+    type Output = GuiCoord;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0, self.1 + rhs.1)
+    }
+}
+
+impl Sub for GuiCoord {
+    type Output = GuiCoord;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0, self.1 - rhs.1)
+    }
+}
+
+impl Neg for GuiCoord {
+    type Output = GuiCoord;
+
+    fn neg(self) -> Self::Output {
+        Self(-self.0, -self.1)
+    }
+}
+
 /// A gui 2D position/size vector
 #[derive(Copy, Clone, Default, Debug, PartialEq)]
-pub struct GuiVec2(GuiCoord, GuiCoord);
+pub struct GuiVec2(pub GuiCoord, pub GuiCoord);
 
 impl Add for GuiVec2 {
     type Output = GuiVec2;
 
     fn add(self, rhs: Self) -> Self::Output {
-        GuiVec2(
-            GuiCoord(self.0 .0 + rhs.0 .0, self.0 .1 + rhs.0 .1),
-            GuiCoord(self.1 .0 + rhs.1 .0, self.1 .1 + rhs.1 .1),
-        )
+        GuiVec2(self.0 + rhs.0, self.1 + rhs.1)
+    }
+}
+
+impl Sub for GuiVec2 {
+    type Output = GuiVec2;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        GuiVec2(self.0 - rhs.0, self.1 - rhs.1)
+    }
+}
+
+impl Neg for GuiVec2 {
+    type Output = GuiVec2;
+
+    fn neg(self) -> Self::Output {
+        GuiVec2(-self.0, -self.1)
     }
 }
 
@@ -132,8 +194,8 @@ pub fn gv2(x: (f32, f32), y: (f32, f32)) -> GuiVec2 {
 /// A gui 2D position/size vector
 #[derive(Copy, Clone, Default, Debug, PartialEq)]
 pub struct GuiRect {
-    top_left: GuiVec2,
-    bottom_right: GuiVec2,
+    pub top_left: GuiVec2,
+    pub bottom_right: GuiVec2,
 }
 
 impl GuiRect {
@@ -317,13 +379,13 @@ impl GuiOrderedCmd {
                             }
                         }
                         #[rustfmt::skip]
-                        writer.indxs.extend(
+                            writer.indxs.extend(
                             [0, 4, 1, 5, 2, 6, 3, 7, u32::max_value(),
                                 4, 8, 5, 9, 6, 10, 7, 11, u32::max_value(),
                                 8, 12, 9, 13, 10, 14, 11, 15, u32::max_value(),
                             ]
-                            .iter()
-                            .map(|x| x.saturating_add(idx)),
+                                .iter()
+                                .map(|x| x.saturating_add(idx)),
                         );
                     }
                 }
