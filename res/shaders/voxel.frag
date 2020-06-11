@@ -14,10 +14,17 @@ layout(location = 3) in flat int v_index;
 
 layout(location = 0) out vec4 f_color;
 
+const float sel_border = 0.02;
+
 void main() {
     vec4 base_color = v_color * texture(voxel_tarray, v_texcoord);
     if (push_constants.highlight_index == v_index) {
-        f_color = clamp(base_color*1.5, 0.0, 1.0);
+        //f_color = clamp(base_color*1.1, 0.0, 1.0);
+        if (v_texcoord.x < sel_border || v_texcoord.x > 1.0-sel_border || v_texcoord.y < sel_border || v_texcoord.y > 1.0-sel_border) {
+            f_color = vec4(0, 0, 0, 1);
+        } else {
+            f_color = base_color;
+        }
     } else {
         f_color = base_color;
     }
