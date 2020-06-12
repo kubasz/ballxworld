@@ -25,8 +25,7 @@ use world::ecs::{CLoadAnchor, CLocation, ECSHandler};
 use world::entities::player::PLAYER_EYE_HEIGHT;
 use world::generation::WorldBlocks;
 use world::worldmgr::*;
-use world::{blockidx_from_blockpos, chunkpos_from_blockpos};
-use world::{ChunkPosition, CHUNK_DIM};
+use world::*;
 
 pub mod vox {
     use crate::offset_of;
@@ -749,11 +748,15 @@ impl VoxelRenderer {
         let (mut hichunk, mut hiidx) = (vec3(0, 0, 0), -1);
         let fwd: Vector3<f32>;
         let player_pos;
+        let player_cpos;
+        let player_incpos;
         let mview = {
             let client = fctx.client_world;
             let entities = world.ecs();
             let lp_loc: &CLocation = entities.get_component(client.local_player).unwrap();
             player_pos = lp_loc.position;
+            player_cpos = chunkpos_from_blockpos(blockpos_from_worldpos(player_pos));
+            player_incpos = player_pos - (player_cpos * CHUNK_DIM as i32).map(|c| c as f64);
             let player_ang = lp_loc.orientation;
             let mview: Matrix4<f32>;
             let mrot: Matrix3<f32>;
@@ -762,13 +765,12 @@ impl VoxelRenderer {
                     mrot = glm::quat_to_mat3(&player_ang).map(|c| c as f32);
                     mview = mrot.to_homogeneous()
                         * glm::translation(
-                            &-(player_pos.map(|c| c as f32)
+                            &-(player_incpos.map(|c| c as f32)
                                 + vec3(0.0, PLAYER_EYE_HEIGHT as f32 / 2.0, 0.0)),
                         );
                 }
             }
 
-            use world::raycast;
             fwd = mrot.transpose() * vec3(0.0, 0.0, 1.0);
             let rc = raycast::RaycastQuery::new_directed(
                 player_pos + vec3(0.0, PLAYER_EYE_HEIGHT / 2.0, 0.0),
@@ -861,8 +863,8 @@ impl VoxelRenderer {
             if chunk.icount == 0 {
                 continue;
             }
-            let ch_offset = pos.map(|x| (x as f32) * (CHUNK_DIM as f32));
-            let rpos = ch_offset - (player_pos.map(|c| c as f32) - fwd * (CHUNK_DIM as f32));
+            let ch_offset = (pos - player_cpos).map(|x| (x as f32) * (CHUNK_DIM as f32));
+            let rpos = ch_offset - (player_incpos.map(|c| c as f32) - fwd * (CHUNK_DIM as f32));
             let ang = fwd.dot(&rpos);
             if ang < 0.0 && rpos.norm_squared() > always_dist {
                 continue;

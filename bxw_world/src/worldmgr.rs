@@ -560,8 +560,12 @@ fn recalculate_load_deltas(load_data: Arc<Mutex<LoadData>>) {
     if old_cap < new_cap {
         load_data.remaining_deltas.reserve(new_cap - old_cap);
     }
-    let mut unload_iter = chunks_to_unload.into_iter();
-    let mut load_iter = chunks_to_load.into_iter();
+    let mut unload_iter = chunks_to_unload
+        .into_iter()
+        .sorted_by_key(|(_, (_, dist))| *dist);
+    let mut load_iter = chunks_to_load
+        .into_iter()
+        .sorted_by_key(|(_, (_, dist))| dist.get());
     let mut cont = true;
     while cont {
         cont = false;
@@ -587,7 +591,6 @@ fn recalculate_load_deltas(load_data: Arc<Mutex<LoadData>>) {
             });
         }
     }
-    load_data.remaining_deltas.sort();
     load_data.remaining_deltas.reverse();
     load_data.busy.store(false, Ordering::SeqCst);
 }

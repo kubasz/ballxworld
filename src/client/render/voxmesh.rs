@@ -94,17 +94,17 @@ pub fn mesh_from_chunk(
         }
     };
 
-    for side in &SIDES {
-        for (cell_y, cell_z, cell_x) in iproduct!(0..CHUNK_DIM, 0..CHUNK_DIM, 0..CHUNK_DIM) {
+    for (cell_y, cell_z, cell_x) in iproduct!(0..CHUNK_DIM, 0..CHUNK_DIM, 0..CHUNK_DIM) {
+        let ipos = vec3(cell_x as i32, cell_y as i32, cell_z as i32);
+        let vidx = blockidx_from_blockpos(ipos);
+        let vdef = vdefs[get_block_idx(ipos)];
+
+        if !vdef.has_mesh {
+            continue;
+        }
+
+        for side in &SIDES {
             let ioffset = Vector3::from_row_slice(&side.ioffset);
-
-            let ipos = vec3(cell_x as i32, cell_y as i32, cell_z as i32);
-            let vidx = blockidx_from_blockpos(ipos);
-            let vdef = vdefs[get_block_idx(ipos)];
-
-            if !vdef.has_mesh {
-                continue;
-            }
 
             // hidden face removal
             let touchpos = ipos + ioffset;
@@ -221,7 +221,7 @@ const SIDES: [CubeSide; 6] = [
         ],
         corners: [[1, -1, -1], [1, 1, -1], [1, 1, 1], [1, -1, 1]],
         ioffset: [1, 0, 0],
-        texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        texcs: [0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
     },
     // x- -> "left"
     CubeSide {
@@ -230,25 +230,25 @@ const SIDES: [CubeSide; 6] = [
         ],
         corners: [[-1, -1, 1], [-1, 1, 1], [-1, 1, -1], [-1, -1, -1]],
         ioffset: [-1, 0, 0],
-        texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        texcs: [0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
     },
-    // y+ -> "bottom"
+    // y+ -> "top"
     CubeSide {
         verts: [
             -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5,
         ],
         corners: [[-1, 1, -1], [-1, 1, 1], [1, 1, 1], [1, 1, -1]],
         ioffset: [0, 1, 0],
-        texcs: [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0],
+        texcs: [1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0],
     },
-    // y- -> "top"
+    // y- -> "bottom"
     CubeSide {
         verts: [
             0.5, -0.5, -0.5, 0.5, -0.5, 0.5, -0.5, -0.5, 0.5, -0.5, -0.5, -0.5,
         ],
         corners: [[1, -1, -1], [1, -1, 1], [-1, -1, 1], [-1, -1, -1]],
         ioffset: [0, -1, 0],
-        texcs: [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0],
+        texcs: [0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
     },
     // z+ -> "back"
     CubeSide {
@@ -257,7 +257,7 @@ const SIDES: [CubeSide; 6] = [
         ],
         corners: [[1, -1, 1], [1, 1, 1], [-1, 1, 1], [-1, -1, 1]],
         ioffset: [0, 0, 1],
-        texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        texcs: [0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
     },
     // z- -> "front"
     CubeSide {
@@ -266,6 +266,6 @@ const SIDES: [CubeSide; 6] = [
         ],
         corners: [[-1, -1, -1], [-1, 1, -1], [1, 1, -1], [1, -1, -1]],
         ioffset: [0, 0, -1],
-        texcs: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        texcs: [0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
     },
 ];
