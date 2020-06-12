@@ -39,7 +39,7 @@ pub fn is_chunk_trivial(chunk: &VChunk, registry: &VoxelRegistry) -> bool {
 pub fn mesh_from_chunk(
     registry: &VoxelRegistry,
     chunks: &[Arc<VChunk>],
-    texture_dim: (u32, u32),
+    _texture_dim: (u32, u32),
 ) -> Option<ChunkBuffers> {
     assert_eq!(chunks.len(), 27);
     let premesh = Instant::now();
@@ -80,19 +80,6 @@ pub fn mesh_from_chunk(
 
     let mut vbuf: Vec<VoxelVertex> = Vec::new();
     let mut ibuf: Vec<u32> = Vec::new();
-
-    // half-pixel offsets for texels
-    let hpo_x = 0.5 / (texture_dim.0 as f32);
-    let hpo_y = 0.5 / (texture_dim.1 as f32);
-    let apply_hpo = |tc: f32, hpo: f32| {
-        if (tc - 0.0).abs() < 1.0e-6 {
-            hpo
-        } else if (tc - 1.0).abs() < 1.0e-6 {
-            1.0f32 - hpo
-        } else {
-            tc
-        }
-    };
 
     for (cell_y, cell_z, cell_x) in iproduct!(0..CHUNK_DIM, 0..CHUNK_DIM, 0..CHUNK_DIM) {
         let ipos = vec3(cell_x as i32, cell_y as i32, cell_z as i32);
@@ -186,8 +173,8 @@ pub fn mesh_from_chunk(
                         1.0,
                     ],
                     texcoord: [
-                        apply_hpo(side.texcs[t * 2], hpo_x),
-                        apply_hpo(side.texcs[t * 2 + 1], hpo_y),
+                        side.texcs[t * 2],
+                        side.texcs[t * 2 + 1],
                         texid as f32,
                     ],
                     index: vidx as i32,
