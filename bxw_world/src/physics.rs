@@ -37,7 +37,7 @@ fn drag_force(loc: &CLocation, velocity: Vector3<f64>) -> Vector3<f64> {
         BoundingShape::Point { .. } => 0.05,
         BoundingShape::AxisAlignedBox(aabb) => aabb.size().x * aabb.size().y,
     };
-    velocity.component_mul(&velocity) * AIR_FRICTION_SQ * area_est
+    -velocity.component_mul(&velocity.abs()) * AIR_FRICTION_SQ * area_est
 }
 
 pub fn world_physics_tick(world: &mut World) {
@@ -74,7 +74,7 @@ pub fn world_physics_tick(world: &mut World) {
         new_phys.against_wall = determine_wall_contacts(old_aabb, world, &voxels);
 
         // air friction
-        new_accel -= drag_force(&new_loc, old_vel) / mass;
+        new_accel += drag_force(&new_loc, old_vel) / mass;
         // gravity
         new_accel += vec3(0.0, -GRAVITY_ACCEL, 0.0);
         // control impulse

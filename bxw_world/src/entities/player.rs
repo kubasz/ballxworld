@@ -3,9 +3,9 @@ use bxw_util::change::Change;
 use bxw_util::collider::AABB;
 use bxw_util::math::*;
 
-pub const PLAYER_WIDTH: f64 = 0.6;
-pub const PLAYER_HEIGHT: f64 = 1.95;
-pub const PLAYER_EYE_HEIGHT: f64 = 1.8;
+pub const PLAYER_WIDTH: f64 = 1.2;
+pub const PLAYER_HEIGHT: f64 = 3.90;
+pub const PLAYER_EYE_HEIGHT: f64 = 3.80;
 
 pub fn create_player(ecs: &ECS, local: bool, name: String) -> EntityChange {
     let domain = if local {
