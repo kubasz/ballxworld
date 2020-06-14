@@ -7,13 +7,8 @@ pub fn register_standard_blocks(vxreg: &mut VoxelRegistry, texmapper: &dyn Fn(&s
         .name("core:grass")
         .texture_names(
             texmapper,
-            TextureMapping::TiledTSB {
-                top: "grass_top",
-                side: "dirt_grass",
-                bottom: "dirt",
-            },
+            TextureMapping::new_tsb("grass_top", "dirt_grass", "dirt"),
         )
-        .has_physical_properties()
         .finish()
         .unwrap();
     vxreg
@@ -21,55 +16,38 @@ pub fn register_standard_blocks(vxreg: &mut VoxelRegistry, texmapper: &dyn Fn(&s
         .name("core:snow_grass")
         .texture_names(
             texmapper,
-            TextureMapping::TiledTSB {
-                top: "snow",
-                side: "dirt_snow",
-                bottom: "dirt",
-            },
+            TextureMapping::new_tsb("snow", "dirt_snow", "dirt"),
         )
-        .has_physical_properties()
         .finish()
         .unwrap();
     vxreg
         .build_definition()
         .name("core:dirt")
-        .texture_names(texmapper, TextureMapping::TiledSingle("dirt"))
-        .has_physical_properties()
+        .texture_names(texmapper, TextureMapping::new_single("dirt"))
         .finish()
         .unwrap();
     vxreg
         .build_definition()
         .name("core:stone")
-        .texture_names(texmapper, TextureMapping::TiledSingle("stone"))
-        .has_physical_properties()
+        .texture_names(texmapper, TextureMapping::new_single("stone"))
         .finish()
         .unwrap();
     vxreg
         .build_definition()
         .name("core:diamond_ore")
-        .texture_names(texmapper, TextureMapping::TiledSingle("stone_diamond"))
-        .has_physical_properties()
+        .texture_names(texmapper, TextureMapping::new_single("stone_diamond"))
         .finish()
         .unwrap();
     vxreg
         .build_definition()
         .name("core:water")
-        .texture_names(texmapper, TextureMapping::TiledSingle("water"))
-        .has_physical_properties()
+        .texture_names(texmapper, TextureMapping::new_single("water"))
         .finish()
         .unwrap();
     vxreg
         .build_definition()
         .name("core:table")
-        .texture_names(
-            texmapper,
-            TextureMapping::TiledTSB {
-                top: "table",
-                side: "wood",
-                bottom: "table",
-            },
-        )
-        .has_physical_properties()
+        .texture_names(texmapper, TextureMapping::new_tsb("table", "wood", "table"))
         .finish()
         .unwrap();
 }

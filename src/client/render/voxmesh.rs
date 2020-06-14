@@ -28,7 +28,7 @@ pub fn is_chunk_trivial(chunk: &VChunk, registry: &VoxelRegistry) -> bool {
     let VChunkData::QuickCompressed { vox } = &chunk.data;
     if vox.len() == 3 && vox[0] == vox[1] {
         let vdef = registry.get_definition_from_id(VoxelDatum { id: vox[0] });
-        if !vdef.has_mesh {
+        if vdef.mesh.is_none() {
             return true;
         }
     }
@@ -86,7 +86,7 @@ pub fn mesh_from_chunk(
         let vidx = blockidx_from_blockpos(ipos);
         let vdef = vdefs[get_block_idx(ipos)];
 
-        if !vdef.has_mesh {
+        if vdef.mesh.is_none() {
             continue;
         }
 
@@ -96,7 +96,7 @@ pub fn mesh_from_chunk(
             // hidden face removal
             let touchpos = ipos + ioffset;
             let tdef = vdefs[get_block_idx(touchpos)];
-            if tdef.has_mesh {
+            if tdef.mesh.is_some() {
                 continue;
             }
 
@@ -108,7 +108,7 @@ pub fn mesh_from_chunk(
                 let (ao_s1, ao_s2, ao_c): (bool, bool, bool);
                 {
                     let p_c = ipos + corner;
-                    ao_c = vdefs[get_block_idx(p_c)].has_mesh;
+                    ao_c = vdefs[get_block_idx(p_c)].mesh.is_some();
                     let (p_s1, p_s2);
                     if ioffset.x != 0 {
                         // y,z sides
@@ -123,8 +123,8 @@ pub fn mesh_from_chunk(
                         p_s1 = ipos + vec3(corner.x, 0, corner.z);
                         p_s2 = ipos + vec3(0, corner.y, corner.z);
                     }
-                    ao_s1 = vdefs[get_block_idx(p_s1)].has_mesh;
-                    ao_s2 = vdefs[get_block_idx(p_s2)].has_mesh;
+                    ao_s1 = vdefs[get_block_idx(p_s1)].mesh.is_some();
+                    ao_s2 = vdefs[get_block_idx(p_s2)].mesh.is_some();
                 }
                 let ao = if ao_s1 && ao_s2 {
                     3
@@ -145,25 +145,9 @@ pub fn mesh_from_chunk(
                     ipos.z as f32 + side.verts[t * 3 + 2],
                     1.0,
                 ];
-                let texid;
-                match &vdef.texture_mapping {
-                    TextureMapping::TiledSingle(t) => {
-                        texid = *t;
-                    }
-                    TextureMapping::TiledTSB {
-                        top,
-                        side: tside,
-                        bottom,
-                    } => {
-                        if ioffset.y == 1 {
-                            texid = *top;
-                        } else if ioffset.y == -1 {
-                            texid = *bottom;
-                        } else {
-                            texid = *tside;
-                        }
-                    }
-                }
+                let texid = *vdef
+                    .texture_mapping
+                    .at_direction(Direction::try_from_vec(ioffset).unwrap());
                 vbuf.push(VoxelVertex {
                     position,
                     color: [
@@ -172,11 +156,7 @@ pub fn mesh_from_chunk(
                         vdef.debug_color[2] * ao,
                         1.0,
                     ],
-                    texcoord: [
-                        side.texcs[t * 2],
-                        side.texcs[t * 2 + 1],
-                        texid as f32,
-                    ],
+                    texcoord: [side.texcs[t * 2], side.texcs[t * 2 + 1], texid as f32],
                     index: vidx as i32,
                 });
             }

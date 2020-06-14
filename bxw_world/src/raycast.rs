@@ -134,7 +134,7 @@ impl<'q> RaycastQuery<'q> {
                     let bidx = blockidx_from_blockpos(bpos);
                     let datum = chunk.blocks_yzx[bidx];
                     let vdef = voxels.voxel_registry.get_definition_from_id(datum);
-                    if vdef.has_hitbox {
+                    if vdef.selection_shape.is_some() {
                         let block_position = bpos + cpos * ichunk_dim;
                         let intersect_pos = self.start_point + direction * t_total;
                         let distance = (intersect_pos - self.start_point)

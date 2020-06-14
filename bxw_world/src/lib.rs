@@ -277,76 +277,47 @@ impl VChunk {
 type VoxelId = u32;
 
 #[derive(Clone, Debug)]
-pub enum TextureMapping<T> {
-    TiledSingle(T),
-    TiledTSB { top: T, side: T, bottom: T },
+pub struct TextureMapping<T> {
+    mapping: [T; 6],
 }
 
 impl Default for TextureMapping<u32> {
     fn default() -> Self {
-        TextureMapping::TiledSingle(0)
+        Self { mapping: [0; 6] }
+    }
+}
+
+impl<T: Clone> TextureMapping<T> {
+    pub fn new_single(t: T) -> Self {
+        Self {
+            mapping: [t.clone(), t.clone(), t.clone(), t.clone(), t.clone(), t],
+        }
+    }
+
+    pub fn new_tsb(top: T, side: T, bottom: T) -> Self {
+        Self {
+            mapping: [side.clone(), side.clone(), bottom, top, side.clone(), side],
+        }
     }
 }
 
 impl<T> TextureMapping<T> {
+    pub fn new(by_direction: [T; 6]) -> Self {
+        Self {
+            mapping: by_direction,
+        }
+    }
+
     pub fn map<U, F: Fn(T) -> U>(self, f: F) -> TextureMapping<U> {
-        use TextureMapping::*;
-        match self {
-            TiledSingle(a) => TiledSingle(f(a)),
-            TiledTSB { top, side, bottom } => TiledTSB {
-                top: f(top),
-                side: f(side),
-                bottom: f(bottom),
-            },
+        let Self { mapping: m } = self;
+        let [m0, m1, m2, m3, m4, m5] = m;
+        TextureMapping {
+            mapping: [f(m0), f(m1), f(m2), f(m3), f(m4), f(m5)],
         }
     }
 
-    pub fn top(&self) -> &T {
-        use TextureMapping::*;
-        match self {
-            TiledSingle(x) => x,
-            TiledTSB { top, .. } => top,
-        }
-    }
-
-    pub fn front(&self) -> &T {
-        use TextureMapping::*;
-        match self {
-            TiledSingle(x) => x,
-            TiledTSB { side, .. } => side,
-        }
-    }
-
-    pub fn left(&self) -> &T {
-        use TextureMapping::*;
-        match self {
-            TiledSingle(x) => x,
-            TiledTSB { side, .. } => side,
-        }
-    }
-
-    pub fn right(&self) -> &T {
-        use TextureMapping::*;
-        match self {
-            TiledSingle(x) => x,
-            TiledTSB { side, .. } => side,
-        }
-    }
-
-    pub fn back(&self) -> &T {
-        use TextureMapping::*;
-        match self {
-            TiledSingle(x) => x,
-            TiledTSB { side, .. } => side,
-        }
-    }
-
-    pub fn bottom(&self) -> &T {
-        use TextureMapping::*;
-        match self {
-            TiledSingle(x) => x,
-            TiledTSB { bottom, .. } => bottom,
-        }
+    pub fn at_direction(&self, dir: Direction) -> &T {
+        &self.mapping[dir.to_signed_axis_index()]
     }
 }
 
@@ -355,10 +326,9 @@ pub struct VoxelDefinition {
     pub id: VoxelId,
     /// eg. core:air
     pub name: String,
-    pub has_mesh: bool,
-    pub has_collisions: bool,
-    pub has_hitbox: bool,
-    pub collision_shape: AABB,
+    pub mesh: VoxelMesh,
+    pub collision_shape: Option<AABB>,
+    pub selection_shape: Option<AABB>,
     pub debug_color: [f32; 3],
     pub texture_mapping: TextureMapping<u32>,
 }
@@ -371,8 +341,32 @@ impl VoxelDefinition {
     pub fn id(&self) -> u32 {
         self.id
     }
+}
 
-    pub fn intersect_ray() -> Option<Vector3<f32>> {
-        None
+#[derive(Clone, Debug, PartialEq)]
+pub enum VoxelMesh {
+    None,
+    CubeAndSlopes,
+}
+
+impl Default for VoxelMesh {
+    fn default() -> Self {
+        VoxelMesh::None
+    }
+}
+
+impl VoxelMesh {
+    pub fn is_none(&self) -> bool {
+        match self {
+            VoxelMesh::None => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_some(&self) -> bool {
+        match self {
+            VoxelMesh::None => false,
+            _ => true,
+        }
     }
 }

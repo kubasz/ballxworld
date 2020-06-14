@@ -443,6 +443,7 @@ impl GuiOrderedCmd {
                 });
             }
             GuiCmd::VoxelPreview { texture, rect } => {
+                use bxw_util::collider::*;
                 let (tl, br) = rect.to_absolute_from_rctx(rctx);
                 let w = br.x - tl.x;
                 let h = br.y - tl.y;
@@ -462,7 +463,7 @@ impl GuiOrderedCmd {
                         vec2(0.0, 1.0),
                         vec2(1.0, 1.0),
                     ],
-                    *texture.top() as f32,
+                    *texture.at_direction(DIR_TOP) as f32,
                     TEXSELECT_VOX,
                     self.color.rgbmul(0.9).0,
                 );
@@ -475,7 +476,7 @@ impl GuiOrderedCmd {
                         vec2(0.0, 1.0),
                         vec2(1.0, 1.0),
                     ],
-                    *texture.left() as f32,
+                    *texture.at_direction(DIR_LEFT) as f32,
                     TEXSELECT_VOX,
                     self.color.rgbmul(0.8).0,
                 );
@@ -488,7 +489,7 @@ impl GuiOrderedCmd {
                         vec2(0.0, 1.0),
                         vec2(1.0, 1.0),
                     ],
-                    *texture.front() as f32,
+                    *texture.at_direction(DIR_FRONT) as f32,
                     TEXSELECT_VOX,
                     color,
                 );

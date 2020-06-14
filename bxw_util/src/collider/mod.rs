@@ -3,13 +3,26 @@ use crate::math::*;
 #[repr(i32)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Direction {
+    /// Left
     XMinus = 0,
+    /// Right
     XPlus,
+    /// Bottom
     YMinus,
+    /// Top
     YPlus,
+    /// Front
     ZMinus,
+    /// Back
     ZPlus,
 }
+
+pub const DIR_LEFT: Direction = Direction::XMinus;
+pub const DIR_RIGHT: Direction = Direction::XPlus;
+pub const DIR_BOTTOM: Direction = Direction::YMinus;
+pub const DIR_TOP: Direction = Direction::YPlus;
+pub const DIR_FRONT: Direction = Direction::ZMinus;
+pub const DIR_BACK: Direction = Direction::ZPlus;
 
 pub static ALL_DIRS: [Direction; 6] = {
     use Direction::*;

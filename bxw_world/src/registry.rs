@@ -1,4 +1,4 @@
-use crate::{TextureMapping, VoxelDatum, VoxelDefinition, VoxelId};
+use crate::{TextureMapping, VoxelDatum, VoxelDefinition, VoxelId, VoxelMesh};
 use bxw_util::collider::AABB;
 use bxw_util::lazy_static::lazy_static;
 use bxw_util::math::*;
@@ -16,10 +16,9 @@ pub struct VoxelDefinitionBuilder<'a> {
     registry: &'a mut VoxelRegistry,
     id: VoxelId,
     name: String,
-    has_mesh: bool,
-    has_collisions: bool,
-    has_hitbox: bool,
-    collision_shape: AABB,
+    mesh: VoxelMesh,
+    collision_shape: Option<AABB>,
+    selection_shape: Option<AABB>,
     debug_color: [f32; 3],
     texture_mapping: TextureMapping<u32>,
 }
@@ -36,25 +35,18 @@ impl<'a> VoxelDefinitionBuilder<'a> {
         self
     }
 
-    pub fn has_mesh(mut self) -> Self {
-        self.has_mesh = true;
+    pub fn set_mesh(mut self, mesh: VoxelMesh) -> Self {
+        self.mesh = mesh;
         self
     }
 
-    pub fn has_collisions(mut self) -> Self {
-        self.has_collisions = true;
+    pub fn set_collision_shape(mut self, shape: Option<AABB>) -> Self {
+        self.collision_shape = shape;
         self
     }
 
-    pub fn has_hitbox(mut self) -> Self {
-        self.has_hitbox = true;
-        self
-    }
-
-    pub fn has_physical_properties(mut self) -> Self {
-        self.has_mesh = true;
-        self.has_collisions = true;
-        self.has_hitbox = true;
+    pub fn set_selection_shape(mut self, shape: Option<AABB>) -> Self {
+        self.selection_shape = shape;
         self
     }
 
@@ -67,10 +59,9 @@ impl<'a> VoxelDefinitionBuilder<'a> {
         let def = Arc::new(VoxelDefinition {
             id: self.id,
             name: self.name,
-            has_mesh: self.has_mesh,
-            has_collisions: self.has_collisions,
-            has_hitbox: self.has_hitbox,
+            mesh: self.mesh,
             collision_shape: self.collision_shape,
+            selection_shape: self.selection_shape,
             debug_color: self.debug_color,
             texture_mapping: self.texture_mapping,
         });
@@ -105,6 +96,9 @@ impl Default for VoxelRegistry {
         reg.build_definition()
             .name("core:void")
             .debug_color(0.0, 0.0, 0.0)
+            .set_mesh(VoxelMesh::None)
+            .set_collision_shape(None)
+            .set_selection_shape(None)
             .finish()
             .unwrap();
         reg
@@ -125,13 +119,11 @@ impl VoxelRegistry {
             },
             name: String::default(),
             registry: self,
-            has_mesh: false,
-            has_collisions: false,
-            has_hitbox: false,
-            collision_shape: *VOXEL_CUBE_SHAPE,
-
+            mesh: VoxelMesh::CubeAndSlopes,
+            collision_shape: Some(*VOXEL_CUBE_SHAPE),
+            selection_shape: Some(*VOXEL_CUBE_SHAPE),
             debug_color: [1.0, 1.0, 1.0],
-            texture_mapping: TextureMapping::TiledSingle(0),
+            texture_mapping: TextureMapping::new_single(0),
         }
     }
 

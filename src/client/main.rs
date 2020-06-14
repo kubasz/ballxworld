@@ -417,7 +417,7 @@ pub fn client_main() {
                         click_pos = Some(*position);
                         click_datum = *datum;
                     } else if normal_datum
-                        .map(|d| !vxreg.get_definition_from_id(d).has_hitbox)
+                        .map(|d| vxreg.get_definition_from_id(d).selection_shape.is_none())
                         .unwrap_or(false)
                     {
                         let place_pos = *position + normal.to_vec();
@@ -427,6 +427,7 @@ pub fn client_main() {
                             .inflate(-world::physics::TOUCH_EPSILON);
                         let voxel_aabb = i_placeable[i_place]
                             .collision_shape
+                            .unwrap_or_default()
                             .translate(place_pos.map(|c| c as f64));
                         let intersecting = AABB::intersection(player_aabb, voxel_aabb).is_some();
                         if !intersecting {

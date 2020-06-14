@@ -26,7 +26,7 @@ fn check_suffocation(world: &World, voxels: &WorldBlocks, position: Vector3<f64>
     let bidx = voxels.get_vcache().get_block(world, voxels, bpos);
     if let Some(bidx) = bidx {
         let vdef = voxels.voxel_registry.get_definition_from_id(bidx);
-        vdef.has_hitbox
+        vdef.collision_shape.is_some()
     } else {
         false
     }
@@ -264,10 +264,13 @@ pub fn aabb_voxel_intersection(
         let bidx = vcache.get_block(world, voxels, bpos);
         if let Some(bidx) = bidx {
             let bdef = voxels.voxel_registry.get_definition_from_id(bidx);
-            if !bdef.has_collisions {
+            if bdef.collision_shape.is_none() {
                 continue;
             }
-            let bshape = bdef.collision_shape.translate(bpos.map(|c| c as f64));
+            let bshape = bdef
+                .collision_shape
+                .unwrap()
+                .translate(bpos.map(|c| c as f64));
             match AABB::intersection(entity_aabb, bshape) {
                 Some(intersection) => {
                     intersecting = true;
