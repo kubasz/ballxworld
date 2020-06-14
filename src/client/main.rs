@@ -192,7 +192,7 @@ pub fn client_main() {
                 let change = world::worldmgr::VoxelChange {
                     bpos,
                     from: click_datum,
-                    to: world::VoxelDatum { id: i_used.id() },
+                    to: world::VoxelDatum::new(i_used.id(), 0),
                 };
                 world.apply_voxel_changes(&[change]);
             }
@@ -417,7 +417,7 @@ pub fn client_main() {
                         click_pos = Some(*position);
                         click_datum = *datum;
                     } else if normal_datum
-                        .map(|d| vxreg.get_definition_from_id(d).selection_shape.is_none())
+                        .map(|d| vxreg.get_definition_from_datum(d).selection_shape.is_none())
                         .unwrap_or(false)
                     {
                         let place_pos = *position + normal.to_vec();

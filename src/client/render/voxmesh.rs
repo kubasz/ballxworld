@@ -27,7 +27,7 @@ const fn cubed(a: usize) -> usize {
 pub fn is_chunk_trivial(chunk: &VChunk, registry: &VoxelRegistry) -> bool {
     let VChunkData::QuickCompressed { vox } = &chunk.data;
     if vox.len() == 3 && vox[0] == vox[1] {
-        let vdef = registry.get_definition_from_id(VoxelDatum { id: vox[0] });
+        let vdef = registry.get_definition_from_datum(VoxelDatum::from_repr(vox[0]));
         if vdef.mesh.is_none() {
             return true;
         }
@@ -62,7 +62,7 @@ pub fn mesh_from_chunk(
         let cidx = rcpos.x + rcpos.z * 3 + rcpos.y * 9;
         let bpos = blockidx_from_blockpos(vec3(x as i32 - 1, y as i32 - 1, z as i32 - 1));
         let dat = ucchunks[cidx].blocks_yzx[bpos];
-        let def = registry.get_definition_from_id(dat);
+        let def = registry.get_definition_from_datum(dat);
         let idx = x + z * INFLATED_DIM + y * INFLATED_DIM * INFLATED_DIM;
         unsafe {
             vdefs[idx].as_mut_ptr().write(def); // Safety: Initialize every element with a valid reference

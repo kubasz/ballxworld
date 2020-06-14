@@ -128,8 +128,13 @@ impl VoxelRegistry {
     }
 
     #[inline(always)]
-    pub fn get_definition_from_id(&self, datum: VoxelDatum) -> &VoxelDefinition {
-        self.definitions[datum.id as usize].as_ref().unwrap()
+    pub fn get_definition_from_datum(&self, datum: VoxelDatum) -> &VoxelDefinition {
+        self.get_definition_from_id(datum.id())
+    }
+
+    #[inline(always)]
+    pub fn get_definition_from_id(&self, id: VoxelId) -> &VoxelDefinition {
+        self.definitions[usize::from(id)].as_ref().unwrap()
     }
 
     pub fn get_definition_from_name(&self, name: &str) -> Option<&VoxelDefinition> {

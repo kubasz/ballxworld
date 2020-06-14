@@ -1,5 +1,5 @@
 use crate::registry::VoxelRegistry;
-use crate::{UncompressedChunk, CHUNK_DIM};
+use crate::{UncompressedChunk, VoxelDatum, CHUNK_DIM};
 use bxw_util::*;
 use lru::LruCache;
 use math::*;
@@ -357,16 +357,16 @@ impl StdGenerator {
             //
             if y == h {
                 if vp.elevation == VPElevation::Mountain && y > 80 {
-                    vox.id = i_snow_grass;
+                    *vox = VoxelDatum::new(i_snow_grass, 0);
                 } else {
-                    vox.id = i_grass;
+                    *vox = VoxelDatum::new(i_grass, 0);
                 }
             } else if y < h - 5 {
-                vox.id = i_stone;
+                *vox = VoxelDatum::new(i_stone, 0);
             } else if y < h {
-                vox.id = i_dirt;
+                *vox = VoxelDatum::new(i_dirt, 0);
             } else {
-                vox.id = i_air;
+                *vox = VoxelDatum::new(i_air, 0);
             }
         }
     }

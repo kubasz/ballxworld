@@ -23,6 +23,7 @@ pub const CHUNK_DIM3: usize = CHUNK_DIM * CHUNK_DIM * CHUNK_DIM;
 use bxw_util::collider::AABB;
 pub use bxw_util::collider::{Direction, ALL_DIRS};
 use smallvec::SmallVec;
+use std::convert::TryFrom;
 
 pub type ChunkPosition = Vector3<i32>;
 pub type BlockPosition = Vector3<i32>;
@@ -69,9 +70,50 @@ pub fn dirty_chunkpos_from_blockpos(bpos: BlockPosition) -> SmallVec<[ChunkPosit
     dirty
 }
 
+pub type VoxelId = u16;
+pub type VoxelMetadata = u16;
+
 #[derive(Debug, Copy, Clone, Default, Eq, PartialEq, Hash)]
 pub struct VoxelDatum {
-    pub id: u32,
+    datum: u32,
+}
+
+impl VoxelDatum {
+    pub fn new(id: VoxelId, meta: VoxelMetadata) -> Self {
+        Self {
+            datum: (id as u32) << 16 | meta as u32,
+        }
+    }
+
+    pub fn from_repr(r: u32) -> Self {
+        Self { datum: r }
+    }
+
+    pub fn id(self) -> VoxelId {
+        VoxelId::try_from((self.datum >> 16) & 0xFFFF).unwrap()
+    }
+
+    pub fn meta(self) -> VoxelMetadata {
+        VoxelMetadata::try_from(self.datum & 0xFFFF).unwrap()
+    }
+
+    pub fn repr(self) -> u32 {
+        self.datum
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum VoxelStdShape {
+    /// Standard full voxel cube
+    Cube,
+    /// "Slab" half-cube, occupying the bottom half of a voxel or reoriented
+    HalfCube,
+    /// Slope/Wedge shape with top face stretched, front collapsed; left and right faces are triangles
+    Slope,
+    /// Pentahedral shape to connect two slopes, no top, front and left are the sloped faces
+    OuterCornerSlope,
+    /// A cube with its top-left-front corner moved down to coincide with bottom-left-front
+    InnerCornerSlope,
 }
 
 #[derive(Clone)]
@@ -260,7 +302,7 @@ impl VChunk {
     /// Writes the updates from an uncompressed chunk into compressed storage
     pub fn compress(&mut self, from: &UncompressedChunk) {
         debug_assert_eq!(self.position, from.position);
-        let voxdat = compress_rle(from.blocks_yzx.iter().map(|v| v.id));
+        let voxdat = compress_rle(from.blocks_yzx.iter().copied().map(VoxelDatum::repr));
         self.data = VChunkData::QuickCompressed { vox: voxdat };
     }
 
@@ -269,12 +311,10 @@ impl VChunk {
         let mut uc: Box<UncompressedChunk> = Box::default();
         uc.position = self.position;
         let VChunkData::QuickCompressed { vox } = &self.data;
-        decompress_rle(vox, &mut uc.blocks_yzx, |v| VoxelDatum { id: v });
+        decompress_rle(vox, &mut uc.blocks_yzx, VoxelDatum::from_repr);
         uc
     }
 }
-
-type VoxelId = u32;
 
 #[derive(Clone, Debug)]
 pub struct TextureMapping<T> {
@@ -338,7 +378,7 @@ impl VoxelDefinition {
         &self.name
     }
 
-    pub fn id(&self) -> u32 {
+    pub fn id(&self) -> VoxelId {
         self.id
     }
 }

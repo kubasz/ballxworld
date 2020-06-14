@@ -25,7 +25,7 @@ fn check_suffocation(world: &World, voxels: &WorldBlocks, position: Vector3<f64>
     let bpos = blockpos_from_worldpos(position);
     let bidx = voxels.get_vcache().get_block(world, voxels, bpos);
     if let Some(bidx) = bidx {
-        let vdef = voxels.voxel_registry.get_definition_from_id(bidx);
+        let vdef = voxels.voxel_registry.get_definition_from_datum(bidx);
         vdef.collision_shape.is_some()
     } else {
         false
@@ -263,7 +263,7 @@ pub fn aabb_voxel_intersection(
         let bpos: Vector3<i32> = vec3(vx_pos[0], vx_pos[1], vx_pos[2]);
         let bidx = vcache.get_block(world, voxels, bpos);
         if let Some(bidx) = bidx {
-            let bdef = voxels.voxel_registry.get_definition_from_id(bidx);
+            let bdef = voxels.voxel_registry.get_definition_from_datum(bidx);
             if bdef.collision_shape.is_none() {
                 continue;
             }
