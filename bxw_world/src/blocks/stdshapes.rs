@@ -1,17 +1,26 @@
+use crate::*;
 use bxw_util::lazy_static::*;
 use bxw_util::math::*;
 use bxw_util::smallvec::*;
 
+pub fn block_shape(_datum: VoxelDatum, vdef: &VoxelDefinition) -> &'static VoxelShapeDef {
+    match vdef.mesh {
+        VoxelMesh::None => &*VOXEL_NO_SHAPE,
+        VoxelMesh::CubeAndSlopes => &*VOXEL_CUBE_SHAPE,
+    }
+}
+
 #[derive(Clone)]
 pub struct VoxelShapeDef {
+    pub causes_ambient_occlusion: bool,
     pub sides: [VSSide; 6],
 }
 
 #[derive(Clone)]
 pub struct VSVertex {
-    offset: Vector3<f32>,
-    texcoord: Vector2<f32>,
-    ao_offsets: SmallVec<[Vector3<i32>; 4]>,
+    pub offset: Vector3<f32>,
+    pub texcoord: Vector2<f32>,
+    pub ao_offsets: SmallVec<[Vector3<i32>; 4]>,
 }
 
 #[derive(Clone)]
@@ -26,11 +35,34 @@ pub struct VSSide {
 }
 
 lazy_static! {
+    pub static ref VOXEL_NO_SHAPE: VoxelShapeDef = init_no_shape();
     pub static ref VOXEL_CUBE_SHAPE: VoxelShapeDef = init_cube_shape();
+}
+
+fn init_no_shape() -> VoxelShapeDef {
+    let side = VSSide {
+        can_clip: false,
+        can_be_clipped: true,
+        normal: vec3(0.0, 1.0, 0.0),
+        vertices: SmallVec::new(),
+        indices: SmallVec::new(),
+    };
+    VoxelShapeDef {
+        causes_ambient_occlusion: false,
+        sides: [
+            side.clone(),
+            side.clone(),
+            side.clone(),
+            side.clone(),
+            side.clone(),
+            side,
+        ],
+    }
 }
 
 fn init_cube_shape() -> VoxelShapeDef {
     VoxelShapeDef {
+        causes_ambient_occlusion: true,
         sides: [
             // Left X-
             VSSide {
@@ -188,7 +220,7 @@ fn init_cube_shape() -> VoxelShapeDef {
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(-1, 1, 1),
                             vec3(0, 1, 1),
-                            vec3(0, 1, 1)
+                            vec3(-1, 1, 0)
                         ]),
                     },
                     VSVertex {

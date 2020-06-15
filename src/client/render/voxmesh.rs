@@ -1,6 +1,7 @@
 use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
 use bxw_util::math::*;
 use bxw_util::*;
+use bxw_world::blocks::stdshapes::*;
 use bxw_world::registry::VoxelRegistry;
 use bxw_world::*;
 use itertools::iproduct;
@@ -8,17 +9,6 @@ use std::iter::FromIterator;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::time::Instant;
-
-struct CubeSide {
-    // counter-clockwise coords of the face
-    pub verts: [f32; 3 * 4],
-    // corners of the side, matching up with `verts` above
-    pub corners: [[i32; 3]; 4],
-    // what to add to position to find neighbor
-    pub ioffset: [i32; 3],
-    // texture coordinates (u,v) matched with vertex coordinates
-    pub texcs: [f32; 2 * 4],
-}
 
 const fn cubed(a: usize) -> usize {
     a * a * a
@@ -47,7 +37,7 @@ pub fn mesh_from_chunk(
         Vec::from_iter(chunks.iter().map(|c| c.decompress()));
     // Safety: uninitialized array of MaybeUninits is safe
     const INFLATED_DIM: usize = CHUNK_DIM + 2;
-    let mut vdefs: [MaybeUninit<&VoxelDefinition>; cubed(INFLATED_DIM)] =
+    let mut vdata: [MaybeUninit<VoxelDatum>; cubed(INFLATED_DIM)] =
         unsafe { MaybeUninit::uninit().assume_init() };
     for (y, z, x) in iproduct!(0..INFLATED_DIM, 0..INFLATED_DIM, 0..INFLATED_DIM) {
         let rcpos = vec3(x, y, z).map(|c| {
@@ -62,13 +52,12 @@ pub fn mesh_from_chunk(
         let cidx = rcpos.x + rcpos.z * 3 + rcpos.y * 9;
         let bpos = blockidx_from_blockpos(vec3(x as i32 - 1, y as i32 - 1, z as i32 - 1));
         let dat = ucchunks[cidx].blocks_yzx[bpos];
-        let def = registry.get_definition_from_datum(dat);
         let idx = x + z * INFLATED_DIM + y * INFLATED_DIM * INFLATED_DIM;
         unsafe {
-            vdefs[idx].as_mut_ptr().write(def); // Safety: Initialize every element with a valid reference
+            vdata[idx].as_mut_ptr().write(dat); // Safety: Initialize every element with a valid data copy
         }
     }
-    let vdefs: [&VoxelDefinition; cubed(INFLATED_DIM)] = unsafe { std::mem::transmute(vdefs) }; // Safety: The whole array is initialized in the above for loop
+    let vdefs: [VoxelDatum; cubed(INFLATED_DIM)] = unsafe { std::mem::transmute(vdata) }; // Safety: The whole array is initialized in the above for loop
 
     // pos relative to Chunk@cpos
     #[inline(always)]
@@ -84,65 +73,53 @@ pub fn mesh_from_chunk(
     for (cell_y, cell_z, cell_x) in iproduct!(0..CHUNK_DIM, 0..CHUNK_DIM, 0..CHUNK_DIM) {
         let ipos = vec3(cell_x as i32, cell_y as i32, cell_z as i32);
         let vidx = blockidx_from_blockpos(ipos);
-        let vdef = vdefs[get_block_idx(ipos)];
+        let vdat = vdefs[get_block_idx(ipos)];
+        let vdef = registry.get_definition_from_datum(vdat);
 
         if vdef.mesh.is_none() {
             continue;
         }
 
-        for side in &SIDES {
-            let ioffset = Vector3::from_row_slice(&side.ioffset);
+        let vshape = block_shape(vdat, vdef);
+
+        for side_dir in &ALL_DIRS {
+            let side = &vshape.sides[side_dir.to_signed_axis_index()];
+            if side.indices.is_empty() {
+                continue;
+            }
+            let ioffset = side_dir.to_vec();
 
             // hidden face removal
+            let touchside = side_dir.opposite();
             let touchpos = ipos + ioffset;
-            let tdef = vdefs[get_block_idx(touchpos)];
-            if tdef.mesh.is_some() {
+            let tdat = vdefs[get_block_idx(touchpos)];
+            let tdef = registry.get_definition_from_datum(tdat);
+            let tshape = block_shape(tdat, tdef);
+            let tside = &tshape.sides[touchside.to_signed_axis_index()];
+            if side.can_be_clipped && tside.can_clip {
                 continue;
             }
 
             let voff = vbuf.len() as u32;
-            let mut corner_ao = [0i32; 4];
-            for (t, corner) in side.corners.iter().enumerate() {
-                let corner = Vector3::from_row_slice(corner);
+            for vtx in side.vertices.iter() {
                 // AO calculation
-                let (ao_s1, ao_s2, ao_c): (bool, bool, bool);
-                {
-                    let p_c = ipos + corner;
-                    ao_c = vdefs[get_block_idx(p_c)].mesh.is_some();
-                    let (p_s1, p_s2);
-                    if ioffset.x != 0 {
-                        // y,z sides
-                        p_s1 = ipos + vec3(corner.x, corner.y, 0);
-                        p_s2 = ipos + vec3(corner.x, 0, corner.z);
-                    } else if ioffset.y != 0 {
-                        // x,z sides
-                        p_s1 = ipos + vec3(0, corner.y, corner.z);
-                        p_s2 = ipos + vec3(corner.x, corner.y, 0);
-                    } else {
-                        // x,y sides
-                        p_s1 = ipos + vec3(corner.x, 0, corner.z);
-                        p_s2 = ipos + vec3(0, corner.y, corner.z);
+                let mut ao_count = 0;
+                for ao_off in vtx.ao_offsets.iter() {
+                    let pos = ipos + ao_off;
+                    let idx = get_block_idx(pos);
+                    let dat = vdefs[idx];
+                    let def = registry.get_definition_from_datum(dat);
+                    let shp = block_shape(dat, def);
+                    if shp.causes_ambient_occlusion {
+                        ao_count += 1;
                     }
-                    ao_s1 = vdefs[get_block_idx(p_s1)].mesh.is_some();
-                    ao_s2 = vdefs[get_block_idx(p_s2)].mesh.is_some();
                 }
-                let ao = if ao_s1 && ao_s2 {
-                    3
-                } else {
-                    ao_s1 as i32 + ao_s2 as i32 + ao_c as i32
-                };
-                corner_ao[t] = ao;
-                let ao: f32 = match ao {
-                    0 => 1.0,
-                    1 => 0.8,
-                    2 => 0.7,
-                    _ => 0.6,
-                };
+                let ao: f32 = 1.0 - (ao_count.min(4) as f32 * 0.12);
 
                 let position: [f32; 4] = [
-                    ipos.x as f32 + side.verts[t * 3],
-                    ipos.y as f32 + side.verts[t * 3 + 1],
-                    ipos.z as f32 + side.verts[t * 3 + 2],
+                    ipos.x as f32 + vtx.offset.x,
+                    ipos.y as f32 + vtx.offset.y,
+                    ipos.z as f32 + vtx.offset.z,
                     1.0,
                 ];
                 let texid = *vdef
@@ -156,15 +133,11 @@ pub fn mesh_from_chunk(
                         vdef.debug_color[2] * ao,
                         1.0,
                     ],
-                    texcoord: [side.texcs[t * 2], side.texcs[t * 2 + 1], texid as f32],
+                    texcoord: [vtx.texcoord.x, vtx.texcoord.y, texid as f32],
                     index: vidx as i32,
                 });
             }
-            if corner_ao[1] + corner_ao[3] > corner_ao[0] + corner_ao[2] {
-                ibuf.extend([voff, voff + 1, voff + 2, voff + 2, voff + 3, voff].iter());
-            } else {
-                ibuf.extend([voff, voff + 1, voff + 3, voff + 1, voff + 2, voff + 3].iter());
-            }
+            ibuf.extend(side.indices.iter().map(|x| x + voff));
         }
     }
 
@@ -179,60 +152,3 @@ pub fn mesh_from_chunk(
         indices: ibuf,
     })
 }
-
-const SIDES: [CubeSide; 6] = [
-    // x+ -> "right"
-    CubeSide {
-        verts: [
-            0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5,
-        ],
-        corners: [[1, -1, -1], [1, 1, -1], [1, 1, 1], [1, -1, 1]],
-        ioffset: [1, 0, 0],
-        texcs: [0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
-    },
-    // x- -> "left"
-    CubeSide {
-        verts: [
-            -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5, -0.5, -0.5,
-        ],
-        corners: [[-1, -1, 1], [-1, 1, 1], [-1, 1, -1], [-1, -1, -1]],
-        ioffset: [-1, 0, 0],
-        texcs: [0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
-    },
-    // y+ -> "top"
-    CubeSide {
-        verts: [
-            -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5,
-        ],
-        corners: [[-1, 1, -1], [-1, 1, 1], [1, 1, 1], [1, 1, -1]],
-        ioffset: [0, 1, 0],
-        texcs: [1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0],
-    },
-    // y- -> "bottom"
-    CubeSide {
-        verts: [
-            0.5, -0.5, -0.5, 0.5, -0.5, 0.5, -0.5, -0.5, 0.5, -0.5, -0.5, -0.5,
-        ],
-        corners: [[1, -1, -1], [1, -1, 1], [-1, -1, 1], [-1, -1, -1]],
-        ioffset: [0, -1, 0],
-        texcs: [0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
-    },
-    // z+ -> "back"
-    CubeSide {
-        verts: [
-            0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5,
-        ],
-        corners: [[1, -1, 1], [1, 1, 1], [-1, 1, 1], [-1, -1, 1]],
-        ioffset: [0, 0, 1],
-        texcs: [0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
-    },
-    // z- -> "front"
-    CubeSide {
-        verts: [
-            -0.5, -0.5, -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5,
-        ],
-        corners: [[-1, -1, -1], [-1, 1, -1], [1, 1, -1], [1, -1, -1]],
-        ioffset: [0, 0, -1],
-        texcs: [0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
-    },
-];
