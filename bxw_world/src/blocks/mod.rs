@@ -1,3 +1,5 @@
+pub mod stdshapes;
+
 use crate::registry::VoxelRegistry;
 use crate::TextureMapping;
 

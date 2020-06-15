@@ -8,13 +8,13 @@ use ash::version::DeviceV1_0;
 use ash::vk;
 use bxw_util::math::*;
 use bxw_util::*;
+use bxw_world::TextureMapping;
 use itertools::zip;
 use std::borrow::Cow;
 use std::ffi::CString;
 use std::ops::{Add, Neg, Sub};
 use std::sync::Arc;
 use vk_mem as vma;
-use world::TextureMapping;
 
 pub mod z {
     pub const GUI_Z_OFFSET_BG: i32 = 0;

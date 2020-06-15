@@ -1,13 +1,13 @@
 use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
 use bxw_util::math::*;
 use bxw_util::*;
+use bxw_world::registry::VoxelRegistry;
+use bxw_world::*;
 use itertools::iproduct;
 use std::iter::FromIterator;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::time::Instant;
-use world::registry::VoxelRegistry;
-use world::*;
 
 struct CubeSide {
     // counter-clockwise coords of the face

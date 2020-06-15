@@ -1,9 +1,9 @@
 use bxw_util::change::Change;
+use bxw_world::ecs::*;
+use bxw_world::generation::WorldBlocks;
+use bxw_world::worldmgr::*;
+use bxw_world::VoxelRegistry;
 use std::sync::Arc;
-use world::ecs::*;
-use world::generation::WorldBlocks;
-use world::worldmgr::*;
-use world::VoxelRegistry;
 
 #[derive(Clone, Debug)]
 pub enum CameraSettings {
@@ -21,8 +21,11 @@ impl ClientWorld {
         let mut world = World::new(name);
         world.replace_handler(CHUNK_BLOCK_DATA, Box::new(WorldBlocks::new(registry, 0)));
         let entities = world.ecs();
-        let mut local_player =
-            world::entities::player::create_player(entities, true, String::from("@local_player"));
+        let mut local_player = bxw_world::entities::player::create_player(
+            entities,
+            true,
+            String::from("@local_player"),
+        );
         let eid;
         match local_player.location {
             Change::Create { ref mut new } => {

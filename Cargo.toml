@@ -14,7 +14,7 @@ vk-mem = "0.2"
 vk-sync = { path = "./vk-sync-rs-master", version = "*" }
 image = "0.23"
 bxw_util = { path = "bxw_util" }
-world = { path = "bxw_world", package="bxw_world" }
+bxw_world = { path = "bxw_world" }
 
 # wren-sys = { path = "wren" }
 

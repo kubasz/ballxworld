@@ -13,6 +13,11 @@ use bxw_util::math::vec3;
 use bxw_util::math::*;
 use bxw_util::taskpool::Task;
 use bxw_util::*;
+use bxw_world::ecs::{CLoadAnchor, CLocation, ECSHandler};
+use bxw_world::entities::player::PLAYER_EYE_HEIGHT;
+use bxw_world::generation::WorldBlocks;
+use bxw_world::worldmgr::*;
+use bxw_world::*;
 use parking_lot::Mutex;
 use smallvec::alloc::rc::Rc;
 use std::any::Any;
@@ -21,11 +26,6 @@ use std::ffi::CString;
 use std::sync::Arc;
 use std::sync::Weak;
 use vk_mem as vma;
-use world::ecs::{CLoadAnchor, CLocation, ECSHandler};
-use world::entities::player::PLAYER_EYE_HEIGHT;
-use world::generation::WorldBlocks;
-use world::worldmgr::*;
-use world::*;
 
 pub mod vox {
     use crate::offset_of;

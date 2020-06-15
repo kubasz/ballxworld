@@ -14,24 +14,24 @@ use crate::client::world::{CameraSettings, ClientWorld};
 use bxw_util::debug_data::DEBUG_DATA;
 use bxw_util::math::*;
 use bxw_util::*;
+use bxw_world::blocks::register_standard_blocks;
+use bxw_world::ecs::*;
+use bxw_world::entities::player::PLAYER_EYE_HEIGHT;
+use bxw_world::generation::WorldBlocks;
+use bxw_world::BlockPosition;
 use std::borrow::Cow;
 use std::f64::consts::PI;
 use std::io::{Read, Write};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use world::blocks::register_standard_blocks;
-use world::ecs::*;
-use world::entities::player::PLAYER_EYE_HEIGHT;
-use world::generation::WorldBlocks;
-use world::BlockPosition;
 
 use crate::client::render::voxrender::MeshDataHandler;
 use bxw_util::change::Change;
 use bxw_util::collider::AABB;
+use bxw_world::physics::SMALL_V_CUTOFF;
+use bxw_world::physics::TIMESTEP as PHYSICS_FRAME_TIME;
 use std::cell::RefCell;
 use std::rc::Rc;
-use world::physics::SMALL_V_CUTOFF;
-use world::physics::TIMESTEP as PHYSICS_FRAME_TIME;
 
 #[derive(Debug, Clone, Default)]
 struct InputState {
@@ -85,12 +85,12 @@ pub fn client_main() {
     )));
     let mut guictx = Box::new(GuiRenderer::new(&cfg, &mut rctx, rres.clone()));
 
-    let mut vxreg: Box<world::registry::VoxelRegistry> = Box::default();
+    let mut vxreg: Box<bxw_world::registry::VoxelRegistry> = Box::default();
     {
         let vctx = vctx.borrow();
         register_standard_blocks(&mut vxreg, &|nm| vctx.get_texture_id(nm));
     }
-    let vxreg: Arc<world::registry::VoxelRegistry> = Arc::from(vxreg);
+    let vxreg: Arc<bxw_world::registry::VoxelRegistry> = Arc::from(vxreg);
     let (mut world, mut client_world) = ClientWorld::new_world("world".to_owned(), vxreg.clone());
     {
         let lp = client_world.local_player;
@@ -109,7 +109,7 @@ pub fn client_main() {
         world.apply_entity_changes(&change);
     }
     world.replace_handler(
-        world::worldmgr::CHUNK_MESH_DATA,
+        bxw_world::worldmgr::CHUNK_MESH_DATA,
         Box::new(MeshDataHandler::new(vctx.clone(), &rctx.handles)),
     );
     let wgen = WorldBlocks::new(vxreg.clone(), 0);
@@ -125,7 +125,7 @@ pub fn client_main() {
     let mut look_pos: BlockPosition = zero();
     let mut look_precise_pos: Vector3<f64> = zero();
     let mut click_pos: Option<BlockPosition> = None;
-    let mut click_datum: world::VoxelDatum = Default::default();
+    let mut click_datum: bxw_world::VoxelDatum = Default::default();
     let mut click_place = false;
 
     let mut event_pump = sdl_ctx.event_pump().unwrap();
@@ -189,10 +189,10 @@ pub fn client_main() {
                 } else {
                     i_destroy
                 };
-                let change = world::worldmgr::VoxelChange {
+                let change = bxw_world::worldmgr::VoxelChange {
                     bpos,
                     from: click_datum,
-                    to: world::VoxelDatum::new(i_used.id(), 0),
+                    to: bxw_world::VoxelDatum::new(i_used.id(), 0),
                 };
                 world.apply_voxel_changes(&[change]);
             }
@@ -254,7 +254,7 @@ pub fn client_main() {
                     ..Default::default()
                 }];
                 world.apply_entity_changes(&change);
-                world::physics::world_physics_tick(&mut world);
+                bxw_world::physics::world_physics_tick(&mut world);
             }
         }
 
@@ -388,7 +388,7 @@ pub fn client_main() {
                 .input_state
                 .secondary_action
                 .get_and_reset_pressed();
-            use world::raycast;
+            use bxw_world::raycast;
             let mview = glm::quat_to_mat3(&player_ang).transpose();
             let fwd = mview * vec3(0.0, 0.0, 1.0);
             let rc = raycast::RaycastQuery::new_directed(
@@ -424,7 +424,7 @@ pub fn client_main() {
                         let player_aabb = lp_loc
                             .bounding_shape
                             .aabb(lp_loc.position)
-                            .inflate(-world::physics::TOUCH_EPSILON);
+                            .inflate(-bxw_world::physics::TOUCH_EPSILON);
                         let voxel_aabb = i_placeable[i_place]
                             .collision_shape
                             .unwrap_or_default()

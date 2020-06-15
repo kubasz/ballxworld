@@ -8,22 +8,21 @@ pub mod registry;
 pub mod stdgen;
 pub mod worldmgr;
 
+use bxw_util::collider::AABB;
+pub use bxw_util::collider::{Direction, ALL_DIRS};
 use bxw_util::math::*;
 use bxw_util::*;
 use divrem::{DivFloor, RemFloor};
 use lru::LruCache;
 pub use registry::VoxelRegistry;
+use smallvec::SmallVec;
 use std::cell::{RefCell, RefMut};
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 pub const CHUNK_DIM: usize = 32;
 pub const CHUNK_DIM2: usize = CHUNK_DIM * CHUNK_DIM;
 pub const CHUNK_DIM3: usize = CHUNK_DIM * CHUNK_DIM * CHUNK_DIM;
-
-use bxw_util::collider::AABB;
-pub use bxw_util::collider::{Direction, ALL_DIRS};
-use smallvec::SmallVec;
-use std::convert::TryFrom;
 
 pub type ChunkPosition = Vector3<i32>;
 pub type BlockPosition = Vector3<i32>;
