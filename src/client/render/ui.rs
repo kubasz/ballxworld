@@ -6,6 +6,7 @@ use crate::client::render::vulkan::{allocation_cbs, RenderingHandles, INFLIGHT_F
 use crate::client::render::{InPassFrameContext, PrePassFrameContext, RenderingContext};
 use ash::version::DeviceV1_0;
 use ash::vk;
+use bxw_util::direction::*;
 use bxw_util::math::*;
 use bxw_util::*;
 use bxw_world::TextureMapping;
@@ -443,7 +444,6 @@ impl GuiOrderedCmd {
                 });
             }
             GuiCmd::VoxelPreview { texture, rect } => {
-                use bxw_util::collider::*;
                 let (tl, br) = rect.to_absolute_from_rctx(rctx);
                 let w = br.x - tl.x;
                 let h = br.y - tl.y;
@@ -463,7 +463,7 @@ impl GuiOrderedCmd {
                         vec2(0.0, 1.0),
                         vec2(1.0, 1.0),
                     ],
-                    *texture.at_direction(DIR_TOP) as f32,
+                    *texture.at_direction(DIR_UP) as f32,
                     TEXSELECT_VOX,
                     self.color.rgbmul(0.9).0,
                 );

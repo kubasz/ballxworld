@@ -21,6 +21,7 @@ pub use toml_edit;
 pub mod change;
 pub mod collider;
 pub mod debug_data;
+pub mod direction;
 pub mod math;
 pub mod sparsevec;
 pub mod taskpool;
