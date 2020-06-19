@@ -3,10 +3,14 @@ use bxw_util::lazy_static::*;
 use bxw_util::math::*;
 use bxw_util::smallvec::*;
 
-pub fn block_shape(_datum: VoxelDatum, vdef: &VoxelDefinition) -> &'static VoxelShapeDef {
+pub fn block_shape(datum: VoxelDatum, vdef: &VoxelDefinition) -> &'static VoxelShapeDef {
     match vdef.mesh {
         VoxelMesh::None => &*VOXEL_NO_SHAPE,
-        VoxelMesh::CubeAndSlopes => &*VOXEL_CUBE_SHAPE,
+        VoxelMesh::CubeAndSlopes => match datum.meta() & 0xF {
+            0 => &*VOXEL_CUBE_SHAPE,
+            1 => &*VOXEL_SLOPE_SHAPE,
+            _ => &*VOXEL_CUBE_SHAPE,
+        },
     }
 }
 
@@ -42,6 +46,7 @@ pub struct VSSide {
 lazy_static! {
     pub static ref VOXEL_NO_SHAPE: VoxelShapeDef = init_no_shape();
     pub static ref VOXEL_CUBE_SHAPE: VoxelShapeDef = init_cube_shape();
+    pub static ref VOXEL_SLOPE_SHAPE: VoxelShapeDef = init_slope_shape();
 }
 
 fn init_no_shape() -> VoxelShapeDef {
@@ -333,6 +338,265 @@ fn init_cube_shape() -> VoxelShapeDef {
                     },
                 ],
                 indices: SmallVec::from_slice(&[0, 1, 2, 2, 3, 0]),
+            },
+            // Back Z+
+            VSSide {
+                can_clip: true,
+                can_be_clipped: true,
+                normal: vec3(0.0, 0.0, 1.0),
+                vertices: smallvec![
+                    VSVertex {
+                        offset: vec3(0.5, -0.5, 0.5),
+                        texcoord: vec2(0.0, 1.0),
+                        barycentric: vec2(0.0, 1.0),
+                        barycentric_sign: -1,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(1, -1, 1),
+                            vec3(0, -1, 1),
+                            vec3(1, 0, 1)
+                        ]),
+                    },
+                    VSVertex {
+                        offset: vec3(0.5, 0.5, 0.5),
+                        texcoord: vec2(0.0, 0.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(1, 1, 1),
+                            vec3(0, 1, 1),
+                            vec3(1, 0, 1)
+                        ]),
+                    },
+                    VSVertex {
+                        offset: vec3(-0.5, 0.5, 0.5),
+                        texcoord: vec2(1.0, 0.0),
+                        barycentric: vec2(1.0, 0.0),
+                        barycentric_sign: -1,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(-1, 1, 1),
+                            vec3(0, 1, 1),
+                            vec3(-1, 0, 1)
+                        ]),
+                    },
+                    VSVertex {
+                        offset: vec3(-0.5, -0.5, 0.5),
+                        texcoord: vec2(1.0, 1.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(-1, -1, 1),
+                            vec3(0, -1, 1),
+                            vec3(-1, 0, 1)
+                        ]),
+                    },
+                ],
+                indices: SmallVec::from_slice(&[0, 1, 2, 2, 3, 0]),
+            },
+        ],
+    }
+}
+
+fn init_slope_shape() -> VoxelShapeDef {
+    VoxelShapeDef {
+        causes_ambient_occlusion: true,
+        sides: [
+            // Left X-
+            VSSide {
+                can_clip: true,
+                can_be_clipped: true,
+                normal: vec3(-1.0, 0.0, 0.0),
+                vertices: smallvec![
+                    VSVertex {
+                        offset: vec3(-0.5, -0.5, 0.5),
+                        texcoord: vec2(0.0, 1.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 0,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(-1, -1, 1),
+                            vec3(-1, -1, 0),
+                            vec3(-1, 0, 1)
+                        ]),
+                    },
+                    VSVertex {
+                        offset: vec3(-0.5, 0.5, 0.5),
+                        texcoord: vec2(0.0, 0.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 0,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(-1, 1, 1),
+                            vec3(-1, 1, 0),
+                            vec3(-1, 0, 1)
+                        ]),
+                    },
+                    VSVertex {
+                        offset: vec3(-0.5, -0.5, -0.5),
+                        texcoord: vec2(1.0, 1.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 0,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(-1, -1, -1),
+                            vec3(-1, -1, 0),
+                            vec3(-1, 0, -1)
+                        ]),
+                    },
+                ],
+                indices: SmallVec::from_slice(&[0, 1, 2]),
+            },
+            // Right X+
+            VSSide {
+                can_clip: false,
+                can_be_clipped: true,
+                normal: vec3(1.0, 0.0, 0.0),
+                vertices: smallvec![
+                    VSVertex {
+                        offset: vec3(0.5, -0.5, -0.5),
+                        texcoord: vec2(0.0, 1.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 0,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(1, -1, -1),
+                            vec3(1, -1, 0),
+                            vec3(1, 0, -1)
+                        ]),
+                    },
+                    VSVertex {
+                        offset: vec3(0.5, 0.5, 0.5),
+                        texcoord: vec2(1.0, 0.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 0,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(1, 1, 1),
+                            vec3(1, 1, 0),
+                            vec3(1, 0, 1)
+                        ]),
+                    },
+                    VSVertex {
+                        offset: vec3(0.5, -0.5, 0.5),
+                        texcoord: vec2(1.0, 1.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 0,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(1, -1, 1),
+                            vec3(1, -1, 0),
+                            vec3(1, 0, 1)
+                        ]),
+                    },
+                ],
+                indices: SmallVec::from_slice(&[0, 1, 2]),
+            },
+            // Bottom Y-
+            VSSide {
+                can_clip: true,
+                can_be_clipped: true,
+                normal: vec3(0.0, -1.0, 0.0),
+                vertices: smallvec![
+                    VSVertex {
+                        offset: vec3(0.5, -0.5, -0.5),
+                        texcoord: vec2(0.0, 1.0),
+                        barycentric: vec2(0.0, 1.0),
+                        barycentric_sign: -1,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(1, -1, -1),
+                            vec3(0, -1, -1),
+                            vec3(1, -1, 0)
+                        ]),
+                    },
+                    VSVertex {
+                        offset: vec3(0.5, -0.5, 0.5),
+                        texcoord: vec2(0.0, 0.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(1, -1, 1),
+                            vec3(0, -1, 1),
+                            vec3(1, -1, 0)
+                        ]),
+                    },
+                    VSVertex {
+                        offset: vec3(-0.5, -0.5, 0.5),
+                        texcoord: vec2(1.0, 0.0),
+                        barycentric: vec2(1.0, 0.0),
+                        barycentric_sign: -1,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(-1, -1, 1),
+                            vec3(0, -1, 1),
+                            vec3(-1, -1, 0)
+                        ]),
+                    },
+                    VSVertex {
+                        offset: vec3(-0.5, -0.5, -0.5),
+                        texcoord: vec2(1.0, 1.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(-1, -1, -1),
+                            vec3(0, -1, -1),
+                            vec3(-1, -1, 0)
+                        ]),
+                    },
+                ],
+                indices: SmallVec::from_slice(&[0, 1, 2, 2, 3, 0]),
+            },
+            // Top Y+
+            VSSide {
+                can_clip: false,
+                can_be_clipped: false,
+                normal: vec3(0.0, 1.0, -1.0).normalize(),
+                vertices: smallvec![
+                    VSVertex {
+                        offset: vec3(-0.5, -0.5, -0.5),
+                        texcoord: vec2(0.0, 1.0),
+                        barycentric: vec2(0.0, 1.0),
+                        barycentric_sign: -1,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(-1, -1, -1),
+                            vec3(0, -1, -1),
+                            vec3(-1, 0, -1)
+                        ]),
+                    },
+                    VSVertex {
+                        offset: vec3(-0.5, 0.5, 0.5),
+                        texcoord: vec2(0.0, 0.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(-1, 1, 1),
+                            vec3(0, 1, 1),
+                            vec3(-1, 0, 1)
+                        ]),
+                    },
+                    VSVertex {
+                        offset: vec3(0.5, 0.5, 0.5),
+                        texcoord: vec2(1.0, 0.0),
+                        barycentric: vec2(1.0, 0.0),
+                        barycentric_sign: -1,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(1, 1, 1),
+                            vec3(0, 1, 1),
+                            vec3(1, 0, 1)
+                        ]),
+                    },
+                    VSVertex {
+                        offset: vec3(0.5, -0.5, -0.5),
+                        texcoord: vec2(1.0, 1.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
+                        ao_offsets: SmallVec::from_slice(&[
+                            vec3(1, -1, -1),
+                            vec3(0, -1, -1),
+                            vec3(1, 0, -1)
+                        ]),
+                    },
+                ],
+                indices: SmallVec::from_slice(&[0, 1, 2, 2, 3, 0]),
+            },
+            // Front Z-
+            VSSide {
+                can_clip: false,
+                can_be_clipped: true,
+                normal: vec3(0.0, 1.0, 0.0),
+                vertices: smallvec![],
+                indices: SmallVec::new(),
             },
             // Back Z+
             VSSide {

@@ -189,10 +189,18 @@ pub fn client_main() {
                 } else {
                     i_destroy
                 };
+                let meta = if input_mgr
+                    .pressed_keys
+                    .contains(&sdl2::keyboard::Keycode::Num1)
+                {
+                    1
+                } else {
+                    0
+                };
                 let change = bxw_world::worldmgr::VoxelChange {
                     bpos,
                     from: click_datum,
-                    to: bxw_world::VoxelDatum::new(i_used.id(), 0),
+                    to: bxw_world::VoxelDatum::new(i_used.id(), meta),
                 };
                 world.apply_voxel_changes(&[change]);
             }
