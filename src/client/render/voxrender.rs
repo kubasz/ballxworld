@@ -44,12 +44,14 @@ pub mod vox {
         pub color: [f32; 4],
         pub texcoord: [f32; 3],
         pub index: i32,
+        pub barycentric_color_offset: [f32; 4],
+        pub barycentric: [f32; 2],
     }
 
     impl VoxelVertex {
         pub fn description() -> (
             [vk::VertexInputBindingDescription; 1],
-            [vk::VertexInputAttributeDescription; 4],
+            [vk::VertexInputAttributeDescription; 6],
         ) {
             let bind_dsc = [vk::VertexInputBindingDescription::builder()
                 .binding(0)
@@ -80,6 +82,18 @@ pub mod vox {
                     location: 3,
                     format: vk::Format::R32_SINT,
                     offset: offset_of!(Self, index) as u32,
+                },
+                vk::VertexInputAttributeDescription {
+                    binding: 0,
+                    location: 4,
+                    format: vk::Format::R32G32B32A32_SFLOAT,
+                    offset: offset_of!(Self, barycentric_color_offset) as u32,
+                },
+                vk::VertexInputAttributeDescription {
+                    binding: 0,
+                    location: 5,
+                    format: vk::Format::R32G32_SFLOAT,
+                    offset: offset_of!(Self, barycentric) as u32,
                 },
             ];
             (bind_dsc, attr_dsc)

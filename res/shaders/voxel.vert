@@ -15,11 +15,15 @@ layout(location = 0) in vec4 position;
 layout(location = 1) in vec4 color;
 layout(location = 2) in vec3 texcoord;
 layout(location = 3) in int index;
+layout(location = 4) in vec4 barycentric_color_offset;
+layout(location = 5) in vec2 barycentric;
 
 layout(location = 0) out vec4 v_position;
 layout(location = 1) out vec4 v_color;
 layout(location = 2) out vec3 v_texcoord;
 layout(location = 3) out int v_index;
+layout(location = 4) out vec4 v_barycentric_color_offset;
+layout(location = 5) out vec2 v_barycentric;
 
 void main() {
     gl_Position = ubo.proj * ubo.view * ubo.model * vec4(position.xyz + push_constants.chunk_offset, 1.0);
@@ -27,4 +31,6 @@ void main() {
     v_color = color;
     v_texcoord = texcoord;
     v_index = index;
+    v_barycentric_color_offset = barycentric_color_offset;
+    v_barycentric = barycentric;
 }

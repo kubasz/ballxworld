@@ -20,6 +20,11 @@ pub struct VoxelShapeDef {
 pub struct VSVertex {
     pub offset: Vector3<f32>,
     pub texcoord: Vector2<f32>,
+    /// https://www.asawicki.info/news_1721_how_to_correctly_interpolate_vertex_attributes_on_a_parallelogram_using_modern_gpus
+    /// Archive: https://web.archive.org/web/20200516133048/https://www.asawicki.info/news_1721_how_to_correctly_interpolate_vertex_attributes_on_a_parallelogram_using_modern_gpus
+    pub barycentric: Vector2<f32>,
+    /// Sign when added to the "extra data" sum for proper quadrilateral interpolation
+    pub barycentric_sign: i32,
     pub ao_offsets: SmallVec<[Vector3<i32>; 4]>,
 }
 
@@ -73,6 +78,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(-0.5, -0.5, 0.5),
                         texcoord: vec2(0.0, 1.0),
+                        barycentric: vec2(0.0, 1.0),
+                        barycentric_sign: -1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(-1, -1, 1),
                             vec3(-1, -1, 0),
@@ -82,6 +89,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(-0.5, 0.5, 0.5),
                         texcoord: vec2(0.0, 0.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(-1, 1, 1),
                             vec3(-1, 1, 0),
@@ -91,6 +100,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(-0.5, 0.5, -0.5),
                         texcoord: vec2(1.0, 0.0),
+                        barycentric: vec2(1.0, 0.0),
+                        barycentric_sign: -1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(-1, 1, -1),
                             vec3(-1, 1, 0),
@@ -100,6 +111,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(-0.5, -0.5, -0.5),
                         texcoord: vec2(1.0, 1.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(-1, -1, -1),
                             vec3(-1, -1, 0),
@@ -118,6 +131,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(0.5, -0.5, -0.5),
                         texcoord: vec2(0.0, 1.0),
+                        barycentric: vec2(0.0, 1.0),
+                        barycentric_sign: -1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(1, -1, -1),
                             vec3(1, -1, 0),
@@ -127,6 +142,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(0.5, 0.5, -0.5),
                         texcoord: vec2(0.0, 0.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(1, 1, -1),
                             vec3(1, 1, 0),
@@ -136,6 +153,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(0.5, 0.5, 0.5),
                         texcoord: vec2(1.0, 0.0),
+                        barycentric: vec2(1.0, 0.0),
+                        barycentric_sign: -1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(1, 1, 1),
                             vec3(1, 1, 0),
@@ -145,6 +164,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(0.5, -0.5, 0.5),
                         texcoord: vec2(1.0, 1.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(1, -1, 1),
                             vec3(1, -1, 0),
@@ -163,6 +184,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(0.5, -0.5, -0.5),
                         texcoord: vec2(0.0, 1.0),
+                        barycentric: vec2(0.0, 1.0),
+                        barycentric_sign: -1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(1, -1, -1),
                             vec3(0, -1, -1),
@@ -172,6 +195,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(0.5, -0.5, 0.5),
                         texcoord: vec2(0.0, 0.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(1, -1, 1),
                             vec3(0, -1, 1),
@@ -181,6 +206,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(-0.5, -0.5, 0.5),
                         texcoord: vec2(1.0, 0.0),
+                        barycentric: vec2(1.0, 0.0),
+                        barycentric_sign: -1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(-1, -1, 1),
                             vec3(0, -1, 1),
@@ -190,6 +217,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(-0.5, -0.5, -0.5),
                         texcoord: vec2(1.0, 1.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(-1, -1, -1),
                             vec3(0, -1, -1),
@@ -208,6 +237,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(-0.5, 0.5, -0.5),
                         texcoord: vec2(1.0, 0.0),
+                        barycentric: vec2(0.0, 1.0),
+                        barycentric_sign: -1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(-1, 1, -1),
                             vec3(0, 1, -1),
@@ -217,6 +248,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(-0.5, 0.5, 0.5),
                         texcoord: vec2(1.0, 1.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(-1, 1, 1),
                             vec3(0, 1, 1),
@@ -226,6 +259,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(0.5, 0.5, 0.5),
                         texcoord: vec2(0.0, 1.0),
+                        barycentric: vec2(1.0, 0.0),
+                        barycentric_sign: -1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(1, 1, 1),
                             vec3(0, 1, 1),
@@ -235,6 +270,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(0.5, 0.5, -0.5),
                         texcoord: vec2(0.0, 0.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(1, 1, -1),
                             vec3(0, 1, -1),
@@ -253,6 +290,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(-0.5, -0.5, -0.5),
                         texcoord: vec2(0.0, 1.0),
+                        barycentric: vec2(0.0, 1.0),
+                        barycentric_sign: -1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(-1, -1, -1),
                             vec3(0, -1, -1),
@@ -262,6 +301,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(-0.5, 0.5, -0.5),
                         texcoord: vec2(0.0, 0.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(-1, 1, -1),
                             vec3(0, 1, -1),
@@ -271,6 +312,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(0.5, 0.5, -0.5),
                         texcoord: vec2(1.0, 0.0),
+                        barycentric: vec2(1.0, 0.0),
+                        barycentric_sign: -1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(1, 1, -1),
                             vec3(0, 1, -1),
@@ -280,6 +323,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(0.5, -0.5, -0.5),
                         texcoord: vec2(1.0, 1.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(1, -1, -1),
                             vec3(0, -1, -1),
@@ -298,6 +343,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(0.5, -0.5, 0.5),
                         texcoord: vec2(0.0, 1.0),
+                        barycentric: vec2(0.0, 1.0),
+                        barycentric_sign: -1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(1, -1, 1),
                             vec3(0, -1, 1),
@@ -307,6 +354,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(0.5, 0.5, 0.5),
                         texcoord: vec2(0.0, 0.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(1, 1, 1),
                             vec3(0, 1, 1),
@@ -316,6 +365,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(-0.5, 0.5, 0.5),
                         texcoord: vec2(1.0, 0.0),
+                        barycentric: vec2(1.0, 0.0),
+                        barycentric_sign: -1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(-1, 1, 1),
                             vec3(0, 1, 1),
@@ -325,6 +376,8 @@ fn init_cube_shape() -> VoxelShapeDef {
                     VSVertex {
                         offset: vec3(-0.5, -0.5, 0.5),
                         texcoord: vec2(1.0, 1.0),
+                        barycentric: vec2(0.0, 0.0),
+                        barycentric_sign: 1,
                         ao_offsets: SmallVec::from_slice(&[
                             vec3(-1, -1, 1),
                             vec3(0, -1, 1),
