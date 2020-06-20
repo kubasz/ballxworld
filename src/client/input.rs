@@ -78,6 +78,7 @@ pub struct InputManager<'i> {
     pub sdl: &'i Sdl,
     pub input_state: InputState,
     pub pressed_keys: HashSet<Keycode>,
+    pub just_pressed_keys: HashSet<Keycode>,
     capturing_input: bool,
 }
 
@@ -89,8 +90,13 @@ impl<'i> InputManager<'i> {
             sdl,
             input_state: Default::default(),
             pressed_keys: HashSet::with_capacity(16),
+            just_pressed_keys: HashSet::with_capacity(16),
             capturing_input: false,
         }
+    }
+
+    pub fn pre_process(&mut self) {
+        self.just_pressed_keys.clear();
     }
 
     pub fn process(&mut self, rctx: &mut RenderingContext, ev: Event) {
@@ -126,6 +132,7 @@ impl<'i> InputManager<'i> {
                     }
                     if self.capturing_input {
                         self.pressed_keys.insert(keycode);
+                        self.just_pressed_keys.insert(keycode);
                         self.process_captured_key(true, keycode);
                     } else {
                         // gui

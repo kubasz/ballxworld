@@ -42,8 +42,18 @@ pub fn register_standard_blocks(vxreg: &mut VoxelRegistry, texmapper: &dyn Fn(&s
         .unwrap();
     vxreg
         .build_definition()
-        .name("core:water")
-        .texture_names(texmapper, TextureMapping::new_single("water"))
+        .name("core:debug")
+        .texture_names(
+            texmapper,
+            TextureMapping::new([
+                "dbg_left",
+                "dbg_right",
+                "dbg_down",
+                "dbg_up",
+                "dbg_front",
+                "dbg_back",
+            ]),
+        )
         .finish()
         .unwrap();
     vxreg

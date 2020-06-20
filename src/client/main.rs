@@ -28,6 +28,8 @@ use std::sync::Arc;
 use crate::client::render::voxrender::MeshDataHandler;
 use bxw_util::change::Change;
 use bxw_util::collider::AABB;
+use bxw_util::direction::OctahedralOrientation;
+use bxw_world::blocks::stdshapes::StdMeta;
 use bxw_world::physics::SMALL_V_CUTOFF;
 use bxw_world::physics::TIMESTEP as PHYSICS_FRAME_TIME;
 use std::cell::RefCell;
@@ -136,10 +138,11 @@ pub fn client_main() {
         vxreg.get_definition_from_name("core:dirt").unwrap(),
         vxreg.get_definition_from_name("core:stone").unwrap(),
         vxreg.get_definition_from_name("core:diamond_ore").unwrap(),
-        vxreg.get_definition_from_name("core:water").unwrap(),
+        vxreg.get_definition_from_name("core:debug").unwrap(),
         vxreg.get_definition_from_name("core:table").unwrap(),
     ];
     let mut i_place = 4;
+    let mut i_orientation = 0;
     let i_destroy = vxreg.get_definition_from_name("core:void").unwrap();
 
     'running: loop {
@@ -189,7 +192,7 @@ pub fn client_main() {
                 } else {
                     i_destroy
                 };
-                let meta = if input_mgr
+                let shape = if input_mgr
                     .pressed_keys
                     .contains(&sdl2::keyboard::Keycode::Num1)
                 {
@@ -197,6 +200,7 @@ pub fn client_main() {
                 } else {
                     0
                 };
+                let meta = StdMeta::from_parts(shape, i_orientation).unwrap().to_meta();
                 let change = bxw_world::worldmgr::VoxelChange {
                     bpos,
                     from: click_datum,
@@ -289,10 +293,15 @@ pub fn client_main() {
                 color: GUI_BLACK,
                 cmd: GuiCmd::FreeText {
                     text: Cow::from(format!(
-                        "{}\nLookV: {:?}\nLookP: {:?}",
+                        "{}\nLookV: {:?}\nLookP: {:?}\nPlace dir: {} {:?}\n{:?}\n",
                         DEBUG_DATA.hud_format(),
                         look_pos,
-                        look_precise_pos
+                        look_precise_pos,
+                        i_orientation,
+                        OctahedralOrientation::from_index(i_orientation as usize).unwrap(),
+                        OctahedralOrientation::from_index(i_orientation as usize)
+                            .unwrap()
+                            .to_matrixi(),
                     )),
                     scale: 0.5,
                     start_at: gv2((0.0, 10.0), (0.0, 10.0)),
@@ -361,6 +370,7 @@ pub fn client_main() {
             RenderingContext::frame_finish(fc);
         }
 
+        input_mgr.pre_process();
         for event in event_pump.poll_iter() {
             input_mgr.process(&mut rctx, event);
         }
@@ -372,6 +382,18 @@ pub fn client_main() {
         if input_mgr.input_state.requesting_exit {
             input_mgr.input_state.requesting_exit = false;
             break 'running;
+        }
+
+        if input_mgr
+            .just_pressed_keys
+            .contains(&sdl2::keyboard::Keycode::Q)
+        {
+            i_orientation = (i_orientation + 1) % 24;
+        } else if input_mgr
+            .just_pressed_keys
+            .contains(&sdl2::keyboard::Keycode::E)
+        {
+            i_orientation = (i_orientation + 23) % 24;
         }
 
         let player_pos;

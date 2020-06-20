@@ -1,5 +1,6 @@
 use crate::math::*;
 use itertools::Itertools;
+use std::fmt::Debug;
 
 /// A direction in the left-handed coordinate system of the game
 #[repr(i32)]
@@ -160,10 +161,22 @@ impl Direction {
 }
 
 /// One of the 24 possible orientations for an octahedron or cube; right cross(left-handed) up == front
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct OctahedralOrientation {
     right: Direction,
     up: Direction,
+}
+
+impl Debug for OctahedralOrientation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "OctoOrientation {{right: {:?}, up: {:?}, front: {:?}}}",
+            self.right(),
+            self.up(),
+            self.front()
+        )
+    }
 }
 
 impl Default for OctahedralOrientation {
@@ -234,7 +247,8 @@ impl OctahedralOrientation {
             }
         };
         // front is always determined by the cross product
-        right_idx * 4 + up_idx
+        // make it so that 0 is the default orientation (X+ right, Y+ up)
+        (right_idx * 4 + up_idx + 24 - 5) % 24
     }
 
     /// Converts an index (0..24, as returned from to_index) to an orientation
@@ -242,6 +256,8 @@ impl OctahedralOrientation {
         if i >= 24 {
             None
         } else {
+            // adjust for default orientation offset
+            let i = (i + 5) % 24;
             let right_idx = i / 4;
             let right = Direction::from_signed_axis_index(right_idx).unwrap();
             let up_idx = i % 4;
@@ -260,7 +276,7 @@ impl OctahedralOrientation {
         Matrix3::from_columns(&[
             self.right().to_vec(),
             self.up().to_vec(),
-            -self.front().to_vec(),
+            self.back().to_vec(),
         ])
     }
 
@@ -279,6 +295,18 @@ impl OctahedralOrientation {
 
     pub fn apply_to_vecf(self, vec: Vector3<f32>) -> Vector3<f32> {
         self.to_matrixf() * vec
+    }
+
+    pub fn unapply_to_dir(self, dir: Direction) -> Direction {
+        Direction::try_from_vec(self.to_matrixi().transpose() * dir.to_vec()).unwrap()
+    }
+
+    pub fn unapply_to_veci(self, vec: Vector3<i32>) -> Vector3<i32> {
+        self.to_matrixi().transpose() * vec
+    }
+
+    pub fn unapply_to_vecf(self, vec: Vector3<f32>) -> Vector3<f32> {
+        self.to_matrixf().transpose() * vec
     }
 
     pub fn right(self) -> Direction {
@@ -365,6 +393,9 @@ mod test {
                         assert_eq!(orn.apply_to_dir(DIR_FRONT), orn.front());
                         assert_eq!(orn.apply_to_dir(DIR_RIGHT), orn.right());
                         assert_eq!(orn.apply_to_dir(DIR_UP), orn.up());
+                        assert_eq!(orn.apply_to_dir(DIR_BACK), orn.back());
+                        assert_eq!(orn.apply_to_dir(DIR_LEFT), orn.left());
+                        assert_eq!(orn.apply_to_dir(DIR_DOWN), orn.down());
                     }
                 }
             }

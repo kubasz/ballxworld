@@ -130,7 +130,7 @@ pub struct World {
     tasks_in_pool: Arc<AtomicI32>,
     remaining_deltas: Vec<ChunkDelta>,
     sync_task_queue: (
-        SyncSender<SynchronousUpdateTask>,
+        Sender<SynchronousUpdateTask>,
         Receiver<SynchronousUpdateTask>,
     ),
 }
@@ -206,7 +206,7 @@ impl World {
     pub fn new(name: String) -> Self {
         let default_capacity = 64;
         let busy_arc = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = sync_channel(256);
+        let (tx, rx) = channel();
         let mut handlers = Vec::new();
         for _ in 0..8 {
             handlers.push(RefCell::new(
@@ -244,7 +244,7 @@ impl World {
         self.handlers[id] = RefCell::new(handler);
     }
 
-    pub fn get_sync_task_channel(&self) -> SyncSender<SynchronousUpdateTask> {
+    pub fn get_sync_task_channel(&self) -> Sender<SynchronousUpdateTask> {
         self.sync_task_queue.0.clone()
     }
 

@@ -83,9 +83,11 @@ pub fn mesh_from_chunk(
         }
 
         let vshape = block_shape(vdat, vdef);
+        let vor = block_orientation(vdat, vdef);
 
-        for side_dir in &ALL_DIRS {
-            let side = &vshape.sides[side_dir.to_signed_axis_index()];
+        for &side_dir in &ALL_DIRS {
+            let rot_side_dir = vor.unapply_to_dir(side_dir);
+            let side = &vshape.sides[rot_side_dir.to_signed_axis_index()];
             if side.indices.is_empty() {
                 continue;
             }
@@ -97,7 +99,10 @@ pub fn mesh_from_chunk(
             let tdat = vdefs[get_block_idx(touchpos)];
             let tdef = registry.get_definition_from_datum(tdat);
             let tshape = block_shape(tdat, tdef);
-            let tside = &tshape.sides[touchside.to_signed_axis_index()];
+            let tor = block_orientation(tdat, tdef);
+            let touchrotside = tor.unapply_to_dir(touchside);
+            let tside = &tshape.sides[touchrotside.to_signed_axis_index()];
+
             if side.can_be_clipped && tside.can_clip {
                 continue;
             }
@@ -107,8 +112,8 @@ pub fn mesh_from_chunk(
             for vtx in side.vertices.iter() {
                 // AO calculation
                 let mut ao = 1.0;
-                for ao_off in vtx.ao_offsets.iter() {
-                    let pos = ipos + ao_off;
+                for &ao_off in vtx.ao_offsets.iter() {
+                    let pos = ipos + vor.apply_to_veci(ao_off);
                     let idx = get_block_idx(pos);
                     let dat = vdefs[idx];
                     let def = registry.get_definition_from_datum(dat);
@@ -118,15 +123,14 @@ pub fn mesh_from_chunk(
                     }
                 }
 
+                let voffset = vor.apply_to_vecf(vtx.offset);
                 let position: [f32; 4] = [
-                    ipos.x as f32 + vtx.offset.x,
-                    ipos.y as f32 + vtx.offset.y,
-                    ipos.z as f32 + vtx.offset.z,
+                    ipos.x as f32 + voffset.x,
+                    ipos.y as f32 + voffset.y,
+                    ipos.z as f32 + voffset.z,
                     1.0,
                 ];
-                let texid = *vdef
-                    .texture_mapping
-                    .at_direction(Direction::try_from_vec(ioffset).unwrap());
+                let texid = *vdef.texture_mapping.at_direction(rot_side_dir);
                 let color = [
                     vdef.debug_color[0] * ao,
                     vdef.debug_color[1] * ao,

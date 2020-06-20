@@ -452,7 +452,7 @@ fn init_slope_shape() -> VoxelShapeDef {
         sides: [
             // Left X-
             VSSide {
-                can_clip: true,
+                can_clip: false,
                 can_be_clipped: true,
                 normal: vec3(-1.0, 0.0, 0.0),
                 vertices: smallvec![
