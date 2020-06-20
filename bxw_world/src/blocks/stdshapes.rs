@@ -1,16 +1,66 @@
 use crate::*;
+use bxw_util::direction::*;
 use bxw_util::lazy_static::*;
 use bxw_util::math::*;
 use bxw_util::smallvec::*;
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+pub struct StdMeta {
+    shape: u16,
+    orientation: u16,
+}
+
+impl StdMeta {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn from_parts(shape: u16, orientation: u16) -> Option<Self> {
+        if shape >= 64 || orientation >= 24 {
+            None
+        } else {
+            Some(Self { shape, orientation })
+        }
+    }
+
+    pub fn from_meta(meta: VoxelMetadata) -> Self {
+        Self {
+            shape: meta % 64,
+            orientation: meta / 64,
+        }
+    }
+
+    pub fn to_meta(self) -> VoxelMetadata {
+        self.orientation * 64 + self.shape
+    }
+
+    pub fn shape(self) -> u16 {
+        self.shape
+    }
+
+    pub fn orientation(self) -> u16 {
+        self.orientation
+    }
+}
+
 pub fn block_shape(datum: VoxelDatum, vdef: &VoxelDefinition) -> &'static VoxelShapeDef {
     match vdef.mesh {
         VoxelMesh::None => &*VOXEL_NO_SHAPE,
-        VoxelMesh::CubeAndSlopes => match datum.meta() & 0xF {
+        VoxelMesh::CubeAndSlopes => match StdMeta::from_meta(datum.meta()).shape() {
             0 => &*VOXEL_CUBE_SHAPE,
             1 => &*VOXEL_SLOPE_SHAPE,
             _ => &*VOXEL_CUBE_SHAPE,
         },
+    }
+}
+
+pub fn block_orientation(datum: VoxelDatum, vdef: &VoxelDefinition) -> OctahedralOrientation {
+    match vdef.mesh {
+        VoxelMesh::None => OctahedralOrientation::default(),
+        VoxelMesh::CubeAndSlopes => OctahedralOrientation::from_index(
+            StdMeta::from_meta(datum.meta()).orientation() as usize,
+        )
+        .unwrap_or_default(),
     }
 }
 

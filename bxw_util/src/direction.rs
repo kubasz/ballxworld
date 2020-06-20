@@ -212,6 +212,14 @@ impl OctahedralOrientation {
         }
     }
 
+    pub fn from_matrixi(matrix: Matrix3<i32>) -> Option<Self> {
+        let vright = matrix * DIR_RIGHT.to_vec();
+        let vup = matrix * DIR_UP.to_vec();
+        let right = Direction::try_from_vec(vright)?;
+        let up = Direction::try_from_vec(vup)?;
+        Self::from_right_up(right, up)
+    }
+
     /// Converts itself into an index in the range 0..24 (not inclusive)
     pub fn to_index(self) -> usize {
         // 0..6
@@ -245,6 +253,32 @@ impl OctahedralOrientation {
             let up = Direction::from_signed_axis_index(up_idx).unwrap();
             Some(Self { right, up })
         }
+    }
+
+    /// M * v will rotate the vector v to match this orientation
+    pub fn to_matrixi(self) -> Matrix3<i32> {
+        Matrix3::from_columns(&[
+            self.right().to_vec(),
+            self.up().to_vec(),
+            -self.front().to_vec(),
+        ])
+    }
+
+    /// M * v will rotate the vector v to match this orientation
+    pub fn to_matrixf(self) -> Matrix3<f32> {
+        self.to_matrixi().map(|x| x as f32)
+    }
+
+    pub fn apply_to_dir(self, dir: Direction) -> Direction {
+        Direction::try_from_vec(self.to_matrixi() * dir.to_vec()).unwrap()
+    }
+
+    pub fn apply_to_veci(self, vec: Vector3<i32>) -> Vector3<i32> {
+        self.to_matrixi() * vec
+    }
+
+    pub fn apply_to_vecf(self, vec: Vector3<f32>) -> Vector3<f32> {
+        self.to_matrixf() * vec
     }
 
     pub fn right(self) -> Direction {
@@ -324,6 +358,13 @@ mod test {
                             Some(orn),
                             OctahedralOrientation::from_front_right(orn.front(), orn.right())
                         );
+                        assert_eq!(
+                            Some(orn),
+                            OctahedralOrientation::from_matrixi(orn.to_matrixi())
+                        );
+                        assert_eq!(orn.apply_to_dir(DIR_FRONT), orn.front());
+                        assert_eq!(orn.apply_to_dir(DIR_RIGHT), orn.right());
+                        assert_eq!(orn.apply_to_dir(DIR_UP), orn.up());
                     }
                 }
             }
@@ -337,6 +378,8 @@ mod test {
         assert_eq!(default_orientation.left(), DIR_LEFT);
         assert_eq!(default_orientation.down(), DIR_DOWN);
         assert_eq!(default_orientation.back(), DIR_BACK);
+        let id3: Matrix3<f32> = one();
+        assert_eq!(default_orientation.to_matrixf(), id3);
     }
 
     #[test]
