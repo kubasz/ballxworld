@@ -9,11 +9,12 @@ rand = "0.7"
 rand_xoshiro = "0.4"
 nalgebra = "0.21"
 glm = { version = "0.7", package = "nalgebra-glm" }
-toml_edit = "0.1"
+simba = { version = "0.1.5", features = ["packed_simd"] }
+toml_edit = "0.2"
 thread_local_crate = { version = "1", package = "thread_local" }
 smallvec = "1"
 rayon = "1.1"
-parking_lot = "0.10"
+parking_lot = { version = "0.10", features = ["nightly"] }
 divrem = "0.1"
 num-traits = "0.2"
 fnv = "1"

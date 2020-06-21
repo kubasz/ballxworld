@@ -1,4 +1,5 @@
 use crate::client::render::voxrender::vox::{ChunkBuffers, VoxelVertex};
+use bxw_util::direction::OctahedralOrientation;
 use bxw_util::math::*;
 use bxw_util::*;
 use bxw_world::blocks::stdshapes::*;
@@ -6,7 +7,6 @@ use bxw_world::registry::VoxelRegistry;
 use bxw_world::*;
 use itertools::iproduct;
 use std::iter::FromIterator;
-use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -37,10 +37,13 @@ pub fn mesh_from_chunk(
     let premesh = Instant::now();
     let ucchunks: Vec<Box<UncompressedChunk>> =
         Vec::from_iter(chunks.iter().map(|c| c.decompress()));
-    // Safety: uninitialized array of MaybeUninits is safe
     const INFLATED_DIM: usize = CHUNK_DIM + 2;
-    let mut vdata: [MaybeUninit<VoxelDatum>; cubed(INFLATED_DIM)] =
-        unsafe { MaybeUninit::uninit().assume_init() };
+    let mut vdecoded: Vec<(
+        VoxelDatum,
+        &VoxelDefinition,
+        &VoxelShapeDef,
+        OctahedralOrientation,
+    )> = Vec::with_capacity(cubed(INFLATED_DIM));
     for (y, z, x) in iproduct!(0..INFLATED_DIM, 0..INFLATED_DIM, 0..INFLATED_DIM) {
         let rcpos = vec3(x, y, z).map(|c| {
             if c == 0 {
@@ -53,13 +56,12 @@ pub fn mesh_from_chunk(
         });
         let cidx = rcpos.x + rcpos.z * 3 + rcpos.y * 9;
         let bpos = blockidx_from_blockpos(vec3(x as i32 - 1, y as i32 - 1, z as i32 - 1));
-        let dat = ucchunks[cidx].blocks_yzx[bpos];
-        let idx = x + z * INFLATED_DIM + y * INFLATED_DIM * INFLATED_DIM;
-        unsafe {
-            vdata[idx].as_mut_ptr().write(dat); // Safety: Initialize every element with a valid data copy
-        }
+        let vdat = ucchunks[cidx].blocks_yzx[bpos];
+        let vdef = registry.get_definition_from_datum(vdat);
+        let vshp = block_shape(vdat, vdef);
+        let vor = block_orientation(vdat, vdef);
+        vdecoded.push((vdat, vdef, vshp, vor));
     }
-    let vdefs: [VoxelDatum; cubed(INFLATED_DIM)] = unsafe { std::mem::transmute(vdata) }; // Safety: The whole array is initialized in the above for loop
 
     // pos relative to Chunk@cpos
     #[inline(always)]
@@ -69,21 +71,17 @@ pub fn mesh_from_chunk(
             + (pos.y + 1) as usize * INFLATED_DIM * INFLATED_DIM
     };
 
-    let mut vbuf: Vec<VoxelVertex> = Vec::new();
-    let mut ibuf: Vec<u32> = Vec::new();
+    let mut vbuf: Vec<VoxelVertex> = Vec::with_capacity(1024);
+    let mut ibuf: Vec<u32> = Vec::with_capacity(1024);
 
     for (cell_y, cell_z, cell_x) in iproduct!(0..CHUNK_DIM, 0..CHUNK_DIM, 0..CHUNK_DIM) {
         let ipos = vec3(cell_x as i32, cell_y as i32, cell_z as i32);
-        let vidx = blockidx_from_blockpos(ipos);
-        let vdat = vdefs[get_block_idx(ipos)];
-        let vdef = registry.get_definition_from_datum(vdat);
+        let vidx = get_block_idx(ipos);
+        let (_vdat, vdef, vshape, vor) = vdecoded[vidx];
 
         if vdef.mesh.is_none() {
             continue;
         }
-
-        let vshape = block_shape(vdat, vdef);
-        let vor = block_orientation(vdat, vdef);
 
         for &side_dir in &ALL_DIRS {
             let rot_side_dir = vor.unapply_to_dir(side_dir);
@@ -96,10 +94,7 @@ pub fn mesh_from_chunk(
             // hidden face removal
             let touchside = side_dir.opposite();
             let touchpos = ipos + ioffset;
-            let tdat = vdefs[get_block_idx(touchpos)];
-            let tdef = registry.get_definition_from_datum(tdat);
-            let tshape = block_shape(tdat, tdef);
-            let tor = block_orientation(tdat, tdef);
+            let (_tdat, _tdef, tshape, tor) = vdecoded[get_block_idx(touchpos)];
             let touchrotside = tor.unapply_to_dir(touchside);
             let tside = &tshape.sides[touchrotside.to_signed_axis_index()];
 
@@ -109,21 +104,21 @@ pub fn mesh_from_chunk(
 
             let voff = vbuf.len() as u32;
             let mut barycentric_color_sum: Vector4<f32> = zero();
+            let vor_mati = vor.to_matrixi();
+            let vor_matf = vor_mati.map(|x| x as f32);
             for vtx in side.vertices.iter() {
                 // AO calculation
                 let mut ao = 1.0;
                 for &ao_off in vtx.ao_offsets.iter() {
-                    let pos = ipos + vor.apply_to_veci(ao_off);
+                    let pos = ipos + vor_mati * ao_off;
                     let idx = get_block_idx(pos);
-                    let dat = vdefs[idx];
-                    let def = registry.get_definition_from_datum(dat);
-                    let shp = block_shape(dat, def);
+                    let (_dat, _def, shp, _or) = vdecoded[idx];
                     if shp.causes_ambient_occlusion {
                         ao *= AO_OCCLUSION_FACTOR;
                     }
                 }
 
-                let voffset = vor.apply_to_vecf(vtx.offset);
+                let voffset = vor_matf * vtx.offset;
                 let position: [f32; 4] = [
                     ipos.x as f32 + voffset.x,
                     ipos.y as f32 + voffset.y,
@@ -159,7 +154,8 @@ pub fn mesh_from_chunk(
     bxw_util::debug_data::DEBUG_DATA
         .wmesh_times
         .push_ns(meshtime.as_nanos() as i64);
-
+    vbuf.shrink_to_fit();
+    ibuf.shrink_to_fit();
     Some(ChunkBuffers {
         vertices: vbuf,
         indices: ibuf,

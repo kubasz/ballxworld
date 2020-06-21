@@ -1,5 +1,6 @@
 use crate::math::*;
 use itertools::Itertools;
+use lazy_static::*;
 use std::fmt::Debug;
 
 /// A direction in the left-handed coordinate system of the game
@@ -188,6 +189,25 @@ impl Default for OctahedralOrientation {
     }
 }
 
+lazy_static! {
+    static ref APPLY_UNAPPLY_LUT: [(Direction, Direction); 6 * 24] = init_apply_unapply_lut();
+}
+
+fn init_apply_unapply_lut() -> [(Direction, Direction); 6 * 24] {
+    let mut lut = [(DIR_FRONT, DIR_FRONT); 6 * 24];
+    for idir in 0..6 {
+        for ior in 0..24 {
+            let dir = Direction::from_signed_axis_index(idir).unwrap();
+            let or = OctahedralOrientation::from_index(ior).unwrap();
+            let applied = Direction::try_from_vec(or.to_matrixi() * dir.to_vec()).unwrap();
+            let unapplied =
+                Direction::try_from_vec(or.to_matrixi().transpose() * dir.to_vec()).unwrap();
+            lut[idir * 24 + ior] = (applied, unapplied);
+        }
+    }
+    lut
+}
+
 impl OctahedralOrientation {
     pub fn new() -> Self {
         Default::default()
@@ -286,7 +306,7 @@ impl OctahedralOrientation {
     }
 
     pub fn apply_to_dir(self, dir: Direction) -> Direction {
-        Direction::try_from_vec(self.to_matrixi() * dir.to_vec()).unwrap()
+        APPLY_UNAPPLY_LUT[dir.to_signed_axis_index() * 24 + self.to_index()].0
     }
 
     pub fn apply_to_veci(self, vec: Vector3<i32>) -> Vector3<i32> {
@@ -298,7 +318,7 @@ impl OctahedralOrientation {
     }
 
     pub fn unapply_to_dir(self, dir: Direction) -> Direction {
-        Direction::try_from_vec(self.to_matrixi().transpose() * dir.to_vec()).unwrap()
+        APPLY_UNAPPLY_LUT[dir.to_signed_axis_index() * 24 + self.to_index()].1
     }
 
     pub fn unapply_to_veci(self, vec: Vector3<i32>) -> Vector3<i32> {

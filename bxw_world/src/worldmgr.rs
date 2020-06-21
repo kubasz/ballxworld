@@ -351,7 +351,7 @@ impl World {
         for _taskn in 0..256 {
             match self.sync_task_queue.1.try_recv() {
                 Ok(task) => (task)(self),
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+                Err(_) => break,
             }
         }
     }

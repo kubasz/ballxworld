@@ -1,3 +1,4 @@
+#![allow(clippy::unused_unit)]
 pub mod client;
 pub mod util;
 

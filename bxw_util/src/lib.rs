@@ -1,3 +1,5 @@
+#![allow(clippy::unused_unit)]
+
 // Re-export dependencies
 pub use divrem;
 pub use fnv;
