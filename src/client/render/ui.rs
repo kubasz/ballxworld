@@ -781,7 +781,7 @@ impl GuiRenderer {
         };
         let ai = vma::AllocationCreateInfo {
             usage: vma::MemoryUsage::CpuToGpu,
-            flags: vma::AllocationCreateFlags::NONE,
+            flags: vma::AllocationCreateFlags::MAPPED,
             ..Default::default()
         };
         let mut vmalloc = rctx.handles.vmalloc.lock();
@@ -833,11 +833,10 @@ impl GuiRenderer {
 
         let (vbuf, ibuf) = &self.gui_buffers[fctx.inflight_index];
         {
-            let vmalloc = fctx.rctx.handles.vmalloc.lock();
-            let (va, _vai) = vbuf.allocation.as_ref().unwrap();
-            let (ia, _iai) = ibuf.allocation.as_ref().unwrap();
-            let vmap = vmalloc.map_memory(va).unwrap() as *mut shaders::UiVertex;
-            let imap = vmalloc.map_memory(ia).unwrap() as *mut u32;
+            let (_va, vai) = vbuf.allocation.as_ref().unwrap();
+            let (_ia, iai) = ibuf.allocation.as_ref().unwrap();
+            let vmap = vai.get_mapped_data() as *mut shaders::UiVertex;
+            let imap = iai.get_mapped_data() as *mut u32;
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     self.gui_vtx_write.verts.as_ptr(),
@@ -849,9 +848,24 @@ impl GuiRenderer {
                     imap,
                     self.gui_vtx_write.indxs.len(),
                 );
+                let ranges = [
+                    vk::MappedMemoryRange::builder()
+                        .size(vai.get_size() as u64)
+                        .offset(vai.get_offset() as u64)
+                        .memory(vai.get_device_memory())
+                        .build(),
+                    vk::MappedMemoryRange::builder()
+                        .size(iai.get_size() as u64)
+                        .offset(iai.get_offset() as u64)
+                        .memory(iai.get_device_memory())
+                        .build(),
+                ];
+                fctx.rctx
+                    .handles
+                    .device
+                    .flush_mapped_memory_ranges(&ranges)
+                    .unwrap();
             }
-            vmalloc.unmap_memory(va).unwrap();
-            vmalloc.unmap_memory(ia).unwrap();
         }
 
         let device = &fctx.rctx.handles.device;
