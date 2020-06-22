@@ -120,6 +120,64 @@ fn init_no_shape() -> VoxelShapeDef {
     }
 }
 
+fn corner_ao_set(corner: Vector3<f32>, inormal: Vector3<i32>) -> SmallVec<[Vector3<i32>; 4]> {
+    let icorner = corner.map(|x| x.signum() as i32);
+    let mut sv = SmallVec::new();
+    sv.push(icorner);
+    sv.push(inormal);
+    if inormal.x == 0 {
+        let mut c = icorner;
+        c.x = 0;
+        sv.push(c);
+    }
+    if inormal.y == 0 {
+        let mut c = icorner;
+        c.y = 0;
+        sv.push(c);
+    }
+    if inormal.z == 0 {
+        let mut c = icorner;
+        c.z = 0;
+        sv.push(c);
+    }
+    sv
+}
+
+fn quad_verts(center: Vector3<f32>, right: Vector3<f32>, up: Vector3<f32>) -> [VSVertex; 4] {
+    let fnormal = -right.cross(&up);
+    let inormal = fnormal.map(|x| x.signum() as i32);
+    [
+        VSVertex {
+            offset: center - right - up,
+            texcoord: vec2(0.0, 1.0),
+            barycentric: vec2(0.0, 1.0),
+            barycentric_sign: -1,
+            ao_offsets: corner_ao_set(center-right-up, inormal),
+        },
+        VSVertex {
+            offset: center - right + up,
+            texcoord: vec2(0.0, 0.0),
+            barycentric: vec2(0.0, 0.0),
+            barycentric_sign: -1,
+            ao_offsets: corner_ao_set(center-right+up, inormal),
+        },
+        VSVertex {
+            offset: center + right + up,
+            texcoord: vec2(1.0, 0.0),
+            barycentric: vec2(1.0, 0.0),
+            barycentric_sign: -1,
+            ao_offsets: corner_ao_set(center+right+up, inormal),
+        },
+        VSVertex {
+            offset: center + right - up,
+            texcoord: vec2(1.0, 1.0),
+            barycentric: vec2(0.0, 0.0),
+            barycentric_sign: -1,
+            ao_offsets: corner_ao_set(center+right-up, inormal),
+        },
+    ]
+}
+
 fn init_cube_shape() -> VoxelShapeDef {
     VoxelShapeDef {
         causes_ambient_occlusion: true,
