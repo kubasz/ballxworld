@@ -279,33 +279,21 @@ fn init_slope_shape() -> VoxelShapeDef {
                         texcoord: vec2(0.0, 1.0),
                         barycentric: vec2(0.0, 0.0),
                         barycentric_sign: 0,
-                        ao_offsets: SmallVec::from_slice(&[
-                            vec3(-1, -1, 1),
-                            vec3(-1, -1, 0),
-                            vec3(-1, 0, 1)
-                        ]),
+                        ao_offsets: corner_ao_set(vec3(-1.0, -1.0, 1.0), vec3(-1, 0, 0)),
                     },
                     VSVertex {
                         offset: vec3(-0.5, 0.5, 0.5),
                         texcoord: vec2(0.0, 0.0),
                         barycentric: vec2(0.0, 0.0),
                         barycentric_sign: 0,
-                        ao_offsets: SmallVec::from_slice(&[
-                            vec3(-1, 1, 1),
-                            vec3(-1, 1, 0),
-                            vec3(-1, 0, 1)
-                        ]),
+                        ao_offsets: corner_ao_set(vec3(-1.0, 1.0, 1.0), vec3(-1, 0, 0)),
                     },
                     VSVertex {
                         offset: vec3(-0.5, -0.5, -0.5),
                         texcoord: vec2(1.0, 1.0),
                         barycentric: vec2(0.0, 0.0),
                         barycentric_sign: 0,
-                        ao_offsets: SmallVec::from_slice(&[
-                            vec3(-1, -1, -1),
-                            vec3(-1, -1, 0),
-                            vec3(-1, 0, -1)
-                        ]),
+                        ao_offsets: corner_ao_set(vec3(-1.0, -1.0, -1.0), vec3(-1, 0, 0)),
                     },
                 ],
                 indices: SmallVec::from_slice(&[0, 1, 2]),
@@ -321,33 +309,21 @@ fn init_slope_shape() -> VoxelShapeDef {
                         texcoord: vec2(0.0, 1.0),
                         barycentric: vec2(0.0, 0.0),
                         barycentric_sign: 0,
-                        ao_offsets: SmallVec::from_slice(&[
-                            vec3(1, -1, -1),
-                            vec3(1, -1, 0),
-                            vec3(1, 0, -1)
-                        ]),
+                        ao_offsets: corner_ao_set(vec3(1.0, -1.0, -1.0), vec3(1, 0, 0))
                     },
                     VSVertex {
                         offset: vec3(0.5, 0.5, 0.5),
                         texcoord: vec2(1.0, 0.0),
                         barycentric: vec2(0.0, 0.0),
                         barycentric_sign: 0,
-                        ao_offsets: SmallVec::from_slice(&[
-                            vec3(1, 1, 1),
-                            vec3(1, 1, 0),
-                            vec3(1, 0, 1)
-                        ]),
+                        ao_offsets: corner_ao_set(vec3(1.0, 1.0, 1.0), vec3(1, 0, 0))
                     },
                     VSVertex {
                         offset: vec3(0.5, -0.5, 0.5),
                         texcoord: vec2(1.0, 1.0),
                         barycentric: vec2(0.0, 0.0),
                         barycentric_sign: 0,
-                        ao_offsets: SmallVec::from_slice(&[
-                            vec3(1, -1, 1),
-                            vec3(1, -1, 0),
-                            vec3(1, 0, 1)
-                        ]),
+                        ao_offsets: corner_ao_set(vec3(1.0, -1.0, 1.0), vec3(1, 0, 0))
                     },
                 ],
                 indices: SmallVec::from_slice(&[0, 1, 2]),
@@ -369,52 +345,11 @@ fn init_slope_shape() -> VoxelShapeDef {
                 can_clip: false,
                 can_be_clipped: false,
                 normal: vec3(0.0, 1.0, -1.0).normalize(),
-                vertices: smallvec![
-                    VSVertex {
-                        offset: vec3(-0.5, -0.5, -0.5),
-                        texcoord: vec2(0.0, 1.0),
-                        barycentric: vec2(0.0, 1.0),
-                        barycentric_sign: -1,
-                        ao_offsets: SmallVec::from_slice(&[
-                            vec3(-1, -1, -1),
-                            vec3(0, -1, -1),
-                            vec3(-1, 0, -1)
-                        ]),
-                    },
-                    VSVertex {
-                        offset: vec3(-0.5, 0.5, 0.5),
-                        texcoord: vec2(0.0, 0.0),
-                        barycentric: vec2(0.0, 0.0),
-                        barycentric_sign: 1,
-                        ao_offsets: SmallVec::from_slice(&[
-                            vec3(-1, 1, 1),
-                            vec3(0, 1, 1),
-                            vec3(-1, 0, 1)
-                        ]),
-                    },
-                    VSVertex {
-                        offset: vec3(0.5, 0.5, 0.5),
-                        texcoord: vec2(1.0, 0.0),
-                        barycentric: vec2(1.0, 0.0),
-                        barycentric_sign: -1,
-                        ao_offsets: SmallVec::from_slice(&[
-                            vec3(1, 1, 1),
-                            vec3(0, 1, 1),
-                            vec3(1, 0, 1)
-                        ]),
-                    },
-                    VSVertex {
-                        offset: vec3(0.5, -0.5, -0.5),
-                        texcoord: vec2(1.0, 1.0),
-                        barycentric: vec2(0.0, 0.0),
-                        barycentric_sign: 1,
-                        ao_offsets: SmallVec::from_slice(&[
-                            vec3(1, -1, -1),
-                            vec3(0, -1, -1),
-                            vec3(1, 0, -1)
-                        ]),
-                    },
-                ],
+                vertices: quad_verts(
+                    vec3(0.0, 0.0, 0.0),
+                    vec3(0.5, 0.0, 0.0),
+                    vec3(0.0, 0.5, 0.5),
+                ),
                 indices: SmallVec::from_slice(&QUAD_INDICES),
             },
             // Front Z-
