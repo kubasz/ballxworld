@@ -77,6 +77,7 @@ pub fn mesh_from_chunk(
     for (cell_y, cell_z, cell_x) in iproduct!(0..CHUNK_DIM, 0..CHUNK_DIM, 0..CHUNK_DIM) {
         let ipos = vec3(cell_x as i32, cell_y as i32, cell_z as i32);
         let vidx = get_block_idx(ipos);
+        let ic_vidx = blockidx_from_blockpos(ipos);
         let (_vdat, vdef, vshape, vor) = vdecoded[vidx];
 
         if vdef.mesh.is_none() {
@@ -137,7 +138,7 @@ pub fn mesh_from_chunk(
                     position,
                     color,
                     texcoord: [vtx.texcoord.x, vtx.texcoord.y, texid as f32],
-                    index: vidx as i32,
+                    index: ic_vidx as i32,
                     barycentric_color_offset: [0.0; 4], // initialized after the loop
                     barycentric: [vtx.barycentric.x, vtx.barycentric.y],
                 });
