@@ -140,7 +140,7 @@ pub fn mesh_from_chunk(
                     texcoord: [vtx.texcoord.x, vtx.texcoord.y, texid as f32],
                     index: ic_vidx as i32,
                     barycentric_color_offset: [0.0; 4], // initialized after the loop
-                    barycentric: [vtx.barycentric.x, vtx.barycentric.y],
+                    barycentric: [vtx.barycentric.x, vtx.barycentric.y, vtx.barycentric.z],
                 });
             }
             for v in &mut vbuf[voff as usize..] {

@@ -45,7 +45,7 @@ pub mod vox {
         pub texcoord: [f32; 3],
         pub index: i32,
         pub barycentric_color_offset: [f32; 4],
-        pub barycentric: [f32; 2],
+        pub barycentric: [f32; 3],
     }
 
     impl VoxelVertex {
@@ -92,7 +92,7 @@ pub mod vox {
                 vk::VertexInputAttributeDescription {
                     binding: 0,
                     location: 5,
-                    format: vk::Format::R32G32_SFLOAT,
+                    format: vk::Format::R32G32B32_SFLOAT,
                     offset: offset_of!(Self, barycentric) as u32,
                 },
             ];
