@@ -197,6 +197,11 @@ pub fn client_main() {
                     .contains(&sdl2::keyboard::Keycode::Num1)
                 {
                     1
+                } else if input_mgr
+                    .pressed_keys
+                    .contains(&sdl2::keyboard::Keycode::Num2)
+                {
+                    2
                 } else {
                     0
                 };
