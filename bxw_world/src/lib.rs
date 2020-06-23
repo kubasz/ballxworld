@@ -73,29 +73,35 @@ pub type VoxelId = u16;
 pub type VoxelMetadata = u16;
 
 #[derive(Debug, Copy, Clone, Default, Eq, PartialEq, Hash)]
+#[repr(transparent)]
 pub struct VoxelDatum {
     datum: u32,
 }
 
 impl VoxelDatum {
+    #[inline(always)]
     pub fn new(id: VoxelId, meta: VoxelMetadata) -> Self {
         Self {
             datum: (id as u32) << 16 | meta as u32,
         }
     }
 
+    #[inline(always)]
     pub fn from_repr(r: u32) -> Self {
         Self { datum: r }
     }
 
+    #[inline(always)]
     pub fn id(self) -> VoxelId {
         VoxelId::try_from((self.datum >> 16) & 0xFFFF).unwrap()
     }
 
+    #[inline(always)]
     pub fn meta(self) -> VoxelMetadata {
         VoxelMetadata::try_from(self.datum & 0xFFFF).unwrap()
     }
 
+    #[inline(always)]
     pub fn repr(self) -> u32 {
         self.datum
     }
@@ -175,7 +181,7 @@ impl Default for VChunk {
 }
 
 fn compress_rle<I: Iterator<Item = u32>>(data: I) -> Vec<u32> {
-    let mut outvec = Vec::new();
+    let mut outvec = Vec::with_capacity(128);
     let mut rle_elem = None;
     let mut rle_len = 0;
     let mut prev = None;
@@ -203,41 +209,59 @@ fn compress_rle<I: Iterator<Item = u32>>(data: I) -> Vec<u32> {
     if rle_elem.is_some() {
         outvec.push(rle_len);
     }
+    outvec.shrink_to_fit();
     outvec
 }
 
-fn decompress_rle<TF, TT: Copy>(data: &[u32], target: &mut [TT; CHUNK_DIM3], transform: TF)
-where
-    TF: Fn(u32) -> TT,
-{
-    let mut ti = 0;
-    let mut di = data.iter().copied().enumerate();
-    let mut prev = None;
-    loop {
-        let nopt = di.next();
-        let n = if let Some(n) = nopt {
-            n
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum RleDecompressError {
+    TooMuchUncompressedData,
+    TooMuchRleData(usize),
+    MissingRleRepeatN,
+    FinalPosMismatch(usize),
+}
+
+fn decompress_rle(data: &[u32]) -> Result<Box<UncompressedChunk>, RleDecompressError> {
+    if data.len() < 3 {
+        return Err(RleDecompressError::FinalPosMismatch(data.len()));
+    }
+    let mut target_box: Box<UncompressedChunk> = Box::default();
+    let target = &mut target_box.blocks_yzx;
+    let first_element = data[0];
+    target[0] = VoxelDatum::from_repr(first_element);
+    let mut prev = Some(first_element);
+    let mut target_pos = 1;
+    let mut rle_iterator = data[1..].iter();
+    while let Some(&element) = rle_iterator.next() {
+        if let Some(e) = target.get_mut(target_pos) {
+            *e = VoxelDatum::from_repr(element);
         } else {
-            break;
-        };
-        let tdat = transform(n.1);
-        if ti >= target.len() {
-            panic!("{:?} ti={}", n, ti);
+            return Err(RleDecompressError::TooMuchUncompressedData);
         }
-        target[ti] = tdat;
-        ti += 1;
-        if prev.map(|p| p == n.1).unwrap_or(false) {
+        target_pos += 1;
+        if prev.map_or(false, |prev| prev == element) {
             prev = None;
-            let rn = di.next().unwrap().1;
-            for _ in 0..rn {
-                target[ti] = tdat;
-                ti += 1;
+            let extra_repeat_count = if let Some(&n) = rle_iterator.next() {
+                n as usize
+            } else {
+                return Err(RleDecompressError::MissingRleRepeatN);
+            };
+            if target_pos + extra_repeat_count > target.len() {
+                return Err(RleDecompressError::TooMuchRleData(extra_repeat_count));
             }
+            for e in &mut target[target_pos..target_pos + extra_repeat_count] {
+                *e = VoxelDatum::from_repr(element);
+            }
+            target_pos += extra_repeat_count;
         } else {
-            prev = Some(n.1);
+            prev = Some(element);
         }
     }
-    assert_eq!(ti, CHUNK_DIM3);
+    if target_pos != target.len() {
+        Err(RleDecompressError::FinalPosMismatch(target_pos))
+    } else {
+        Ok(target_box)
+    }
 }
 
 #[cfg(test)]
@@ -260,18 +284,16 @@ mod test {
 
     #[test]
     fn rle_decompress_zero_test() {
-        let mut target = [0xFFFF_FFFFu32; CHUNK_DIM3];
         let compressed = vec![0, 0, CHUNK_DIM3 as u32 - 2];
-        decompress_rle(&compressed, &mut target, |x| x);
-        assert!(target.iter().copied().all(|e| e == 0));
+        let target = decompress_rle(&compressed).unwrap();
+        assert!(target.blocks_yzx.iter().copied().all(|e| e.repr() == 0));
     }
 
     #[test]
     fn rle_decompress_one_test() {
-        let mut target = [0xFFFF_FFFFu32; CHUNK_DIM3];
         let compressed = vec![1, 1, CHUNK_DIM3 as u32 - 2];
-        decompress_rle(&compressed, &mut target, |x| x);
-        assert!(target.iter().copied().all(|e| e == 1));
+        let target = decompress_rle(&compressed).unwrap();
+        assert!(target.blocks_yzx.iter().copied().all(|e| e.repr() == 1));
     }
 
     #[test]
@@ -287,9 +309,11 @@ mod test {
             }
         }
         let compdata = compress_rle(randdata.iter().copied());
-        let mut decdata = [0xFFFF_FFFFu32; CHUNK_DIM3];
-        decompress_rle(&compdata, &mut decdata, |x| x);
-        assert_eq!(randdata[..], decdata[..]);
+        let decdata = decompress_rle(&compdata).unwrap();
+        assert!(randdata
+            .iter()
+            .copied()
+            .eq(decdata.blocks_yzx.iter().copied().map(|x| x.repr())));
     }
 }
 
@@ -307,10 +331,9 @@ impl VChunk {
 
     /// Decompresses the current version of this chunk
     pub fn decompress(&self) -> Box<UncompressedChunk> {
-        let mut uc: Box<UncompressedChunk> = Box::default();
-        uc.position = self.position;
         let VChunkData::QuickCompressed { vox } = &self.data;
-        decompress_rle(vox, &mut uc.blocks_yzx, VoxelDatum::from_repr);
+        let mut uc = decompress_rle(vox).expect("Invalid compressed chunk stored");
+        uc.position = self.position;
         uc
     }
 }
