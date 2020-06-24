@@ -1,0 +1,17 @@
+[package]
+name = "bxw_terragen"
+version = "0.1.0"
+authors = ["Jakub Szewczyk <kubasz51@gmail.com>"]
+edition = "2018"
+
+[lib]
+name = "bxw_terragen"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bxw_terragen_bin"
+path = "src/main.rs"
+
+[dependencies]
+bxw_util = { path = "../bxw_util" }
+bxw_world = { path = "../bxw_world" }

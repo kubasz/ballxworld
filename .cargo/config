@@ -1,4 +1,4 @@
-paths = [".", "bxw_util", "bxw_world", "vk-sync-rs-master"]
+paths = [".", "bxw_util", "bxw_world", "bxw_terragen", "vk-sync-rs-master"]
 [target.'cfg(target_arch = "x86_64")']
 rustflags = ["-Ctarget-cpu=haswell"]
 

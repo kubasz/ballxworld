@@ -15,6 +15,7 @@ vk-sync = { path = "./vk-sync-rs-master", version = "*" }
 image = "0.23"
 bxw_util = { path = "bxw_util" }
 bxw_world = { path = "bxw_world" }
+bxw_terragen = { path = "bxw_terragen" }
 
 # wren-sys = { path = "wren" }
 

@@ -9,6 +9,7 @@ rand = "0.7"
 rand_xoshiro = "0.4"
 nalgebra = "0.21"
 glm = { version = "0.7", package = "nalgebra-glm" }
+packed_simd = "0.3.3"
 simba = { version = "0.1.5", features = ["packed_simd"] }
 toml_edit = "0.2"
 thread_local_crate = { version = "1", package = "thread_local" }
