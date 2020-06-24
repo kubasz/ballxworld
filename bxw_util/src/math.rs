@@ -6,5 +6,5 @@ pub use nalgebra::{
 };
 pub use num_traits::{clamp, one, zero};
 pub use num_traits::{One, Zero};
-pub use simba::scalar::*;
 pub use packed_simd::*;
+pub use simba::scalar::*;

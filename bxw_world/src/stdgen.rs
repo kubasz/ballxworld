@@ -1,8 +1,8 @@
 use crate::registry::VoxelRegistry;
 use crate::{UncompressedChunk, VoxelDatum, CHUNK_DIM};
+use bxw_util::math::*;
 use bxw_util::*;
 use lru::LruCache;
-use bxw_util::math::*;
 use noise::{NoiseFn, Seedable, SuperSimplex};
 use rand::prelude::*;
 use rand_xoshiro::Xoshiro256StarStar;
