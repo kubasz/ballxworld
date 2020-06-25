@@ -1,11 +1,21 @@
 pub use bxw_util::math::*;
 
+pub type WideCptr<T> = cptrx8<T>;
+pub type WideMptr<T> = mptrx8<T>;
 pub type WideF32 = f32x8;
 pub type WideF64 = f64x8;
+pub type WideI8 = i8x8;
+pub type WideU8 = u8x8;
+pub type WideI16 = i16x8;
+pub type WideU16 = u16x8;
 pub type WideI32 = i32x8;
 pub type WideU32 = u32x8;
 pub type WideI64 = i64x8;
 pub type WideU64 = u64x8;
+pub type WideM32 = m32x8;
+pub type WideM64 = m64x8;
+pub type WideIsize = isizex8;
+pub type WideUsize = usizex8;
 
 /// Returns (random, new seed)
 pub fn splitmix64(seed: u64) -> (u64, u64) {
@@ -46,8 +56,21 @@ pub fn normalf32_from_i32_wide(i: WideI32) -> WideF32 {
     f / maxval
 }
 
-/// -1..=1
-pub fn noise2df32(_seed: u64, _pos: Vector2<WideI32>) -> WideF32 {
-    //
-    WideF32::splat(0.0)
+pub fn widefloor_f64_i32(x: WideF64) -> WideI32 {
+    let xi: WideI32 = x.cast();
+    let xw: WideF64 = xi.cast();
+    let smaller = x.lt(xw);
+    if smaller.any() {
+        let xim1 = xi - 1i32;
+        smaller.select(xim1, xi)
+    } else {
+        xi
+    }
+}
+
+#[test]
+fn test_widefloor() {
+    let xf = WideF64::new(0.0, 0.5, 1.5, -0.5, -1.5, -3.0, 3.0, 8.0);
+    let xi = widefloor_f64_i32(xf);
+    assert_eq!(xi, WideI32::new(0, 0, 1, -1, -2, -3, 3, 8));
 }
