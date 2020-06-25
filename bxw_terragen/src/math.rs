@@ -19,10 +19,10 @@ pub type WideUsize = usizex8;
 
 /// Returns (random, new seed)
 pub fn splitmix64(seed: u64) -> (u64, u64) {
-    let newseed = seed + 0x9e3779b97f4a7c15;
+    let newseed = seed.wrapping_add(0x9e3779b97f4a7c15);
     let mut z = newseed;
-    z = (z ^ (z >> 30u32)) * 0xbf58476d1ce4e5b9;
-    z = (z ^ (z >> 27u32)) * 0x94d049bb133111eb;
+    z = (z ^ (z >> 30u32)).wrapping_mul(0xbf58476d1ce4e5b9);
+    z = (z ^ (z >> 27u32)).wrapping_mul(0x94d049bb133111eb);
     (z ^ (z >> 31), newseed)
 }
 

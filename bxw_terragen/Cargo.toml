@@ -11,7 +11,13 @@ path = "src/lib.rs"
 [[bin]]
 name = "bxw_terragen_bin"
 path = "src/main.rs"
+required-features = ["images"]
+
+[features]
+default = []
+images = ["image"]
 
 [dependencies]
 bxw_util = { path = "../bxw_util" }
 bxw_world = { path = "../bxw_world" }
+image = { version = "0.23", optional = true }

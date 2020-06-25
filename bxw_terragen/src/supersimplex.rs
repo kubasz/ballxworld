@@ -51,6 +51,8 @@ impl SuperSimplex {
     pub fn noise2_base_wide(&self, xs: WideF64, ys: WideF64) -> WideF64 {
         let lut = lookup_2d::tables();
         let permptr = WideCptr::splat(self.perm.as_ptr());
+        let permxptr = WideCptr::splat(self.perm_gx.as_ptr());
+        let permyptr = WideCptr::splat(self.perm_gy.as_ptr());
         // base points and offsets
         let xsb: WideI32 = widefloor_f64_i32(xs);
         let ysb: WideI32 = widefloor_f64_i32(ys);
@@ -85,7 +87,8 @@ impl SuperSimplex {
             let permdat: WideUsize =
                 unsafe { permptr.add(pxm).read(modify, WideU16::splat(0)) }.cast();
             let gradidx: WideUsize = permdat ^ pym;
-            let (gdx, gdy) = unsafe { lut.read_grads(modify, gradidx) };
+            let gdx: WideF64 = unsafe { permxptr.add(gradidx).read(modify, WideF64::splat(0.0)) };
+            let gdy: WideF64 = unsafe { permyptr.add(gradidx).read(modify, WideF64::splat(0.0)) };
             let extrapolation = gdx * dx + gdy * dy;
             let attn2 = attn * attn;
             let attn4 = attn2 * attn2;
