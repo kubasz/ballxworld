@@ -1,6 +1,7 @@
 #![allow(clippy::unused_unit)]
 
 // Re-export dependencies
+pub use blake3;
 pub use divrem;
 pub use fnv;
 pub use glm;
