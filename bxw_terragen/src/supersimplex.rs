@@ -41,6 +41,10 @@ impl SuperSimplex {
         }
     }
 
+    pub fn vnoise2_wide(&self, p: Vector2<WideF64>) -> WideF64 {
+        self.noise2_wide(p.x, p.y)
+    }
+
     pub fn noise2_wide(&self, x: WideF64, y: WideF64) -> WideF64 {
         let s = (x + y) * 0.366025403784439f64;
         let xs = x + s;
@@ -147,14 +151,6 @@ mod lookup_2d {
                 dyptr.read(mall, zerof),
             )
         }
-
-        pub unsafe fn read_grads(&self, mask: WideM64, index: WideUsize) -> (WideF64, WideF64) {
-            debug_assert!(index.lt(WideUsize::splat(PSIZE)).all());
-            let dxptr = WideCptr::splat(self.grads_dx.as_ptr()).add(index);
-            let dyptr = WideCptr::splat(self.grads_dy.as_ptr()).add(index);
-            let zero = WideF64::splat(0.0);
-            (dxptr.read(mask, zero), dyptr.read(mask, zero))
-        }
     }
 
     pub fn tables() -> Luts {
@@ -228,7 +224,7 @@ mod lookup_2d {
                     j2 = 0;
                 }
             }
-            set_point(i * 4 + 0, 0, 0);
+            set_point(i * 4, 0, 0);
             set_point(i * 4 + 1, 1, 1);
             set_point(i * 4 + 2, i1, j1);
             set_point(i * 4 + 3, i2, j2);

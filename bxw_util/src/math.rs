@@ -1,3 +1,4 @@
+pub use divrem::*;
 pub use glm::{mat2, mat3, mat4, quat, vec1, vec2, vec3, vec4};
 pub use nalgebra::base::*;
 pub use nalgebra::{

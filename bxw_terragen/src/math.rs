@@ -1,3 +1,5 @@
+pub use bxw_util::blake3::Hasher;
+pub use bxw_util::bytemuck::{bytes_of, bytes_of_mut, from_bytes, from_bytes_mut};
 pub use bxw_util::math::*;
 
 pub type WideCptr<T> = cptrx8<T>;
@@ -39,6 +41,12 @@ pub fn scramble_seed(seed: u64) -> u64 {
     let (_r, s) = splitmix64(seed);
     let (r, _s) = splitmix64(s);
     r
+}
+
+pub fn seeded_hasher(seed: u64, context: &str) -> Hasher {
+    let mut h = Hasher::new_derive_key(context);
+    h.update(bytes_of(&seed));
+    h
 }
 
 pub fn random2du64_wide(seed: u64, pos: Vector2<WideI32>) -> WideU64 {

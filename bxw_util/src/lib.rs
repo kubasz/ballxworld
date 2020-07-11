@@ -2,6 +2,7 @@
 
 // Re-export dependencies
 pub use blake3;
+pub use bytemuck;
 pub use divrem;
 pub use fnv;
 pub use glm;
@@ -14,9 +15,11 @@ pub use num_traits;
 pub use packed_simd;
 pub use parking_lot;
 pub use rand;
+pub use rand_distr;
 pub use rand_xoshiro;
 pub use rayon;
 pub use regex;
+pub use rstar;
 pub use simba;
 pub use smallvec;
 pub use thread_local_crate as thread_local;
