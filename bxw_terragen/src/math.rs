@@ -82,3 +82,31 @@ fn test_widefloor() {
     let xi = widefloor_f64_i32(xf);
     assert_eq!(xi, WideI32::new(0, 0, 1, -1, -2, -3, 3, 8));
 }
+
+pub fn perp_vector(v: Vector2<f64>) -> Vector2<f64> {
+    vec2(v.y, -v.x)
+}
+
+pub fn line_segment_intersection2(s1: Vector2<f64>, s2: Vector2<f64>, l1: Vector2<f64>, l2: Vector2<f64>) -> Option<Vector2<f64>> {
+    let t_den: f64 = Matrix2::from_columns(&[s1 - s2, l1 - l2]).determinant();
+    if t_den.abs() < 1.0e-6 {
+        return None;
+    }
+    let t_num: f64 = Matrix2::from_columns(&[s1 - l1,l1 - l2]).determinant();
+    let t = t_num / t_den;
+    if t < 0.0 || t > 1.0 {
+        None
+    } else {
+        Some(s1 + t * (s2 - s1))
+    }
+}
+
+#[test]
+fn test_ls_intersect2() {
+    assert_eq!(line_segment_intersection2(vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(0.0, -1.0), vec2(0.0, 1.0)), Some(vec2(0.0, 0.0)));
+    assert_eq!(line_segment_intersection2(vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0)), Some(vec2(0.0, 0.0)));
+    assert_eq!(line_segment_intersection2(vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, -1.0), vec2(0.0, 1.0)), Some(vec2(0.0, 0.0)));
+    assert_eq!(line_segment_intersection2(vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0)), Some(vec2(0.0, 0.0)));
+    assert_eq!(line_segment_intersection2(vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 0.5), vec2(0.0, 1.0)), Some(vec2(0.0, 0.0)));
+    assert_eq!(line_segment_intersection2(vec2(0.5, 0.0), vec2(1.0, 0.0), vec2(0.0, -1.0), vec2(0.0, 1.0)), None);
+}

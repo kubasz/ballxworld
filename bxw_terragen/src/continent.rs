@@ -47,7 +47,8 @@ pub type ContinentBlockInnerPosition = Vector2<i32>;
 #[derive(Clone)]
 pub struct ContinentTile {
     pub position: ContinentTilePosition,
-    pub biome_points: OptRTree<BiomeCentroid>,
+    pub biome_points: Vec<BiomeCentroid>,
+    pub biome_point_tree: OptRTree<RTreeIdxPoint2>,
 }
 
 pub fn continent_tilepos_from_blockpos(
@@ -72,21 +73,6 @@ pub struct BiomeCentroid {
     pub random_shade: u8,
 }
 
-impl rstar::RTreeObject for BiomeCentroid {
-    type Envelope = rstar::AABB<[f64; 2]>;
-
-    fn envelope(&self) -> Self::Envelope {
-        rstar::AABB::from_point([self.position.x, self.position.y])
-    }
-}
-
-impl rstar::PointDistance for BiomeCentroid {
-    fn distance_2(&self, point: &[f64; 2]) -> f64 {
-        let p = vec2(point[0], point[1]);
-        (p - self.position).magnitude_squared()
-    }
-}
-
 #[derive(Copy, Clone)]
 pub struct OptRTreeParams;
 
@@ -99,6 +85,7 @@ impl rstar::RTreeParams for OptRTreeParams {
 
 pub type OptRTree<T> = rstar::RTree<T, OptRTreeParams>;
 type RTreePoint2 = rstar::primitives::PointWithData<(), [f64; 2]>;
+type RTreeIdxPoint2 = rstar::primitives::PointWithData<usize, [f64; 2]>;
 
 /// Based on https://www.cs.ubc.ca/~rbridson/docs/bridson-siggraph07-poissondisk.pdf
 fn poisson_disc_sampling<Dist: Distribution<f64> + Copy>(
@@ -162,7 +149,7 @@ pub fn generate_continent_tile(
     };
     let continent_size = settings.continent_size as f64;
     // generate biome points by poisson disc sampling
-    let mut biome_points: OptRTree<BiomeCentroid> = {
+    let (mut biome_point_tree, mut biome_points) = {
         let rngseed = {
             let mut h = hasher.clone();
             h.update(b"biomepts");
@@ -189,7 +176,8 @@ pub fn generate_continent_tile(
             ..Default::default()
         })
         .collect();
-        OptRTree::bulk_load_with_params(disc_points)
+        let tree_load_vec: Vec<_> = disc_points.iter().enumerate().map(|(i,p)| RTreeIdxPoint2::new(i, p.position.into())).collect();
+        (OptRTree::bulk_load_with_params(tree_load_vec), disc_points)
     };
 
     {
@@ -210,5 +198,6 @@ pub fn generate_continent_tile(
     ContinentTile {
         position: tile_position,
         biome_points,
+        biome_point_tree,
     }
 }

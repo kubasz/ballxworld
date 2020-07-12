@@ -1,5 +1,6 @@
 use bxw_terragen::math::*;
 use bxw_terragen::continent;
+use std::time::Instant;
 
 fn main() {
     let seed: u64 = if let Some(arg) = std::env::args().nth(1) {
@@ -13,7 +14,8 @@ fn main() {
     let mut out_texture = vec![0u8; 1024 * 1024];
     let cont_set = continent::ContinentGenSettings::with_seed(seed);
     let cont = continent::generate_continent_tile(&cont_set, vec2(0, 0));
-    let scale: f64 = 16.0;
+    let scale: f64 = 32.0;
+    let before = Instant::now();
     for y in 0..1024 {
         for x in 0..1024 {
             let xf = x as f64 * scale;
@@ -39,6 +41,8 @@ fn main() {
             noise_int.write_to_slice_unaligned(&mut out_texture[y * 1024 + x..y * 1024 + x + 8]);*/
         }
     }
+    let after = Instant::now();
+    eprintln!("Time: {} us", (after - before).as_micros());
     image::save_buffer_with_format(
         "noise_image.bmp",
         &out_texture,
