@@ -4,6 +4,7 @@
 
 use crate::math::*;
 
+pub const SIMPLEX2_NATURAL_POINT_DISTANCE: f64 = 0.33;
 const PSIZE: usize = 2048;
 const PMASK: usize = 2047;
 
