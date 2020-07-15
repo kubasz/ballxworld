@@ -1,4 +1,5 @@
 use crate::math::*;
+use crate::supersimplex::SuperSimplex;
 use bxw_util::rand;
 use bxw_util::rand::prelude::*;
 use bxw_util::rand_distr;
@@ -7,7 +8,6 @@ use bxw_util::rstar;
 use bxw_util::rstar::RTree;
 use bxw_util::smallvec::SmallVec;
 use bxw_world::*;
-use crate::supersimplex::SuperSimplex;
 
 #[derive(Clone, Debug)]
 pub struct ContinentGenSettings {
@@ -75,6 +75,7 @@ pub type ValueAndGradient2<T> = (T, Vector2<T>);
 pub struct BiomeCentroid {
     pub position: Vector2<f64>,
     pub adjacent: SmallVec<[usize; 16]>,
+    pub adjacent_distance: SmallVec<[f64; 16]>,
     pub debug_shade: Vector3<u8>,
     pub on_edge: bool,
     pub height: ValueAndGradient2<f64>,
@@ -95,7 +96,11 @@ impl rstar::RTreeParams for OptRTreeParams {
 pub type OptRTree<T> = rstar::RTree<T, OptRTreeParams>;
 type RTreePoint2 = rstar::primitives::PointWithData<(), [f64; 2]>;
 type RTreeIdxPoint2 = rstar::primitives::PointWithData<usize, [f64; 2]>;
-type WipBiomeData<'a> = (ContinentTilePosition, &'a mut [BiomeCentroid], &'a OptRTree<RTreeIdxPoint2>);
+type WipBiomeData<'a> = (
+    ContinentTilePosition,
+    &'a mut [BiomeCentroid],
+    &'a OptRTree<RTreeIdxPoint2>,
+);
 
 /// Based on https://www.cs.ubc.ca/~rbridson/docs/bridson-siggraph07-poissondisk.pdf
 fn poisson_disc_sampling<Dist: Distribution<f64> + Copy>(
@@ -130,8 +135,8 @@ fn poisson_disc_sampling<Dist: Distribution<f64> + Copy>(
                 .next()
                 .is_some()
                 || newpoint
-                .iter()
-                .any(|&c| c < 1.0 || c >= continent_size - 1.0)
+                    .iter()
+                    .any(|&c| c < 1.0 || c >= continent_size - 1.0)
             {
                 continue;
             } else {
@@ -161,7 +166,11 @@ pub fn generate_continent_tile(
     // generate biome points by poisson disc sampling
     let (biome_point_tree, mut biome_points) = generate_biome_points(&hasher, settings);
     // generate initial heights
-    seed_biome_heights(settings, &hasher, (tile_position, &mut biome_points, &biome_point_tree));
+    seed_biome_heights(
+        settings,
+        &hasher,
+        (tile_position, &mut biome_points, &biome_point_tree),
+    );
 
     // assign debug shades
     {
@@ -169,11 +178,11 @@ pub fn generate_continent_tile(
             let h = biome.height.0;
             if h < 0.0 {
                 let hnorm = (h / SEABED).min(1.0);
-                biome.debug_shade = vec3(0,0,255 - (hnorm*255.0) as u8);
+                biome.debug_shade = vec3(0, 0, 255 - (hnorm * 255.0) as u8);
             } else {
                 let hnorm = (h / TALLESTMOUNT).min(1.0);
-                let h8 = (hnorm*255.0) as u8;
-                biome.debug_shade = vec3(h8,220,h8);
+                let h8 = (hnorm * 255.0) as u8;
+                biome.debug_shade = vec3(h8, 220, h8);
             }
         }
     }
@@ -185,7 +194,10 @@ pub fn generate_continent_tile(
     }
 }
 
-fn generate_biome_points(hasher: &Hasher, settings: &ContinentGenSettings) -> (OptRTree<RTreeIdxPoint2>, Vec<BiomeCentroid>) {
+fn generate_biome_points(
+    hasher: &Hasher,
+    settings: &ContinentGenSettings,
+) -> (OptRTree<RTreeIdxPoint2>, Vec<BiomeCentroid>) {
     let continent_size = settings.continent_size as f64;
     let biome_avg_distance = settings.biome_avg_distance;
     let rngseed = {
@@ -197,10 +209,7 @@ fn generate_biome_points(hasher: &Hasher, settings: &ContinentGenSettings) -> (O
         s
     };
     let mut rng = Xoshiro512StarStar::from_seed(rngseed);
-    let biome_r_dist = rand_distr::Normal::new(
-        biome_avg_distance,
-        biome_avg_distance / 4.0,
-    )
+    let biome_r_dist = rand_distr::Normal::new(biome_avg_distance, biome_avg_distance / 4.0)
         .expect("Invalid average biome distance");
     let mut disc_points: Vec<BiomeCentroid> = poisson_disc_sampling(
         continent_size,
@@ -208,22 +217,36 @@ fn generate_biome_points(hasher: &Hasher, settings: &ContinentGenSettings) -> (O
         biome_r_dist,
         &mut rng,
     )
+    .iter()
+    .map(|p| BiomeCentroid {
+        position: Vector2::from(*p.position()),
+        ..Default::default()
+    })
+    .collect();
+    let tree_load_vec: Vec<_> = disc_points
         .iter()
-        .map(|p| BiomeCentroid {
-            position: Vector2::from(*p.position()),
-            ..Default::default()
-        })
+        .enumerate()
+        .map(|(i, p)| RTreeIdxPoint2::new(i, p.position.into()))
         .collect();
-    let tree_load_vec: Vec<_> = disc_points.iter().enumerate().map(|(i, p)| RTreeIdxPoint2::new(i, p.position.into())).collect();
     let point_tree = OptRTree::bulk_load_with_params(tree_load_vec);
     let neighbor_max_distance = 1.1 * biome_avg_distance;
-    for (i, point) in disc_points.iter_mut().enumerate() {
-        if point.position.iter().any(|&c| c < biome_avg_distance * 2.0 || c > continent_size - biome_avg_distance * 2.0) {
-            point.on_edge = true;
+    for i in 0..disc_points.len() {
+        if disc_points[i]
+            .position
+            .iter()
+            .any(|&c| c < biome_avg_distance * 2.0 || c > continent_size - biome_avg_distance * 2.0)
+        {
+            disc_points[i].on_edge = true;
         }
-        for nn in point_tree.locate_within_distance(point.position.into(), neighbor_max_distance * neighbor_max_distance) {
+        for nn in point_tree.locate_within_distance(
+            disc_points[i].position.into(),
+            neighbor_max_distance * neighbor_max_distance,
+        ) {
             if nn.data != i {
-                point.adjacent.push(nn.data);
+                disc_points[i].adjacent.push(nn.data);
+                let dpos = disc_points[nn.data].position - disc_points[i].position;
+                let dist2: f64 = dpos.dot(&dpos);
+                disc_points[i].adjacent_distance.push(dist2.sqrt());
             }
         }
     }
@@ -240,6 +263,30 @@ const FLATTEN_SELF_WEIGHT: f64 = 24.0;
 const FLATTEN_MOUNTAIN_WEIGHT: f64 = 3.0;
 const COAST_DISPLACEMENT: f64 = 8.0;
 
+fn update_gradients<F>(data: &mut [BiomeCentroid], fieldmap: F)
+where
+    F: Fn(&mut BiomeCentroid) -> &mut ValueAndGradient2<f64>,
+{
+    for i in 0..data.len() {
+        let v0 = fieldmap(&mut data[i]).0;
+        let mut total_grad = vec2(0.0, 0.0);
+        let mut weights = 0.0;
+        let adjacent = data[i].adjacent.clone();
+        for (nidx, &n) in adjacent.iter().enumerate() {
+            let r = data[i].adjacent_distance[nidx];
+            let v1 = fieldmap(&mut data[n]).0;
+            let rvec = data[n].position - data[i].position;
+            let grad_weight = 1.0 / r;
+            let grad = (rvec / r) * (v1 - v0);
+            total_grad += grad * grad_weight;
+            weights += grad_weight;
+        }
+        weights = weights.max(1.0e-9);
+        total_grad /= weights;
+        fieldmap(&mut data[i]).1 = total_grad;
+    }
+}
+
 fn seed_biome_heights(settings: &ContinentGenSettings, hasher: &Hasher, data: WipBiomeData) {
     let continent_size = settings.continent_size as f64;
     let rngseed = {
@@ -254,7 +301,7 @@ fn seed_biome_heights(settings: &ContinentGenSettings, hasher: &Hasher, data: Wi
     let noise_seed = rng.next_u64();
     let displacement_noise = SuperSimplex::new(noise_seed);
     let u01distr = rand_distr::Uniform::new_inclusive(0.0, 1.0);
-    let underwater_distr = rand_distr::Normal::new(SEABED/3.0, SEABED.abs()/4.0).unwrap();
+    let underwater_distr = rand_distr::Normal::new(SEABED / 3.0, SEABED.abs() / 4.0).unwrap();
     let abovewater_distr = rand_distr::Exp::new(MOUNT_PROBABILITY).unwrap();
     let (_tile_pos, biome_points, _biome_tree) = data;
     // initial random distribution
@@ -262,22 +309,27 @@ fn seed_biome_heights(settings: &ContinentGenSettings, hasher: &Hasher, data: Wi
         let ipoints8 = usize::min(ipoints + 8, biome_points.len());
         let mut points_x = WideF64::splat(0.0);
         let mut points_y = WideF64::splat(0.0);
-        for (lane, point) in biome_points[ipoints .. ipoints8].iter().enumerate() {
+        for (lane, point) in biome_points[ipoints..ipoints8].iter().enumerate() {
             points_x = points_x.replace(lane, point.position.x);
             points_y = points_y.replace(lane, point.position.y);
         }
         let points = vec2(points_x, points_y);
-        let npoints = points / WideF64::splat(settings.biome_avg_distance * 6.0);
-        let noff = WideF64::splat(2.7*continent_size);
+        let npoints = points / WideF64::splat(settings.biome_avg_distance * 12.0);
+        let noff = WideF64::splat(2.7 * continent_size);
         let npoints2 = npoints + vec2(noff, noff);
         let points_displace_xw = displacement_noise.vnoise2_wide(npoints);
         let points_displace_yw = displacement_noise.vnoise2_wide(npoints2);
-        let points_displacew = vec2(points_displace_xw, points_displace_yw) * WideF64::splat(settings.biome_avg_distance * COAST_DISPLACEMENT);
+        let points_displacew = vec2(points_displace_xw, points_displace_yw)
+            * WideF64::splat(settings.biome_avg_distance * COAST_DISPLACEMENT);
         let mut points_displace_x = [0.0; 8];
         let mut points_displace_y = [0.0; 8];
-        points_displacew.x.write_to_slice_unaligned(&mut points_displace_x);
-        points_displacew.y.write_to_slice_unaligned(&mut points_displace_y);
-        for (lane, point) in biome_points[ipoints .. ipoints8].iter_mut().enumerate() {
+        points_displacew
+            .x
+            .write_to_slice_unaligned(&mut points_displace_x);
+        points_displacew
+            .y
+            .write_to_slice_unaligned(&mut points_displace_y);
+        for (lane, point) in biome_points[ipoints..ipoints8].iter_mut().enumerate() {
             let dispos = point.position + vec2(points_displace_x[lane], points_displace_y[lane]);
             let edge_distance_x = f64::min(dispos.x, continent_size - dispos.x);
             let edge_distance_y = f64::min(dispos.y, continent_size - dispos.y);
@@ -331,4 +383,6 @@ fn seed_biome_heights(settings: &ContinentGenSettings, hasher: &Hasher, data: Wi
             }
         }
     }
+    // update gradients
+    update_gradients(biome_points, |b| &mut b.height);
 }

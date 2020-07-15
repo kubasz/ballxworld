@@ -1,5 +1,5 @@
-use bxw_terragen::math::*;
 use bxw_terragen::continent;
+use bxw_terragen::math::*;
 use bxw_util::itertools::*;
 use std::time::Instant;
 
@@ -17,11 +17,18 @@ fn main() {
     let cont = continent::generate_continent_tile(&cont_set, vec2(0, 0));
     let scale: f64 = cont_set.continent_size as f64 / 1024.0;
     let before = Instant::now();
-    for (ytile, xtile) in iproduct!((0..1024).into_iter().step_by(16), (0..1024).into_iter().step_by(16)) {
-        for (y, x) in iproduct!(ytile..ytile+16, xtile..xtile+16) {
+    for (ytile, xtile) in iproduct!(
+        (0..1024).into_iter().step_by(16),
+        (0..1024).into_iter().step_by(16)
+    ) {
+        for (y, x) in iproduct!(ytile..ytile + 16, xtile..xtile + 16) {
             let xf = x as f64 * scale;
             let yf = y as f64 * scale;
-            let nearest_idx = cont.biome_point_tree.nearest_neighbor(&[xf, yf]).unwrap().data;
+            let nearest_idx = cont
+                .biome_point_tree
+                .nearest_neighbor(&[xf, yf])
+                .unwrap()
+                .data;
             out_texture[3 * (y * 1024 + x)] = cont.biome_points[nearest_idx].debug_shade.x;
             out_texture[3 * (y * 1024 + x) + 1] = cont.biome_points[nearest_idx].debug_shade.y;
             out_texture[3 * (y * 1024 + x) + 2] = cont.biome_points[nearest_idx].debug_shade.z;
