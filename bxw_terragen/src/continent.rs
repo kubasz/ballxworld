@@ -189,15 +189,10 @@ pub fn generate_continent_tile(
             let h = biome.height.0;
             let t8 = (remap_f(biome.temperature.0, -30.0, 50.0, 0.0, 1.0) * 180.0) as u8;
             let m8 = (remap_f(biome.air_moisture.0, 0.0, 128.0, 0.0, 1.0).max(0.0).min(1.0) * 255.0) as u8;
-            let r8 = (biome.rainfall.0 * 180.0) as u8;
-            if h < 0.0 {
-                let hnorm = (h / SEABED).min(1.0);
-                biome.debug_shade = vec3(0, t8 / 2, 255 - (hnorm * 255.0) as u8);
-            } else {
-                let hnorm = (h / TALLESTMOUNT).min(1.0);
-                let h8 = (hnorm * 255.0) as u8;
-                biome.debug_shade = vec3(t8, 255-h8, r8);
-            }
+            let r8 = (biome.rainfall.0 * 255.0) as u8;
+            let hnorm = if h < 0.0 {0.0} else {remap_f(h, 0.0, TALLESTMOUNT, 0.4, 1.0) };
+            let h8 = (hnorm * 255.0) as u8;
+            biome.debug_shade = vec3(m8, h8, r8);
         }
     }
 
@@ -470,8 +465,19 @@ fn simulate_temperature(settings: &ContinentGenSettings, hasher: &Hasher, data: 
 const MOISTURE_SIM_EXTRA_STEPS: u32 = 10;
 const MOISTURE_EVAPORATION: f64 = 128.0;
 
-fn simulate_air_moisture(settings: &ContinentGenSettings, _hasher: &Hasher, data: WipBiomeData) {
+fn simulate_air_moisture(settings: &ContinentGenSettings, hasher: &Hasher, data: WipBiomeData) {
     let continent_size = settings.continent_size as f64;
+    let rngseed = {
+        let mut h = hasher.clone();
+        h.update(b"biomewinds");
+        let mut x = h.finalize_xof();
+        let mut s = Seed512::default();
+        x.fill(&mut s.0);
+        s
+    };
+    let mut rng = Xoshiro512StarStar::from_seed(rngseed);
+    let noise_seed = rng.next_u64();
+    let wind_noise = SuperSimplex::new(noise_seed);
     let (_tile_pos, biome_points, _biome_tree) = data;
     let steps = (continent_size * std::f64::consts::SQRT_2 / settings.biome_avg_distance).round()
         as u32
@@ -500,11 +506,7 @@ fn simulate_air_moisture(settings: &ContinentGenSettings, _hasher: &Hasher, data
     new_rainfall.resize(biome_points.len(), 0.0);
     // initial wind
     biome_points.iter().enumerate().for_each(|(i, b)| {
-        new_moisture[i].1 = b
-            .temperature
-            .1
-            .try_normalize(1.0e-6)
-            .unwrap_or(vec2(0.0, 0.0))
+        //new_moisture[i].1 = wind_noise
     });
     let stepsf = steps as f64;
     // simulation
@@ -516,21 +518,21 @@ fn simulate_air_moisture(settings: &ContinentGenSettings, _hasher: &Hasher, data
         });
         // wind&rainfall simulation
         for (i, b) in biome_points.iter().enumerate() {
-            let rainfall_factor = if b.height.0 < 0.0 {
-                1.0/(3.0 * stepsf)
-            } else {
-                1.0 - remap_f(b.temperature.0, -40.0, 30.0, 0.1, 0.9)
-                    .max(0.0)
-                    .min(0.8)
-            };
-            new_rainfall[i] += rainfall_factor * b.air_moisture.0;
-            let total_outflow = (1.0 - rainfall_factor) * b.air_moisture.0;
+            let h = b.height.0;
+            let mut max_moisture = remap_f(b.temperature.0, 0.0, 50.0, 16.0, 128.0).max(16.0);
+            if h > 0.0 {
+                max_moisture = max_moisture.min((TALLESTMOUNT - h)/TALLESTMOUNT * 128.0);
+            }
+            let rainfall_delta = (b.air_moisture.0 - max_moisture).max(0.0).min(MOISTURE_EVAPORATION / 16.0);
+            new_rainfall[i] += rainfall_delta;
+            let total_outflow = b.air_moisture.0 - rainfall_delta;
             for (nidx, &ni) in b.adjacent.iter().enumerate() {
                 let n = &biome_points[ni];
                 let dpos = n.position - b.position;
                 let dnpos = dpos / b.adjacent_distance[nidx];
                 let wind = b.air_moisture.1;
-                let outflow = total_outflow * (dnpos.dot(&wind) + 1.0/b.adjacent.len() as f64).max(-1.0).min(0.5);
+                let walignment = wind.dot(&dnpos).max(-1.0).min(1.0)*0.5 + 0.5;
+                let outflow = total_outflow * walignment / b.adjacent.len() as f64;
                 if outflow > 0.0 {
                     new_moisture[ni].0 += outflow;
                     new_moisture[i].0 -= outflow;
@@ -541,7 +543,7 @@ fn simulate_air_moisture(settings: &ContinentGenSettings, _hasher: &Hasher, data
         // value clamping
         new_moisture
             .iter_mut()
-            .for_each(|v| v.0 = v.0.max(0.0).min(4.0*MOISTURE_EVAPORATION));
+            .for_each(|v| v.0 = v.0.max(0.0).min(MOISTURE_EVAPORATION));
         // update
         new_moisture
             .iter()

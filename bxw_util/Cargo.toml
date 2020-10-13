@@ -6,14 +6,14 @@ edition = "2018"
 
 [dependencies]
 bytemuck = "1.2"
-rand = { version = "0.7.3", features = ["packed_simd"] }
-rand_distr = "0.2.2"
+rand = { version = "0.7.3" }
+rand_distr = "0.3"
 rand_xoshiro = "0.4"
 rstar = "0.8.1"
-nalgebra = "0.21"
-glm = { version = "0.7", package = "nalgebra-glm" }
-packed_simd = "0.3.3"
-simba = { version = "0.1.5", features = ["packed_simd"] }
+nalgebra = "0.22"
+glm = { version = "0.8", package = "nalgebra-glm" }
+packed_simd = { version = "0.3.4", package = "packed_simd_2" }
+simba = { version = "0.2.1", features = ["packed_simd"] }
 toml_edit = "0.2"
 thread_local_crate = { version = "1", package = "thread_local" }
 smallvec = "1"
@@ -24,7 +24,7 @@ num-traits = "0.2"
 fnv = "1"
 itertools = "0.9"
 regex = "1.3"
-lru = "0.5.1"
+lru = "0.6"
 lazy_static = "1.4.0"
 num_cpus = "1.13.0"
 blake3 = "0.3.5"
