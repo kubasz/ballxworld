@@ -1156,6 +1156,12 @@ impl RenderingContext {
                 self.swapchain.outdated = true;
                 idx
             }
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                self.swapchain.outdated = true;
+                self.swapchain
+                    .recreate_swapchain(&self.window, &self.handles, &cfg);
+                return None;
+            }
             Err(err) => panic!("{:?}", err),
         };
 
