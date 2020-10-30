@@ -188,9 +188,16 @@ pub fn generate_continent_tile(
         for biome in biome_points.iter_mut() {
             let h = biome.height.0;
             let t8 = (remap_f(biome.temperature.0, -30.0, 50.0, 0.0, 1.0) * 180.0) as u8;
-            let m8 = (remap_f(biome.air_moisture.0, 0.0, 128.0, 0.0, 1.0).max(0.0).min(1.0) * 255.0) as u8;
+            let m8 = (remap_f(biome.air_moisture.0, 0.0, 128.0, 0.0, 1.0)
+                .max(0.0)
+                .min(1.0)
+                * 255.0) as u8;
             let r8 = (biome.rainfall.0 * 255.0) as u8;
-            let hnorm = if h < 0.0 {0.0} else {remap_f(h, 0.0, TALLESTMOUNT, 0.4, 1.0) };
+            let hnorm = if h < 0.0 {
+                0.0
+            } else {
+                remap_f(h, 0.0, TALLESTMOUNT, 0.4, 1.0)
+            };
             let h8 = (hnorm * 255.0) as u8;
             biome.debug_shade = vec3(m8, h8, r8);
         }
@@ -521,9 +528,11 @@ fn simulate_air_moisture(settings: &ContinentGenSettings, hasher: &Hasher, data:
             let h = b.height.0;
             let mut max_moisture = remap_f(b.temperature.0, 0.0, 50.0, 16.0, 128.0).max(16.0);
             if h > 0.0 {
-                max_moisture = max_moisture.min((TALLESTMOUNT - h)/TALLESTMOUNT * 128.0);
+                max_moisture = max_moisture.min((TALLESTMOUNT - h) / TALLESTMOUNT * 128.0);
             }
-            let rainfall_delta = (b.air_moisture.0 - max_moisture).max(0.0).min(MOISTURE_EVAPORATION / 16.0);
+            let rainfall_delta = (b.air_moisture.0 - max_moisture)
+                .max(0.0)
+                .min(MOISTURE_EVAPORATION / 16.0);
             new_rainfall[i] += rainfall_delta;
             let total_outflow = b.air_moisture.0 - rainfall_delta;
             for (nidx, &ni) in b.adjacent.iter().enumerate() {
@@ -531,7 +540,7 @@ fn simulate_air_moisture(settings: &ContinentGenSettings, hasher: &Hasher, data:
                 let dpos = n.position - b.position;
                 let dnpos = dpos / b.adjacent_distance[nidx];
                 let wind = b.air_moisture.1;
-                let walignment = wind.dot(&dnpos).max(-1.0).min(1.0)*0.5 + 0.5;
+                let walignment = wind.dot(&dnpos).max(-1.0).min(1.0) * 0.5 + 0.5;
                 let outflow = total_outflow * walignment / b.adjacent.len() as f64;
                 if outflow > 0.0 {
                     new_moisture[ni].0 += outflow;
@@ -552,7 +561,10 @@ fn simulate_air_moisture(settings: &ContinentGenSettings, hasher: &Hasher, data:
     }
     // update rainfall
     let max_rainfall = new_rainfall.iter().fold(0.1f64, |x, &y| x.max(y));
-    new_rainfall.iter().enumerate().for_each(|(i, &rf)| biome_points[i].rainfall.0 = rf / max_rainfall);
+    new_rainfall
+        .iter()
+        .enumerate()
+        .for_each(|(i, &rf)| biome_points[i].rainfall.0 = rf / max_rainfall);
     // update gradients
     update_gradients(biome_points, |b| &mut b.air_moisture);
     update_gradients(biome_points, |b| &mut b.rainfall);

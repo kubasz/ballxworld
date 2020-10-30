@@ -158,20 +158,7 @@ pub fn client_main() {
         physics_accum_time += frame_delta_time;
         previous_frame_time = current_frame_time;
         let physics_frames = (physics_accum_time / PHYSICS_FRAME_TIME) as i32;
-        if physics_frames > 0 {
-            physics_accum_time -= f64::from(physics_frames) * PHYSICS_FRAME_TIME;
-            let physics_frames = if physics_frames > 10 {
-                eprintln!(
-                    "Physics lagging behind, skipping {} ticks",
-                    physics_frames - 1
-                );
-                1
-            } else {
-                physics_frames
-            };
-
-            let local_player = client_world.local_player;
-
+        {
             let (dyaw, dpitch) = (
                 input_mgr.input_state.look.x as f64,
                 input_mgr.input_state.look.y as f64,
@@ -183,6 +170,19 @@ pub fn client_main() {
             *yaw -= dyaw / 60.0;
             *yaw %= 2.0 * PI;
             let (pitch, yaw) = (*pitch, *yaw);
+        }
+        if physics_frames > 0 {
+            physics_accum_time -= f64::from(physics_frames) * PHYSICS_FRAME_TIME;
+            let physics_frames = if physics_frames > 10 {
+                eprintln!(
+                    "Physics lagging behind, skipping {} ticks",
+                    physics_frames - 1
+                );
+                1
+            } else {
+                physics_frames
+            };
+            let local_player = client_world.local_player;
 
             if let Some(bpos) = click_pos {
                 click_pos = None;
@@ -225,6 +225,7 @@ pub fn client_main() {
                 let lp_loc: &CLocation = entities.get_component(local_player).unwrap();
                 let mut new_loc: CLocation = lp_loc.clone();
                 // position
+                let &CameraSettings::FPS { pitch, yaw } = &client_world.camera_settings;
                 let qyaw = Quaternion::from_polar_decomposition(1.0, yaw, Vector3::y_axis());
                 let qpitch = Quaternion::from_polar_decomposition(1.0, pitch, Vector3::x_axis());
                 new_loc.orientation = UnitQuaternion::new_normalize(qpitch * qyaw);

@@ -768,7 +768,7 @@ impl VoxelRenderer {
             let client = fctx.client_world;
             let entities = world.ecs();
             let lp_loc: &CLocation = entities.get_component(client.local_player).unwrap();
-            player_pos = lp_loc.position;
+            player_pos = lp_loc.position + fctx.delta_time * lp_loc.velocity; // predict with delta-time
             player_cpos = chunkpos_from_blockpos(blockpos_from_worldpos(player_pos));
             player_incpos = player_pos - (player_cpos * CHUNK_DIM as i32).map(|c| c as f64);
             let player_ang = lp_loc.orientation;
