@@ -136,6 +136,7 @@ impl ChunkDataHandler for WorldBlocks {
                         }
                         blocks.status_array[index] = ChunkDataState::Loaded;
                         blocks.compressed_storage[index] = Some(chunk);
+                        blocks.cache.borrow_mut().uncompressed_chunks.pop(&cpos);
                     }))
                     .unwrap_or(());
             },
