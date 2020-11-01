@@ -38,6 +38,9 @@ pub fn mesh_from_chunk(
     let ucchunks: Vec<Box<UncompressedChunk>> =
         Vec::from_iter(chunks.iter().map(|c| c.decompress()));
     const INFLATED_DIM: usize = CHUNK_DIM + 2;
+    const INFLATED_DIM2: usize = INFLATED_DIM * INFLATED_DIM;
+    let mut starty: [u8; INFLATED_DIM2] = [INFLATED_DIM2 as u8 - 1; INFLATED_DIM2];
+    let mut endy: [u8; INFLATED_DIM2] = [0u8; INFLATED_DIM2];
     let mut vdecoded: Vec<(
         VoxelDatum,
         &VoxelDefinition,
@@ -61,6 +64,11 @@ pub fn mesh_from_chunk(
         let vshp = block_shape(vdat, vdef);
         let vor = block_orientation(vdat, vdef);
         vdecoded.push((vdat, vdef, vshp, vor));
+        if vdef.mesh.is_some() {
+            let hmap_pos = z * INFLATED_DIM + x;
+            starty[hmap_pos] = u8::min(starty[hmap_pos], y as u8);
+            endy[hmap_pos] = u8::max(endy[hmap_pos], y as u8);
+        }
     }
 
     // pos relative to Chunk@cpos
@@ -68,13 +76,17 @@ pub fn mesh_from_chunk(
     fn get_block_idx(pos: Vector3<i32>) -> usize {
         (pos.x + 1) as usize
             + (pos.z + 1) as usize * INFLATED_DIM
-            + (pos.y + 1) as usize * INFLATED_DIM * INFLATED_DIM
+            + (pos.y + 1) as usize * INFLATED_DIM2
     };
 
     let mut vbuf: Vec<VoxelVertex> = Vec::with_capacity(1024);
     let mut ibuf: Vec<u32> = Vec::with_capacity(1024);
 
     for (cell_y, cell_z, cell_x) in iproduct!(0..CHUNK_DIM, 0..CHUNK_DIM, 0..CHUNK_DIM) {
+        let hmap_pos: usize = (cell_z + 1) * INFLATED_DIM + (cell_x + 1);
+        if (cell_y as u8) < starty[hmap_pos] || (cell_y as u8) > endy[hmap_pos] {
+            continue;
+        }
         let ipos = vec3(cell_x as i32, cell_y as i32, cell_z as i32);
         let vidx = get_block_idx(ipos);
         let ic_vidx = blockidx_from_blockpos(ipos);
