@@ -268,6 +268,12 @@ pub struct ECS {
     load_anchors: SparseVec<CLoadAnchor>,
 }
 
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub enum AddEntityError {
+    AlreadyExists,
+    InvalidRawID,
+}
+
 impl ECS {
     pub fn new() -> Self {
         Default::default()
@@ -304,15 +310,15 @@ impl ECS {
     }
 
     #[allow(clippy::map_entry)]
-    pub fn add_entity_with_id(&mut self, raw_id: u64) -> Result<ValidEntityID, ()> {
-        let id = ValidEntityID::from_raw(raw_id).ok_or(())?;
+    pub fn add_entity_with_id(&mut self, raw_id: u64) -> Result<ValidEntityID, AddEntityError> {
+        let id = ValidEntityID::from_raw(raw_id).ok_or(AddEntityError::InvalidRawID)?;
         let sub_id = id.sub_id();
         let nfi = id.domain().number();
         if self.last_nonfree_ids.get()[nfi] < sub_id {
             self.last_nonfree_ids.get_mut()[nfi] = sub_id;
         }
         if self.entities.contains_key(&id) {
-            Err(())
+            Err(AddEntityError::AlreadyExists)
         } else {
             self.entities.insert(id, Entity::new(id));
             Ok(id)

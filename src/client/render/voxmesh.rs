@@ -6,7 +6,6 @@ use bxw_world::blocks::stdshapes::*;
 use bxw_world::registry::VoxelRegistry;
 use bxw_world::*;
 use itertools::iproduct;
-use std::iter::FromIterator;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -35,8 +34,7 @@ pub fn mesh_from_chunk(
 ) -> Option<ChunkBuffers> {
     assert_eq!(chunks.len(), 27);
     let premesh = Instant::now();
-    let ucchunks: Vec<Box<UncompressedChunk>> =
-        Vec::from_iter(chunks.iter().map(|c| c.decompress()));
+    let ucchunks: Vec<Box<UncompressedChunk>> = chunks.iter().map(|c| c.decompress()).collect();
     const INFLATED_DIM: usize = CHUNK_DIM + 2;
     const INFLATED_DIM2: usize = INFLATED_DIM * INFLATED_DIM;
     let mut starty: [u8; INFLATED_DIM2] = [INFLATED_DIM2 as u8 - 1; INFLATED_DIM2];

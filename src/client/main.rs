@@ -262,7 +262,7 @@ pub fn client_main() {
                 };
                 new_phys.frozen = input_mgr.input_state.noclip;
                 if input_mgr.input_state.jump.is_active() && new_phys.against_wall[2] {
-                    new_phys.control_frame_impulse.y = 250.0;
+                    new_phys.control_frame_impulse.y = 300.0;
                 }
                 let change = [EntityChange {
                     kind: EntityChangeKind::UpdateEntity(lp_loc.entity_id()),

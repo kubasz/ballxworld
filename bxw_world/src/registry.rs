@@ -3,7 +3,6 @@ use bxw_util::collider::AABB;
 use bxw_util::lazy_static::lazy_static;
 use bxw_util::math::*;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 lazy_static! {
     pub static ref VOXEL_CUBE_SHAPE: AABB = AABB {
@@ -24,9 +23,14 @@ pub struct VoxelDefinitionBuilder<'a> {
 }
 
 pub struct VoxelRegistry {
-    definitions: Vec<Option<Arc<VoxelDefinition>>>,
-    name_lut: HashMap<String, Arc<VoxelDefinition>>,
+    definitions: Vec<Option<VoxelDefinition>>,
+    name_lut: HashMap<String, usize>,
     last_free_id: VoxelId,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub enum VoxelDefinitionError {
+    AlreadyExists,
 }
 
 impl<'a> VoxelDefinitionBuilder<'a> {
@@ -55,8 +59,8 @@ impl<'a> VoxelDefinitionBuilder<'a> {
         self
     }
 
-    pub fn finish(self) -> Result<(), ()> {
-        let def = Arc::new(VoxelDefinition {
+    pub fn finish(self) -> Result<(), VoxelDefinitionError> {
+        let def = VoxelDefinition {
             id: self.id,
             name: self.name,
             mesh: self.mesh,
@@ -64,15 +68,15 @@ impl<'a> VoxelDefinitionBuilder<'a> {
             selection_shape: self.selection_shape,
             debug_color: self.debug_color,
             texture_mapping: self.texture_mapping,
-        });
+        };
         let idx = def.id as usize;
         if self.registry.definitions.len() <= idx {
             self.registry.definitions.resize(idx * 2 + 1, None);
         } else if self.registry.definitions[idx].is_some() {
-            return Err(());
+            return Err(VoxelDefinitionError::AlreadyExists);
         }
-        self.registry.definitions[idx] = Some(def.clone());
-        self.registry.name_lut.insert(def.name.clone(), def.clone());
+        self.registry.name_lut.insert(def.name.clone(), idx);
+        self.registry.definitions[idx] = Some(def);
         Ok(())
     }
 
@@ -138,6 +142,8 @@ impl VoxelRegistry {
     }
 
     pub fn get_definition_from_name(&self, name: &str) -> Option<&VoxelDefinition> {
-        self.name_lut.get(name).map(|x| x as &VoxelDefinition)
+        self.name_lut
+            .get(name)
+            .and_then(|x| self.definitions.get(*x)?.as_ref())
     }
 }

@@ -9,7 +9,6 @@ use bxw_util::smallvec::*;
 use bxw_util::taskpool::{Task, TaskPool};
 use std::any::*;
 use std::cell::Cell;
-use std::iter::FromIterator;
 use std::sync::atomic::*;
 use std::sync::mpsc::*;
 
@@ -261,11 +260,10 @@ impl World {
     }
 
     pub fn apply_voxel_changes(&mut self, changes: &[VoxelChange]) {
-        let mut changes: Vec<(ChunkPosition, VoxelChange)> = Vec::from_iter(
-            changes
-                .iter()
-                .map(|vc| (chunkpos_from_blockpos(vc.bpos), vc.clone())),
-        );
+        let mut changes: Vec<(ChunkPosition, VoxelChange)> = changes
+            .iter()
+            .map(|vc| (chunkpos_from_blockpos(vc.bpos), vc.clone()))
+            .collect();
         changes.sort_unstable_by(|(p1, _), (p2, _)| {
             std::cmp::Ord::cmp(p1.as_ref() as &[i32; 3], p2.as_ref() as &[i32; 3])
         });

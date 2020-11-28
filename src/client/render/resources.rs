@@ -404,7 +404,7 @@ fn load_rgba<P: AsRef<Path>>(path: P) -> RgbaImage {
     }
     let img = image::open(&path)
         .unwrap_or_else(|e| panic!("Could not load image from {:?}: {}", path, e));
-    img.to_rgba()
+    img.to_rgba8()
 }
 
 fn load_owned_image<P: AsRef<Path>>(path: P, rctx: &RenderingContext) -> OwnedImage {
@@ -649,9 +649,11 @@ impl BMFont {
     }
 
     pub fn measure_text(&self, text: &str, scale: f32) -> TextMeasurement {
-        let mut m: TextMeasurement = Default::default();
-        m.maxy = self.line_height as f32 * scale;
-        m.maxx = scale;
+        let mut m = TextMeasurement {
+            maxy: self.line_height as f32 * scale,
+            maxx: scale,
+            ..Default::default()
+        };
         self.text_op(text, scale, |p| {
             m.minx = m.minx.min(p.x);
             m.miny = m.miny.min(p.y);

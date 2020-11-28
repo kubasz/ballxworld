@@ -2,6 +2,7 @@ pub mod blocks;
 pub mod ecs;
 pub mod entities;
 pub mod generation;
+pub mod inventory;
 pub mod physics;
 pub mod raycast;
 pub mod registry;
@@ -419,16 +420,10 @@ impl Default for VoxelMesh {
 
 impl VoxelMesh {
     pub fn is_none(&self) -> bool {
-        match self {
-            VoxelMesh::None => true,
-            _ => false,
-        }
+        matches!(self, VoxelMesh::None)
     }
 
     pub fn is_some(&self) -> bool {
-        match self {
-            VoxelMesh::None => false,
-            _ => true,
-        }
+        !matches!(self, VoxelMesh::None)
     }
 }

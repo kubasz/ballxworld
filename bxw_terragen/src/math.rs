@@ -121,7 +121,7 @@ pub fn line_segment_intersection2(
     }
     let t_num: f64 = Matrix2::from_columns(&[s1 - l1, l1 - l2]).determinant();
     let t = t_num / t_den;
-    if t < -1.0e-6 || t > 1.0 + 1.0e-6 {
+    if !(-1.0e-6..=1.0 + 1.0e-6).contains(&t) {
         None
     } else {
         Some(s1 + t * (s2 - s1))
