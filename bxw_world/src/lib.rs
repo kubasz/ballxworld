@@ -3,10 +3,11 @@ pub mod ecs;
 pub mod entities;
 pub mod generation;
 pub mod inventory;
+pub mod itemregistry;
 pub mod physics;
 pub mod raycast;
-pub mod registry;
 pub mod stdgen;
+pub mod voxregistry;
 pub mod worldmgr;
 
 use bxw_util::collider::AABB;
@@ -15,11 +16,11 @@ use bxw_util::math::*;
 use bxw_util::*;
 use divrem::{DivFloor, RemFloor};
 use lru::LruCache;
-pub use registry::VoxelRegistry;
 use smallvec::SmallVec;
 use std::cell::{RefCell, RefMut};
 use std::convert::TryFrom;
 use std::sync::Arc;
+pub use voxregistry::VoxelRegistry;
 
 pub const CHUNK_DIM: usize = 32;
 pub const CHUNK_DIM2: usize = CHUNK_DIM * CHUNK_DIM;

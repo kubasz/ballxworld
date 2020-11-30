@@ -13,6 +13,7 @@ ash = "0.31"
 vk-mem = "0.2"
 vk-sync = { path = "./vk-sync-rs-master", version = "*" }
 image = "0.23"
+tokio = { version = "0.3", features = ["full"] }
 bxw_util = { path = "bxw_util" }
 bxw_world = { path = "bxw_world" }
 bxw_terragen = { path = "bxw_terragen" }

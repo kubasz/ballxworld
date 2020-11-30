@@ -187,7 +187,7 @@ pub fn generate_continent_tile(
     {
         for biome in biome_points.iter_mut() {
             let h = biome.height.0;
-            let t8 = (remap_f(biome.temperature.0, -30.0, 50.0, 0.0, 1.0) * 180.0) as u8;
+            let _t8 = (remap_f(biome.temperature.0, -30.0, 50.0, 0.0, 1.0) * 180.0) as u8;
             let m8 = (remap_f(biome.air_moisture.0, 0.0, 128.0, 0.0, 1.0)
                 .max(0.0)
                 .min(1.0)
@@ -484,7 +484,7 @@ fn simulate_air_moisture(settings: &ContinentGenSettings, hasher: &Hasher, data:
     };
     let mut rng = Xoshiro512StarStar::from_seed(rngseed);
     let noise_seed = rng.next_u64();
-    let wind_noise = SuperSimplex::new(noise_seed);
+    let _wind_noise = SuperSimplex::new(noise_seed);
     let (_tile_pos, biome_points, _biome_tree) = data;
     let steps = (continent_size * std::f64::consts::SQRT_2 / settings.biome_avg_distance).round()
         as u32
@@ -512,10 +512,10 @@ fn simulate_air_moisture(settings: &ContinentGenSettings, hasher: &Hasher, data:
     let mut new_rainfall = Vec::new();
     new_rainfall.resize(biome_points.len(), 0.0);
     // initial wind
-    biome_points.iter().enumerate().for_each(|(i, b)| {
+    biome_points.iter().enumerate().for_each(|(_i, _b)| {
         //new_moisture[i].1 = wind_noise
     });
-    let stepsf = steps as f64;
+    let _stepsf = steps as f64;
     // simulation
     for _simstep in 0..steps {
         // evaporation: add moisture to the air from water sources

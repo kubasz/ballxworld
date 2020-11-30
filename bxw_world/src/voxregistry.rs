@@ -22,6 +22,7 @@ pub struct VoxelDefinitionBuilder<'a> {
     texture_mapping: TextureMapping<u32>,
 }
 
+#[derive(Clone)]
 pub struct VoxelRegistry {
     definitions: Vec<Option<VoxelDefinition>>,
     name_lut: HashMap<String, usize>,

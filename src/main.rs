@@ -1,5 +1,7 @@
-#![allow(clippy::unused_unit)]
 pub mod client;
+pub mod config;
+pub mod network;
+pub mod server;
 pub mod util;
 
 use bxw_util::debug_data::TrackingAllocator;
@@ -10,5 +12,9 @@ static TRACK_ALLOCATOR: TrackingAllocator<std::alloc::System> = TrackingAllocato
 };
 
 fn main() {
-    client::main::client_main();
+    if std::env::args().any(|a| a == "-server") {
+        server::main::server_main();
+    } else {
+        client::main::client_main();
+    }
 }

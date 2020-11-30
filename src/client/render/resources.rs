@@ -1,7 +1,7 @@
-use crate::client::config::Config;
 use crate::client::render::vkhelpers::*;
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles};
 use crate::client::render::RenderingContext;
+use crate::config::Config;
 use ash::version::DeviceV1_0;
 use ash::vk;
 use bxw_util::math::*;
@@ -614,12 +614,7 @@ impl BMFont {
         }
     }
 
-    pub fn text_op<'f, F: FnMut(TextOpParams<'f>) -> ()>(
-        &'f self,
-        text: &str,
-        scale: f32,
-        mut op: F,
-    ) {
+    pub fn text_op<'f, F: FnMut(TextOpParams<'f>)>(&'f self, text: &str, scale: f32, mut op: F) {
         let s = |x: i32| x as f32 * scale;
         let mut x = 0.0f32;
         let mut y = 0.0f32;

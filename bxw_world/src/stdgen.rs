@@ -1,4 +1,4 @@
-use crate::registry::VoxelRegistry;
+use crate::voxregistry::VoxelRegistry;
 use crate::{UncompressedChunk, VoxelDatum, CHUNK_DIM};
 use bxw_util::math::*;
 use bxw_util::*;

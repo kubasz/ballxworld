@@ -1,9 +1,9 @@
-use crate::client::config::Config;
 use crate::client::render::resources::RenderingResources;
 use crate::client::render::ui::shaders::UiVertex;
 use crate::client::render::vkhelpers::{make_pipe_depthstencil, OwnedBuffer, VulkanDeviceObject};
 use crate::client::render::vulkan::{allocation_cbs, RenderingHandles, INFLIGHT_FRAMES};
 use crate::client::render::{InPassFrameContext, PrePassFrameContext, RenderingContext};
+use crate::config::Config;
 use ash::version::DeviceV1_0;
 use ash::vk;
 use bxw_util::direction::*;

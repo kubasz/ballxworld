@@ -3,7 +3,7 @@ use bxw_util::direction::OctahedralOrientation;
 use bxw_util::math::*;
 use bxw_util::*;
 use bxw_world::blocks::stdshapes::*;
-use bxw_world::registry::VoxelRegistry;
+use bxw_world::voxregistry::VoxelRegistry;
 use bxw_world::*;
 use itertools::iproduct;
 use std::sync::Arc;

@@ -1,7 +1,6 @@
 #![allow(unused_variables)]
 #![deny(unused_must_use)]
 
-use crate::client::config::Config;
 use crate::client::input::InputManager;
 use crate::client::render::resources::RenderingResources;
 use crate::client::render::ui::z::*;
@@ -11,6 +10,7 @@ use crate::client::render::ui::{
 };
 use crate::client::render::{RenderingContext, VoxelRenderer};
 use crate::client::world::{CameraSettings, ClientWorld};
+use crate::config::Config;
 use bxw_util::debug_data::DEBUG_DATA;
 use bxw_util::math::*;
 use bxw_util::*;
@@ -21,7 +21,6 @@ use bxw_world::generation::WorldBlocks;
 use bxw_world::BlockPosition;
 use std::borrow::Cow;
 use std::f64::consts::PI;
-use std::io::{Read, Write};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -49,28 +48,7 @@ pub fn client_main() {
     let sdl_vid = sdl_ctx.video().unwrap();
     let mut sdl_timer = sdl_ctx.timer().unwrap();
 
-    let mut cfg = Config::new();
-    {
-        let cfg_file = std::fs::File::open("settings.toml");
-        match cfg_file {
-            Err(_) => {
-                eprintln!("Creating new settings.toml");
-            }
-            Ok(mut cfg_file) => {
-                let mut cfg_text = String::new();
-                cfg_file
-                    .read_to_string(&mut cfg_text)
-                    .expect("Error reading settings.toml");
-                cfg.load_from_toml(&cfg_text);
-            }
-        }
-        let cfg_file = std::fs::File::create("settings.toml");
-        let cfg_text = cfg.save_toml();
-        cfg_file
-            .expect("Couldn't open settings.toml for writing")
-            .write_all(cfg_text.as_bytes())
-            .expect("Couldn't write to settings.toml");
-    }
+    let mut cfg = Config::standard_load();
     if std::env::args().any(|a| a == "-renderdoc") {
         cfg.dbg_renderdoc = true;
         cfg.vk_debug_layers = false;
@@ -87,12 +65,12 @@ pub fn client_main() {
     )));
     let mut guictx = Box::new(GuiRenderer::new(&cfg, &mut rctx, rres.clone()));
 
-    let mut vxreg: Box<bxw_world::registry::VoxelRegistry> = Box::default();
+    let mut vxreg: Box<bxw_world::voxregistry::VoxelRegistry> = Box::default();
     {
         let vctx = vctx.borrow();
         register_standard_blocks(&mut vxreg, &|nm| vctx.get_texture_id(nm));
     }
-    let vxreg: Arc<bxw_world::registry::VoxelRegistry> = Arc::from(vxreg);
+    let vxreg: Arc<bxw_world::voxregistry::VoxelRegistry> = Arc::from(vxreg);
     let (mut world, mut client_world) = ClientWorld::new_world("world".to_owned(), vxreg.clone());
     {
         let lp = client_world.local_player;

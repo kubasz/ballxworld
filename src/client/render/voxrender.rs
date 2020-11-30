@@ -1,4 +1,3 @@
-use crate::client::config::Config;
 use crate::client::render::resources::RenderingResources;
 use crate::client::render::vkhelpers::*;
 use crate::client::render::voxmesh::{is_chunk_trivial, mesh_from_chunk};
@@ -7,6 +6,7 @@ use crate::client::render::vulkan::{
 };
 use crate::client::render::*;
 use crate::client::world::CameraSettings;
+use crate::config::Config;
 use ash::version::DeviceV1_0;
 use ash::vk;
 use bxw_util::math::vec3;

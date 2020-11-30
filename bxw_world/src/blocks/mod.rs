@@ -1,6 +1,6 @@
 pub mod stdshapes;
 
-use crate::registry::VoxelRegistry;
+use crate::voxregistry::VoxelRegistry;
 use crate::TextureMapping;
 
 pub fn register_standard_blocks(vxreg: &mut VoxelRegistry, texmapper: &dyn Fn(&str) -> u32) {

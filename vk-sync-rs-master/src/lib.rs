@@ -758,6 +758,7 @@ pub(crate) fn get_access_info(access_type: AccessType) -> AccessInfo {
 	}
 }
 
+#[allow(clippy::match_like_matches_macro)]
 pub(crate) fn is_write_access(access_type: AccessType) -> bool {
 	match access_type {
 		AccessType::CommandBufferWriteNVX => true,
