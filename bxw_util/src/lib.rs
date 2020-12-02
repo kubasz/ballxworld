@@ -19,10 +19,14 @@ pub use rand_distr;
 pub use rand_xoshiro;
 pub use rayon;
 pub use regex;
+pub use rmp;
+pub use rmp_serde;
 pub use rstar;
+pub use serde;
 pub use simba;
 pub use smallvec;
 pub use thread_local_crate as thread_local;
+pub use toml;
 pub use toml_edit;
 
 // Own modules

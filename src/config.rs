@@ -31,6 +31,12 @@ pub struct Config {
     toml_doc: Option<toml_edit::Document>,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Config {
     pub fn new() -> Self {
         // reserve two cores for the base process and any other threaded activity
