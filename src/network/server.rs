@@ -66,11 +66,8 @@ impl NetServer {
 
     pub fn send_control_message(&self, msg: ServerControlMessage) {
         match self.server_control.send(msg.clone()) {
-            Ok(nrecv) => {
-                eprintln!(
-                    "NET CONTROL MSG sent to {} interface handlers: {:?}",
-                    nrecv, msg
-                );
+            Ok(_nrecv) => {
+                //
             }
             Err(_) => {
                 eprintln!(
