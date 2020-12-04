@@ -216,12 +216,13 @@ extern "system" fn debug_msg_callback(
         return vk::FALSE;
     }
     let cb_data: &vk::DebugUtilsMessengerCallbackDataEXT = unsafe { &*cb_data };
-    let str_severity = match msg_severity {
-        vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => "verb",
-        vk::DebugUtilsMessageSeverityFlagsEXT::INFO => "info",
-        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => "WARN",
-        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => "ERR!",
-        _ => "????",
+    use log::Level;
+    let log_severity = match msg_severity {
+        vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => Level::Debug,
+        vk::DebugUtilsMessageSeverityFlagsEXT::INFO => Level::Info,
+        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => Level::Warn,
+        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => Level::Error,
+        _ => Level::Warn,
     };
     let str_msg = format!(
         "{} [#{} {}]",
@@ -229,7 +230,7 @@ extern "system" fn debug_msg_callback(
         cb_data.message_id_number,
         unsafe { CStr::from_ptr(cb_data.p_message_id_name) }.to_string_lossy(),
     );
-    eprintln!("[{}] {}", str_severity, str_msg);
+    log::log!(target: "vulkan", log_severity, "{}", str_msg);
     vk::FALSE
 }
 
@@ -265,10 +266,10 @@ impl RenderingHandles {
         let physical_limits = pprop.limits;
         let pname = unsafe { CStr::from_ptr(pprop.device_name.as_ptr()) }.to_string_lossy();
 
-        println!("Choosing device {}", pname);
+        log::info!("Choosing device {}", pname);
         let qfamilies = unsafe { instance.get_physical_device_queue_family_properties(physical) };
         for family in qfamilies.iter() {
-            println!(
+            log::debug!(
                 "Found a queue family with {:?} queue(s)",
                 family.queue_count
             );
@@ -334,7 +335,7 @@ impl RenderingHandles {
         };
         let queues = if queue_cnt > 1 {
             if cfg.debug_logging {
-                eprintln!("Creating 2 Vulkan queues for asynchronous operations");
+                log::info!("Creating 2 Vulkan queues for asynchronous operations");
             }
             let rqueue = unsafe { device.get_device_queue(queue_family.0, 0) };
             let tqueue = unsafe { device.get_device_queue(queue_family.0, 1) };
@@ -344,7 +345,7 @@ impl RenderingHandles {
             }
         } else {
             if cfg.debug_logging {
-                eprintln!("Creating 1 Vulkan queue - more are not supported");
+                log::info!("Creating 1 Vulkan queue - more are not supported");
             }
             let rqueue = unsafe { device.get_device_queue(queue_family.0, 0) };
             Queues::Combined((Mutex::new(rqueue), queue_family.0))
@@ -602,7 +603,7 @@ impl RenderingHandles {
                     .pfn_user_callback(Some(debug_msg_callback));
                 let msg = unsafe { utils.create_debug_utils_messenger(&mci, allocation_cbs()) }
                     .expect("Couldn't create debug messenger");
-                eprintln!("Created Vulkan debug messenger");
+                log::debug!("Created Vulkan debug messenger");
                 Some(DebugExts {
                     debug_messenger: msg,
                 })
@@ -832,7 +833,7 @@ impl Swapchain {
         );
 
         if cfg.debug_logging {
-            eprintln!(
+            log::debug!(
                 "Recreating swapchain with size ({w}, {h}), {ic} images, {pm:?} present mode",
                 w = extent.width,
                 h = extent.height,

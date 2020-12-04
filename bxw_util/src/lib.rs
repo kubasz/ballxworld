@@ -25,9 +25,11 @@ pub use rstar;
 pub use serde;
 pub use simba;
 pub use smallvec;
+pub use sodiumoxide;
 pub use thread_local_crate as thread_local;
 pub use toml;
 pub use toml_edit;
+pub use zstd;
 
 // Own modules
 pub mod change;

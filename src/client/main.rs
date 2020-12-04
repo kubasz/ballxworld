@@ -52,7 +52,7 @@ pub fn client_main() {
     if std::env::args().any(|a| a == "-renderdoc") {
         cfg.dbg_renderdoc = true;
         cfg.vk_debug_layers = false;
-        eprintln!("Adjusting settings for renderdoc");
+        log::warn!("Adjusting settings for renderdoc");
     }
 
     let task_pool = bxw_util::taskpool::TaskPool::new(cfg.performance_threads as usize);
@@ -152,7 +152,7 @@ pub fn client_main() {
         if physics_frames > 0 {
             physics_accum_time -= f64::from(physics_frames) * PHYSICS_FRAME_TIME;
             let physics_frames = if physics_frames > 10 {
-                eprintln!(
+                log::warn!(
                     "Physics lagging behind, skipping {} ticks",
                     physics_frames - 1
                 );

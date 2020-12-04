@@ -70,7 +70,7 @@ impl Config {
         let cfg_file = std::fs::File::open("settings.toml");
         match cfg_file {
             Err(_) => {
-                eprintln!("Creating new settings.toml");
+                log::warn!("Creating new settings.toml");
             }
             Ok(mut cfg_file) => {
                 let mut cfg_text = String::new();

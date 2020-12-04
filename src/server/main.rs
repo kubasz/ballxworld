@@ -2,9 +2,9 @@ use crate::config::Config;
 use crate::network::server::{NetServer, ServerControlMessage};
 
 pub fn server_main() {
-    eprintln!("Starting dedicated server");
+    log::info!("Starting dedicated server");
     let mut cfg = Config::standard_load();
-    eprintln!(
+    log::debug!(
         "Configuration:\n<START CONFIGURATION>\n{}\n<END CONFIGURATION>\n",
         cfg.save_toml()
     );

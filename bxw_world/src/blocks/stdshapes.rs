@@ -698,8 +698,3 @@ fn init_inner_corner_shape() -> VoxelShapeDef {
         ],
     }
 }
-
-#[test]
-fn print_cube_shape() {
-    eprintln!("{:#?}", init_cube_shape());
-}

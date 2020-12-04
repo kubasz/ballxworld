@@ -1,0 +1,13 @@
+
+[appenders]
+
+[appenders.stderr]
+kind = "console"
+target = "stderr"
+[appenders.stderr.encoder]
+kind = "pattern"
+pattern = "{d(%_H:%M:%S%.3f)} {h({l:6})} {t} - {m}{n}"
+
+[root]
+level = "debug"
+appenders = ["stderr"]

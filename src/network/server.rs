@@ -1,9 +1,13 @@
 use crate::config::Config;
 use crate::network::new_tokio_runtime;
+use crate::network::protocol;
 use bxw_util::itertools::Itertools;
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::thread;
 use tokio::net;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 #[derive(Debug)]
 pub enum ServerCreationError {
@@ -18,6 +22,12 @@ pub enum ServerControlMessage {
 pub struct NetServer {
     server_thread: thread::JoinHandle<()>,
     server_control: broadcast::Sender<ServerControlMessage>,
+    shared_state: Arc<NetServerSharedState>,
+}
+
+#[derive(Default)]
+pub struct NetServerSharedState {
+    //
 }
 
 const SERVER_CONTROL_CHANNEL_BOUND: usize = 32;
@@ -39,7 +49,7 @@ impl NetServer {
                 }) {
                     Ok(sock) => {
                         v.push(sock);
-                        eprintln!("Bound socket #{} to address `{}`", v.len() - 1, addr);
+                        log::info!("Bound socket #{} to address `{}`", v.len() - 1, addr);
                     }
                     Err(error) => {
                         return Err(ServerCreationError::SocketBindError {
@@ -51,16 +61,21 @@ impl NetServer {
             }
             v
         };
+        let shared_state = Arc::new(NetServerSharedState::default());
+        let shared_state_copy = Arc::clone(&shared_state);
         let server_thread = thread::Builder::new()
             .name("bxw-netio-main".to_owned())
             .stack_size(2 * 1024 * 1024)
             .spawn(move || {
-                tokrt.block_on(async move { server_netmain(cfg_clone, scon_tx2, sockets).await });
+                tokrt.block_on(async move {
+                    server_netmain(cfg_clone, scon_tx2, sockets, shared_state_copy).await
+                });
             })
             .expect("Couldn't start main network thread");
         Ok(Self {
             server_thread,
             server_control: scon_tx,
+            shared_state,
         })
     }
 
@@ -70,7 +85,7 @@ impl NetServer {
                 //
             }
             Err(_) => {
-                eprintln!(
+                log::error!(
                     "NET CONTROL MSG failed to send - no listening interface handlers: {:?}",
                     msg
                 );
@@ -85,10 +100,17 @@ impl NetServer {
     }
 }
 
+#[derive(Clone, Eq, PartialEq, Debug, Hash)]
+struct RawPacket {
+    source: (usize, SocketAddr),
+    data: Box<[u8]>,
+}
+
 async fn server_netmain(
     cfg: Config,
     control: broadcast::Sender<ServerControlMessage>,
     sockets: Vec<std::net::UdpSocket>,
+    shared_state: Arc<NetServerSharedState>,
 ) {
     let sockets: Vec<net::UdpSocket> = sockets
         .into_iter()
@@ -99,9 +121,12 @@ async fn server_netmain(
         .into_iter()
         .enumerate()
         .map(|(sid, sock)| {
+            let sock = Arc::new(sock);
             let mut control_rx = control.subscribe();
+            let shared_state = Arc::clone(&shared_state);
             tokio::spawn(async move {
-                let mut msgbuf = vec![0u8; mtu as usize * 4];
+                let mut msgbuf = vec![0u8; mtu as usize * 2];
+                let mut conntable: HashMap<SocketAddr, mpsc::Sender<RawPacket>> = HashMap::with_capacity(32);
                 'sockloop: loop {
                     tokio::select! {
                         ctrl_msg = control_rx.recv() => {
@@ -118,19 +143,38 @@ async fn server_netmain(
                                     break 'sockloop;
                                 }
                                 Err(RecvError::Lagged(n)) => {
-                                    eprintln!("WARNING: Socket handler #{} lagged {} control messages!", sid, n);
+                                    log::error!("Socket handler #{} lagged {} control messages!", sid, n);
                                 }
                             }
                         }
                         recv_result = sock.recv_from(&mut msgbuf) => {
                             let (pkt_len, pkt_src_addr) = recv_result?;
-                            let pkt: &[u8] = &msgbuf[0 .. pkt_len];
-                            let _pkt_src: (usize, std::net::SocketAddr) = (sid, pkt_src_addr);
-                            sock.send_to(pkt, pkt_src_addr).await?;
+                            if pkt_len > msgbuf.len() || pkt_len < 32 {
+                                continue;
+                            }
+                            let pkt_data_ref: &[u8] = &msgbuf[0 .. pkt_len];
+                            let pkt_src: (usize, std::net::SocketAddr) = (sid, pkt_src_addr);
+                            let conn = conntable.entry(pkt_src.1);
+                            let mut processed = false;
+                            if let std::collections::hash_map::Entry::Occupied(conn) = conn {
+                                match conn.get().try_send(RawPacket{source: pkt_src, data: Box::from(pkt_data_ref)}) {
+                                    Ok(()) => {processed = true;}
+                                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                                        conn.remove_entry();
+                                    }
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        log::warn!("Client handler {:?} lagging behind on packet processing", pkt_src);
+                                        processed = true;
+                                    }
+                                }
+                            }
+                            if !processed && protocol::is_valid_connection_packet(pkt_data_ref) {
+                                //
+                            }
                         }
                     }
                 }
-                eprintln!("Socket handler #{} terminating", sid);
+                log::info!("Socket handler #{} terminating", sid);
                 Ok(()) as std::io::Result<()>
             })
         })

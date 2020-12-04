@@ -443,7 +443,6 @@ mod test {
                 let vcross = -v1.cross(&v2);
                 let vdcross = Direction::try_from_vec(vcross);
                 let dcross = Direction::lh_cross(d1, d2);
-                //eprintln!("{:?}, // {:?}*{:?}", vdcross, d1, d2);
                 assert_eq!(dcross, vdcross);
                 if dcross.is_some() {
                     non_zero += 1;

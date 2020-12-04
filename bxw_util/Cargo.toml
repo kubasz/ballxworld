@@ -32,3 +32,5 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.5"
 rmp = "0.8"
 rmp-serde = "0.14"
+sodiumoxide = "0.2"
+zstd = "0.5"
