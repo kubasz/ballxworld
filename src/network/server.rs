@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::ConfigHandle;
 use crate::network::new_tokio_runtime;
 use crate::network::protocol;
 use bxw_util::itertools::Itertools;
@@ -33,16 +33,16 @@ pub struct NetServerSharedState {
 const SERVER_CONTROL_CHANNEL_BOUND: usize = 32;
 
 impl NetServer {
-    pub fn new(cfg: &Config) -> Result<Self, ServerCreationError> {
+    pub fn new(cfg: ConfigHandle) -> Result<Self, ServerCreationError> {
+        let tokrt = new_tokio_runtime(cfg.clone());
         let cfg_clone = cfg.clone();
-        let tokrt = new_tokio_runtime(&cfg_clone);
         let (scon_tx, scon_rx) = broadcast::channel(SERVER_CONTROL_CHANNEL_BOUND);
         drop(scon_rx);
         let scon_tx2 = scon_tx.clone();
         let sockets = {
             let mut v: Vec<std::net::UdpSocket> =
-                Vec::with_capacity(cfg.server_listen_addresses.len());
-            for addr in cfg.server_listen_addresses.iter() {
+                Vec::with_capacity(cfg.read().server_listen_addresses.len());
+            for addr in cfg.read().server_listen_addresses.iter() {
                 match std::net::UdpSocket::bind(addr).and_then(|s| {
                     s.set_nonblocking(true)?;
                     Ok(s)
@@ -106,8 +106,12 @@ struct RawPacket {
     data: Box<[u8]>,
 }
 
+async fn server_connection_handler() {
+    //
+}
+
 async fn server_netmain(
-    cfg: Config,
+    cfg: ConfigHandle,
     control: broadcast::Sender<ServerControlMessage>,
     sockets: Vec<std::net::UdpSocket>,
     shared_state: Arc<NetServerSharedState>,
@@ -116,7 +120,7 @@ async fn server_netmain(
         .into_iter()
         .map(|s| net::UdpSocket::from_std(s).unwrap())
         .collect_vec();
-    let mtu = cfg.server_mtu;
+    let mtu = cfg.read().server_mtu;
     let tasks = sockets
         .into_iter()
         .enumerate()

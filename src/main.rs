@@ -22,6 +22,7 @@ fn main() {
 }
 
 fn setup_logging() {
-    log4rs::init_file("settings_logging.toml", Default::default()).expect("Couldn't initialize the logging subsystem");
+    log4rs::init_file("settings_logging.toml", Default::default())
+        .expect("Couldn't initialize the logging subsystem");
     log::info!("Logging setup complete");
 }

@@ -1,7 +1,9 @@
 use bxw_util::itertools::Itertools;
+use bxw_util::parking_lot::RwLock;
 use bxw_util::*;
 use std::io::prelude::*;
 use std::net::{SocketAddr, SocketAddrV4};
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -30,6 +32,8 @@ pub struct Config {
 
     toml_doc: Option<toml_edit::Document>,
 }
+
+pub type ConfigHandle = Arc<RwLock<Config>>;
 
 impl Config {
     pub fn new() -> Self {
@@ -65,7 +69,7 @@ impl Config {
         }
     }
 
-    pub fn standard_load() -> Self {
+    pub fn standard_load() -> ConfigHandle {
         let mut cfg = Config::new();
         let cfg_file = std::fs::File::open("settings.toml");
         match cfg_file {
@@ -86,7 +90,7 @@ impl Config {
             .expect("Couldn't open settings.toml for writing")
             .write_all(cfg_text.as_bytes())
             .expect("Couldn't write to settings.toml");
-        cfg
+        Arc::new(RwLock::new(cfg))
     }
 
     pub fn load_from_toml(&mut self, config: &str) {

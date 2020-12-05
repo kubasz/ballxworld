@@ -1,10 +1,12 @@
-use serde::*;
+use bxw_util::sodiumoxide::crypto::{box_, kx, secretbox};
 use num_enum::*;
-use bxw_util::sodiumoxide::crypto::{kx, box_, secretbox};
+use serde::*;
 
 #[repr(u8)]
 #[serde(try_from = "u8", into = "u8")]
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize)]
+#[derive(
+    Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize,
+)]
 pub enum ClientConnectionType {
     GameClient = 1,
 }

@@ -1,12 +1,14 @@
 //! Authentication and packet encoding (as these are tied together by encryption)
 
+use bxw_util::sodiumoxide::crypto::{box_, secretbox};
 use num_enum::*;
 use serde::*;
-use bxw_util::sodiumoxide::crypto::{box_, secretbox};
 
 #[repr(u8)]
 #[serde(try_from = "u8", into = "u8")]
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize)]
+#[derive(
+    Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize,
+)]
 pub enum PacketFormatVersion {
     V1 = 1,
 }
@@ -18,7 +20,9 @@ pub enum PacketFormatVersion {
  */
 #[repr(u8)]
 #[serde(try_from = "u8", into = "u8")]
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize)]
+#[derive(
+    Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize,
+)]
 pub enum PacketFormat {
     /// Unencrypted, first packet send client->server
     ConnectionHandshakeV1 = 0xB0,
@@ -38,7 +42,9 @@ impl PacketFormat {
  */
 #[repr(u8)]
 #[serde(try_from = "u8", into = "u8")]
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize)]
+#[derive(
+    Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize,
+)]
 pub enum PacketStream {
     /// Keepalive, disconnect, handshake, etc. commands
     ConnectionControl = 0x00,
@@ -79,6 +85,6 @@ pub fn is_valid_connection_packet(data: &[u8]) -> bool {
     if data[1] != PacketStream::ConnectionControl as u8 {
         return false;
     }
-    
+
     true
 }

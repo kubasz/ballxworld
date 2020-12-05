@@ -48,22 +48,23 @@ pub fn client_main() {
     let sdl_vid = sdl_ctx.video().unwrap();
     let mut sdl_timer = sdl_ctx.timer().unwrap();
 
-    let mut cfg = Config::standard_load();
+    let cfg = Config::standard_load();
     if std::env::args().any(|a| a == "-renderdoc") {
+        let mut cfg = cfg.write();
         cfg.dbg_renderdoc = true;
         cfg.vk_debug_layers = false;
         log::warn!("Adjusting settings for renderdoc");
     }
 
-    let task_pool = bxw_util::taskpool::TaskPool::new(cfg.performance_threads as usize);
-    let mut rctx = Box::new(RenderingContext::new(&sdl_vid, &cfg));
-    let rres = Arc::new(RenderingResources::load(&cfg, &mut rctx));
+    let task_pool = bxw_util::taskpool::TaskPool::new(cfg.read().performance_threads as usize);
+    let mut rctx = Box::new(RenderingContext::new(&sdl_vid, &cfg.read()));
+    let rres = Arc::new(RenderingResources::load(&cfg.read(), &mut rctx));
     let vctx = Rc::new(RefCell::new(VoxelRenderer::new(
-        &cfg,
+        &cfg.read(),
         &mut rctx,
         rres.clone(),
     )));
-    let mut guictx = Box::new(GuiRenderer::new(&cfg, &mut rctx, rres.clone()));
+    let mut guictx = Box::new(GuiRenderer::new(&cfg.read(), &mut rctx, rres.clone()));
 
     let mut vxreg: Box<bxw_world::voxregistry::VoxelRegistry> = Box::default();
     {
@@ -77,7 +78,7 @@ pub fn client_main() {
         let ents = world.ecs();
         let anchor: &CLoadAnchor = ents.get_component(lp).unwrap();
         let mut new_anchor = anchor.clone();
-        new_anchor.radius = cfg.performance_load_distance;
+        new_anchor.radius = cfg.read().performance_load_distance;
         let change = [EntityChange {
             kind: EntityChangeKind::UpdateEntity(anchor.entity_id()),
             load_anchor: Change::Update {
@@ -262,7 +263,8 @@ pub fn client_main() {
         world.main_loop_tick(&task_pool);
         task_pool.main_thread_tick();
 
-        if let Some(mut fc) = rctx.frame_begin_prepass(&cfg, &client_world, frame_delta_time) {
+        if let Some(mut fc) = rctx.frame_begin_prepass(&cfg.read(), &client_world, frame_delta_time)
+        {
             let mut vctx = vctx.borrow_mut();
             fc.begin_region([0.7, 0.7, 0.1, 1.0], || "vctx.prepass_draw");
             vctx.prepass_draw(&mut fc, &world);
@@ -458,7 +460,7 @@ pub fn client_main() {
             }
         }
 
-        if let Some(fps) = cfg.render_fps_lock {
+        if let Some(fps) = cfg.read().render_fps_lock {
             let end_current_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
             let target_ft = 1.0 / f64::from(fps);
             let ms = (target_ft - end_current_frame_time + current_frame_time) * 1000.0;
