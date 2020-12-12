@@ -82,8 +82,8 @@ pub struct VSVertex {
     pub offset: Vector3<f32>,
     pub texcoord: Vector2<f32>,
     pub normal: Vector3<f32>,
-    /// https://www.asawicki.info/news_1721_how_to_correctly_interpolate_vertex_attributes_on_a_parallelogram_using_modern_gpus
-    /// Archive: https://web.archive.org/web/20200516133048/https://www.asawicki.info/news_1721_how_to_correctly_interpolate_vertex_attributes_on_a_parallelogram_using_modern_gpus
+    /// <https://www.asawicki.info/news_1721_how_to_correctly_interpolate_vertex_attributes_on_a_parallelogram_using_modern_gpus>
+    /// Archive: <https://web.archive.org/web/20200516133048/https://www.asawicki.info/news_1721_how_to_correctly_interpolate_vertex_attributes_on_a_parallelogram_using_modern_gpus>
     pub barycentric: Vector3<f32>,
     /// Sign when added to the "extra data" sum for proper quadrilateral interpolation
     pub barycentric_sign: i32,

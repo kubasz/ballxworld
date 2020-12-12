@@ -1,6 +1,6 @@
 //! Based on K.jpg's OpenSimplex 2, smooth variant ("SuperSimplex")
-//! From: https://github.com/KdotJPG/OpenSimplex2/blob/master/java/OpenSimplex2S.java
-//! Versioned: https://github.com/KdotJPG/OpenSimplex2/blob/946fa5cc4b0f6c6f88d90db47becae8b8b79dbc0/java/OpenSimplex2S.java
+//! From: <https://github.com/KdotJPG/OpenSimplex2/blob/master/java/OpenSimplex2S.java>
+//! Versioned: <https://github.com/KdotJPG/OpenSimplex2/blob/946fa5cc4b0f6c6f88d90db47becae8b8b79dbc0/java/OpenSimplex2S.java>
 
 use crate::math::*;
 

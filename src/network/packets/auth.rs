@@ -11,15 +11,38 @@ pub enum ClientConnectionType {
     GameClient = 1,
 }
 
+#[repr(u8)]
+#[serde(try_from = "u8", into = "u8")]
+#[derive(
+    Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize,
+)]
+pub enum PacketTypeHandshake {
+    CSHandshake1 = 10,
+    SCHandshakeAck1 = 11,
+}
+
 /// Client->Server first handshake packet
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Deserialize, Serialize)]
-struct PktCSHandshake1Payload {
+pub struct PktCSHandshake1Payload {
     /// Version of the client, must match `super::PACKET_PROTOCOL_CURRENT_VERSION`
     pub c_version_id: u32,
-    /// Unix timestamp of the request
-    pub c_time: u64,
     /// Client's key exchange public key for this session
     pub c_kx_public: kx::PublicKey,
     /// Client's permanent identifying public key
-    pub c_mpid: box_::PublicKey,
+    pub c_player_id: box_::PublicKey,
+    /// Client connection type
+    pub c_type: ClientConnectionType,
+}
+
+/// Server->Client first handshake ack packet
+#[derive(Clone, Debug, Hash, Eq, PartialEq, Deserialize, Serialize)]
+pub struct PktCSHandshakeAck1Payload {
+    /// Version of the server, must match `super::PACKET_PROTOCOL_CURRENT_VERSION`
+    pub s_version_id: u32,
+    /// Server's key exchange public key for this session
+    pub s_kx_public: kx::PublicKey,
+    /// Server's permanent identifying public key
+    pub s_server_id: box_::PublicKey,
+    /// Server name
+    pub s_name: String,
 }

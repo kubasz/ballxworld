@@ -172,7 +172,7 @@ async fn server_netmain(
                                     }
                                 }
                             }
-                            if !processed && protocol::is_valid_connection_packet(pkt_data_ref) {
+                            if !processed {
                                 //
                             }
                         }
