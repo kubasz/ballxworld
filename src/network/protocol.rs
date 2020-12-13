@@ -7,7 +7,6 @@ use crate::network::packets::auth::{
 use crate::network::packets::PACKET_PROTOCOL_CURRENT_VERSION;
 use bxw_util::rmp_serde;
 use bxw_util::sodiumoxide::crypto::{box_, kx, sealedbox, secretbox};
-use bxw_util::sodiumoxide::hex::encode;
 use bxw_util::sodiumoxide::padding;
 use bxw_util::zstd;
 use num_enum::*;
@@ -65,7 +64,7 @@ pub fn net_zstd_decompress(
                 custom_size_limit.unwrap_or(NET_ZSTD_DECOMPRESS_SIZE_LIMIT),
             )
         })
-        .map_err(|e| DecompressError::UnknownError)
+        .map_err(|_| DecompressError::UnknownError)
 }
 
 pub fn net_mpack_serialize<M: Serialize + Debug>(m: &M) -> Vec<u8> {
@@ -191,6 +190,8 @@ pub enum PacketProcessingError {
     Decode(PacketDecodeError),
     Deserialize(PacketDeserializeError),
     UntrustedCrypto,
+    /// Invalid identifying information, possibly from a previous connection attempt
+    StrayPacket,
 }
 
 impl From<PacketEncodeError> for PacketProcessingError {
@@ -415,6 +416,7 @@ impl<'d> PacketV1<'d> {
 pub struct ClientHandshakeState1 {
     kx_pk: kx::PublicKey,
     kx_sk: kx::SecretKey,
+    random_cookie: u32,
 }
 
 pub fn authflow_client_handshake_packet(
@@ -422,15 +424,24 @@ pub fn authflow_client_handshake_packet(
     conn_type: ClientConnectionType,
 ) -> Result<(Vec<u8>, ClientHandshakeState1), PacketEncodeError> {
     let (kx_pk, kx_sk) = kx::gen_keypair();
+    let random_cookie = bxw_util::sodiumoxide::randombytes::randombytes_uniform(u32::MAX);
     let smsg = PktCSHandshake1Payload {
         c_version_id: PACKET_PROTOCOL_CURRENT_VERSION,
         c_kx_public: kx_pk,
         c_player_id: my_pubkey.clone(),
         c_type: conn_type,
+        random_cookie,
     };
     let msg = net_mpack_serialize(&smsg);
     let pkt = PacketV1::encode_handshake(&msg)?;
-    Ok((pkt, ClientHandshakeState1 { kx_pk, kx_sk }))
+    Ok((
+        pkt,
+        ClientHandshakeState1 {
+            kx_pk,
+            kx_sk,
+            random_cookie,
+        },
+    ))
 }
 
 pub struct ServerHandshakeState1 {
@@ -463,6 +474,15 @@ pub struct ServersideConnectionCryptoState {
     pub tx_key: secretbox::Key,
     pub client_id: box_::PublicKey,
     pub client_type: ClientConnectionType,
+    pub client_version_id: u32,
+}
+
+pub struct ClientsideConnectionCryptoState {
+    pub rx_key: secretbox::Key,
+    pub tx_key: secretbox::Key,
+    pub server_id: box_::PublicKey,
+    pub server_name: String,
+    pub server_version_id: u32,
 }
 
 pub fn authflow_server_respond_to_handshake_packet(
@@ -482,6 +502,7 @@ pub fn authflow_server_respond_to_handshake_packet(
         s_server_id: my_pubkey.clone(),
         s_name: my_name,
         s_response: response,
+        random_cookie: initial_packet.random_cookie,
     };
     let msg = net_mpack_serialize(&smsg);
     let (rx, tx) = kx::server_session_keys(&kx_pk, &kx_sk, &initial_packet.c_kx_public)
@@ -494,6 +515,36 @@ pub fn authflow_server_respond_to_handshake_packet(
             tx_key: secretbox::Key::from_slice(&tx.0).unwrap(),
             client_id: initial_packet.c_player_id,
             client_type: initial_packet.c_type,
+            client_version_id: initial_packet.c_version_id,
+        },
+    ))
+}
+
+pub fn authflow_client_try_accept_handshake_ack(
+    state: ClientHandshakeState1,
+    packet: &[u8],
+    my_keypair: (&box_::PublicKey, &box_::SecretKey),
+) -> Result<(ConnectionResponse, ClientsideConnectionCryptoState), PacketProcessingError> {
+    let ClientHandshakeState1 {
+        kx_pk,
+        kx_sk,
+        random_cookie,
+    } = state;
+    let decoded = PacketV1::try_decode_handshake_ack(packet, my_keypair)?;
+    let msg: PktSCHandshakeAck1Payload = net_mpack_deserialize(&decoded.message)?;
+    if msg.random_cookie != random_cookie {
+        return Err(PacketProcessingError::StrayPacket);
+    }
+    let (rx, tx) = kx::client_session_keys(&kx_pk, &kx_sk, &msg.s_kx_public)
+        .map_err(|_| PacketProcessingError::UntrustedCrypto)?;
+    Ok((
+        msg.s_response,
+        ClientsideConnectionCryptoState {
+            rx_key: secretbox::Key::from_slice(&rx.0).unwrap(),
+            tx_key: secretbox::Key::from_slice(&tx.0).unwrap(),
+            server_id: msg.s_server_id.clone(),
+            server_name: msg.s_name.clone(),
+            server_version_id: msg.s_version_id,
         },
     ))
 }
@@ -597,5 +648,14 @@ mod test {
         assert_eq!(shs.client_id, client_pk);
         assert_eq!(shs.client_type, ClientConnectionType::GameClient);
         // Client:
+        let (sr, chs) =
+            authflow_client_try_accept_handshake_ack(chs, &sc1, (&client_pk, &client_sk))
+                .expect("Error in client handshake accept authflow");
+        assert_eq!(sr, server_response);
+        assert_eq!(chs.server_name, server_name);
+        assert_eq!(chs.tx_key, shs.rx_key);
+        assert_eq!(chs.rx_key, shs.tx_key);
+        assert_eq!(chs.server_id, server_pk);
+        assert_eq!(chs.server_version_id, PACKET_PROTOCOL_CURRENT_VERSION);
     }
 }

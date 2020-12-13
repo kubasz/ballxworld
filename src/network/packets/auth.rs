@@ -32,6 +32,8 @@ pub struct PktCSHandshake1Payload {
     pub c_player_id: box_::PublicKey,
     /// Client connection type
     pub c_type: ClientConnectionType,
+    /// Random number identifying this specific request
+    pub random_cookie: u32,
 }
 
 #[repr(u8)]
@@ -60,4 +62,6 @@ pub struct PktSCHandshakeAck1Payload {
     pub s_name: String,
     /// Server's response to the connection request
     pub s_response: ConnectionResponse,
+    /// Random number identifying from the client request
+    pub random_cookie: u32,
 }
