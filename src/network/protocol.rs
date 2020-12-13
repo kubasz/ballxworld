@@ -1,13 +1,21 @@
 //! Authentication and packet encoding (as these are tied together by encryption)
 
-use crate::network::packets::auth::PacketTypeHandshake;
-use bxw_util::sodiumoxide::crypto::{box_, sealedbox, secretbox};
+use crate::network::packets::auth::{
+    ClientConnectionType, ConnectionResponse, PacketTypeHandshake, PktCSHandshake1Payload,
+    PktSCHandshakeAck1Payload,
+};
+use crate::network::packets::PACKET_PROTOCOL_CURRENT_VERSION;
+use bxw_util::rmp_serde;
+use bxw_util::sodiumoxide::crypto::{box_, kx, sealedbox, secretbox};
 use bxw_util::sodiumoxide::hex::encode;
 use bxw_util::sodiumoxide::padding;
+use bxw_util::zstd;
 use num_enum::*;
 use serde::*;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::convert::{TryFrom, TryInto};
+use std::fmt::Debug;
 
 pub fn current_net_timestamp() -> u64 {
     use std::time;
@@ -26,6 +34,55 @@ pub fn net_timestamp_delta(a: u64, b: u64) -> u64 {
     } else {
         b - a
     }
+}
+
+thread_local! {
+static ZSTD_COMPRESSOR: RefCell<zstd::block::Compressor> = RefCell::new(zstd::block::Compressor::new());
+static ZSTD_DECOMPRESSOR: RefCell<zstd::block::Decompressor> = RefCell::new(zstd::block::Decompressor::new());
+}
+const NET_ZSTD_COMPRESS_LEVEL: i32 = 3;
+const NET_ZSTD_DECOMPRESS_SIZE_LIMIT: usize = 4 * 1024 * 1024;
+
+pub fn net_zstd_compress(data: &[u8]) -> Vec<u8> {
+    ZSTD_COMPRESSOR
+        .with(|c| c.borrow_mut().compress(data, NET_ZSTD_COMPRESS_LEVEL))
+        .expect("Unexpected compression error")
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DecompressError {
+    UnknownError,
+}
+
+pub fn net_zstd_decompress(
+    data: &[u8],
+    custom_size_limit: Option<usize>,
+) -> Result<Vec<u8>, DecompressError> {
+    ZSTD_DECOMPRESSOR
+        .with(|c| {
+            c.borrow_mut().decompress(
+                data,
+                custom_size_limit.unwrap_or(NET_ZSTD_DECOMPRESS_SIZE_LIMIT),
+            )
+        })
+        .map_err(|e| DecompressError::UnknownError)
+}
+
+pub fn net_mpack_serialize<M: Serialize + Debug>(m: &M) -> Vec<u8> {
+    rmp_serde::to_vec(m).unwrap_or_else(|e| {
+        panic!(
+            "Serialization error {:?} occured when serializing {:?}",
+            e, m
+        )
+    })
+}
+
+pub use rmp_serde::decode::Error as PacketDeserializeError;
+
+pub fn net_mpack_deserialize<'a, M: Deserialize<'a>>(
+    m: &'a [u8],
+) -> Result<M, PacketDeserializeError> {
+    rmp_serde::from_read_ref::<_, M>(m)
 }
 
 #[repr(u8)]
@@ -52,8 +109,10 @@ pub enum PacketFormat {
     ConnectionHandshakeV1 = 0xB0,
     /// First server->client packet, encrypted with the client's public key
     ConnectionHandshakeAckV1 = 0xB1,
-    /// All other packets use this format, encrypted with the established session key
+    /// All other packets use this format (or the compressed variant), encrypted with the established session key
     EncryptedV1 = 0xB2,
+    /// All other packets use this format (or the uncompressed variant), encrypted with the established session key, the message field is also zstd-compressed
+    EncryptedCompressedV1 = 0xB3,
 }
 
 impl PacketFormat {
@@ -107,7 +166,7 @@ pub struct PacketV1<'d> {
     pub seq_id: u32,
     /// Encrypted, millisecond unix timestamp at the moment of sending - packets are rejected with too big of an offset from now
     pub sent_time: u64,
-    /// Encrypted, the attached message
+    /// Encrypted (and potentially compressed), the attached message
     pub message: Cow<'d, [u8]>,
 }
 
@@ -124,6 +183,32 @@ pub enum PacketDecodeError {
     UnexpectedFieldValue(&'static str, u64),
     TooBigTimeDelta,
     DecryptionError,
+}
+
+#[derive(Debug)]
+pub enum PacketProcessingError {
+    Encode(PacketEncodeError),
+    Decode(PacketDecodeError),
+    Deserialize(PacketDeserializeError),
+    UntrustedCrypto,
+}
+
+impl From<PacketEncodeError> for PacketProcessingError {
+    fn from(e: PacketEncodeError) -> Self {
+        Self::Encode(e)
+    }
+}
+
+impl From<PacketDecodeError> for PacketProcessingError {
+    fn from(e: PacketDecodeError) -> Self {
+        Self::Decode(e)
+    }
+}
+
+impl From<PacketDeserializeError> for PacketProcessingError {
+    fn from(e: PacketDeserializeError) -> Self {
+        Self::Deserialize(e)
+    }
 }
 
 const HANDSHAKE_MSG_PADSIZE: usize = 1024;
@@ -327,66 +412,190 @@ impl<'d> PacketV1<'d> {
     }
 }
 
-#[test]
-fn test_packet_v1_decrypted_encoding() {
-    let msg = b"Testing packet encoding";
-    let pkt = PacketV1 {
-        format: PacketFormat::ConnectionHandshakeV1,
-        stream: PacketStream::ConnectionControl,
-        packet_id: 8,
-        seq_id: 123456,
-        sent_time: current_net_timestamp(),
-        message: Cow::Borrowed(msg),
+pub struct ClientHandshakeState1 {
+    kx_pk: kx::PublicKey,
+    kx_sk: kx::SecretKey,
+}
+
+pub fn authflow_client_handshake_packet(
+    my_pubkey: &box_::PublicKey,
+    conn_type: ClientConnectionType,
+) -> Result<(Vec<u8>, ClientHandshakeState1), PacketEncodeError> {
+    let (kx_pk, kx_sk) = kx::gen_keypair();
+    let smsg = PktCSHandshake1Payload {
+        c_version_id: PACKET_PROTOCOL_CURRENT_VERSION,
+        c_kx_public: kx_pk,
+        c_player_id: my_pubkey.clone(),
+        c_type: conn_type,
     };
-    let mut obuf = [255u8; 96];
-    let oref: &[u8] = pkt
-        .write_decrypted_fields(&mut obuf)
-        .expect("Obuf too small?");
-    let oref_len = oref.len();
-    let dpkt =
-        PacketV1::fields_from_decrypted_bytes(pkt.format, oref).expect("Couldn't re-decode packet");
-    assert_eq!(dpkt, pkt);
-    let unencoded: &[u8] = &obuf[oref_len..];
-    assert!(unencoded.iter().all(|x| *x == 255u8));
-    PacketV1::fields_from_decrypted_bytes(pkt.format, &[0, 1, 2])
-        .expect_err("Short packet mustn't decode correctly");
+    let msg = net_mpack_serialize(&smsg);
+    let pkt = PacketV1::encode_handshake(&msg)?;
+    Ok((pkt, ClientHandshakeState1 { kx_pk, kx_sk }))
 }
 
-#[test]
-fn test_packet_v1_handshake_symmetry() {
-    let hs_msg = b"Hello, world\0!";
-    let encoded = PacketV1::encode_handshake(hs_msg).expect("Error creating handshake message");
-    let decoded =
-        PacketV1::try_decode_handshake(&encoded).expect("Error decoding handshake message");
-    assert_eq!(&*decoded.message, hs_msg);
-    assert!(decoded.message.ends_with(b"!"));
-    assert_eq!(
-        PacketV1::try_decode_handshake(&encoded[0..encoded.len() / 2]),
-        Err(PacketDecodeError::TooShort)
-    );
+pub struct ServerHandshakeState1 {
+    kx_pk: kx::PublicKey,
+    kx_sk: kx::SecretKey,
+    packet: PktCSHandshake1Payload,
 }
 
-#[test]
-fn test_packet_v1_handshake_ack_symmetry() {
-    bxw_util::sodiumoxide::init().unwrap();
-    let (client_pk, client_sk) = box_::gen_keypair();
-    let hs_msg = b"Hello, world\0!";
-    let mut encoded = PacketV1::encode_handshake_ack(hs_msg, &client_pk)
-        .expect("Error creating handshake ack message");
-    let decoded = PacketV1::try_decode_handshake_ack(&encoded, (&client_pk, &client_sk))
-        .expect("Error decoding handshake ack message");
-    assert_eq!(&*decoded.message, hs_msg);
-    assert!(decoded.message.ends_with(b"!"));
-    assert_eq!(
-        PacketV1::try_decode_handshake_ack(
-            &encoded[0..encoded.len() / 2],
-            (&client_pk, &client_sk)
-        ),
-        Err(PacketDecodeError::DecryptionError)
-    );
-    encoded[8] = encoded[8].wrapping_add(1);
-    assert_eq!(
-        PacketV1::try_decode_handshake_ack(&encoded, (&client_pk, &client_sk)),
-        Err(PacketDecodeError::DecryptionError)
-    );
+impl ServerHandshakeState1 {
+    pub fn get_request(&self) -> &PktCSHandshake1Payload {
+        &self.packet
+    }
+}
+
+pub fn authflow_server_try_accept_handshake_packet(
+    packet: &[u8],
+) -> Result<ServerHandshakeState1, PacketProcessingError> {
+    let (kx_pk, kx_sk) = kx::gen_keypair();
+    let decoded = PacketV1::try_decode_handshake(packet)?;
+    let msg: PktCSHandshake1Payload = net_mpack_deserialize(&decoded.message)?;
+    Ok(ServerHandshakeState1 {
+        kx_pk,
+        kx_sk,
+        packet: msg,
+    })
+}
+
+pub struct ServersideConnectionCryptoState {
+    pub rx_key: secretbox::Key,
+    pub tx_key: secretbox::Key,
+    pub client_id: box_::PublicKey,
+    pub client_type: ClientConnectionType,
+}
+
+pub fn authflow_server_respond_to_handshake_packet(
+    state: ServerHandshakeState1,
+    my_pubkey: &box_::PublicKey,
+    my_name: String,
+    response: ConnectionResponse,
+) -> Result<(Vec<u8>, ServersideConnectionCryptoState), PacketProcessingError> {
+    let ServerHandshakeState1 {
+        kx_pk,
+        kx_sk,
+        packet: initial_packet,
+    } = state;
+    let smsg = PktSCHandshakeAck1Payload {
+        s_version_id: PACKET_PROTOCOL_CURRENT_VERSION,
+        s_kx_public: kx_pk.clone(),
+        s_server_id: my_pubkey.clone(),
+        s_name: my_name,
+        s_response: response,
+    };
+    let msg = net_mpack_serialize(&smsg);
+    let (rx, tx) = kx::server_session_keys(&kx_pk, &kx_sk, &initial_packet.c_kx_public)
+        .map_err(|_| PacketProcessingError::UntrustedCrypto)?;
+    let pkt = PacketV1::encode_handshake_ack(&msg, &initial_packet.c_player_id)?;
+    Ok((
+        pkt,
+        ServersideConnectionCryptoState {
+            rx_key: secretbox::Key::from_slice(&rx.0).unwrap(),
+            tx_key: secretbox::Key::from_slice(&tx.0).unwrap(),
+            client_id: initial_packet.c_player_id,
+            client_type: initial_packet.c_type,
+        },
+    ))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use bxw_util::sodiumoxide::crypto::box_;
+
+    #[test]
+    fn test_packet_v1_decrypted_encoding() {
+        let msg = b"Testing packet encoding";
+        let pkt = PacketV1 {
+            format: PacketFormat::ConnectionHandshakeV1,
+            stream: PacketStream::ConnectionControl,
+            packet_id: 8,
+            seq_id: 123456,
+            sent_time: current_net_timestamp(),
+            message: Cow::Borrowed(msg),
+        };
+        let mut obuf = [255u8; 96];
+        let oref: &[u8] = pkt
+            .write_decrypted_fields(&mut obuf)
+            .expect("Obuf too small?");
+        let oref_len = oref.len();
+        let dpkt = PacketV1::fields_from_decrypted_bytes(pkt.format, oref)
+            .expect("Couldn't re-decode packet");
+        assert_eq!(dpkt, pkt);
+        let unencoded: &[u8] = &obuf[oref_len..];
+        assert!(unencoded.iter().all(|x| *x == 255u8));
+        PacketV1::fields_from_decrypted_bytes(pkt.format, &[0, 1, 2])
+            .expect_err("Short packet mustn't decode correctly");
+    }
+
+    #[test]
+    fn test_packet_v1_handshake_symmetry() {
+        let hs_msg = b"Hello, world\0!";
+        let encoded = PacketV1::encode_handshake(hs_msg).expect("Error creating handshake message");
+        let decoded =
+            PacketV1::try_decode_handshake(&encoded).expect("Error decoding handshake message");
+        assert_eq!(&*decoded.message, hs_msg);
+        assert!(decoded.message.ends_with(b"!"));
+        assert_eq!(
+            PacketV1::try_decode_handshake(&encoded[0..encoded.len() / 2]),
+            Err(PacketDecodeError::TooShort)
+        );
+    }
+
+    #[test]
+    fn test_packet_v1_handshake_ack_symmetry() {
+        bxw_util::sodiumoxide::init().unwrap();
+        let (client_pk, client_sk) = box_::gen_keypair();
+        let hs_msg = b"Hello, world\0!";
+        let mut encoded = PacketV1::encode_handshake_ack(hs_msg, &client_pk)
+            .expect("Error creating handshake ack message");
+        let decoded = PacketV1::try_decode_handshake_ack(&encoded, (&client_pk, &client_sk))
+            .expect("Error decoding handshake ack message");
+        assert_eq!(&*decoded.message, hs_msg);
+        assert!(decoded.message.ends_with(b"!"));
+        assert_eq!(
+            PacketV1::try_decode_handshake_ack(
+                &encoded[0..encoded.len() / 2],
+                (&client_pk, &client_sk),
+            ),
+            Err(PacketDecodeError::DecryptionError)
+        );
+        encoded[8] = encoded[8].wrapping_add(1);
+        assert_eq!(
+            PacketV1::try_decode_handshake_ack(&encoded, (&client_pk, &client_sk)),
+            Err(PacketDecodeError::DecryptionError)
+        );
+    }
+
+    #[test]
+    fn test_simple_authflow() {
+        bxw_util::sodiumoxide::init().unwrap();
+        let (client_pk, client_sk) = box_::gen_keypair();
+        let (server_pk, server_sk) = box_::gen_keypair();
+        let server_name = String::from("Authflow test server");
+        // Client:
+        let (cs0, chs) =
+            authflow_client_handshake_packet(&client_pk, ClientConnectionType::GameClient)
+                .expect("Error in client handshake authflow");
+        // Server:
+        let shs = authflow_server_try_accept_handshake_packet(&cs0)
+            .expect("Error in server handshake accept authflow");
+        assert_eq!(shs.get_request().c_type, ClientConnectionType::GameClient);
+        assert_eq!(shs.get_request().c_player_id, client_pk);
+        assert_eq!(
+            shs.get_request().c_version_id,
+            PACKET_PROTOCOL_CURRENT_VERSION
+        );
+        let server_response = ConnectionResponse::Accepted;
+        let (sc1, shs) = authflow_server_respond_to_handshake_packet(
+            shs,
+            &server_pk,
+            server_name.clone(),
+            server_response,
+        )
+        .expect("Error in server handshake respond authflow");
+        assert_eq!(shs.client_id, client_pk);
+        assert_eq!(shs.client_type, ClientConnectionType::GameClient);
+        // Client:
+    }
 }

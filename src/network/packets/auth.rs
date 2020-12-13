@@ -34,9 +34,22 @@ pub struct PktCSHandshake1Payload {
     pub c_type: ClientConnectionType,
 }
 
+#[repr(u8)]
+#[serde(try_from = "u8", into = "u8")]
+#[derive(
+    Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize,
+)]
+pub enum ConnectionResponse {
+    Accepted = 1,
+    BadVersion,
+    Blocked,
+    NoSlots,
+    AlreadyPresent,
+}
+
 /// Server->Client first handshake ack packet
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Deserialize, Serialize)]
-pub struct PktCSHandshakeAck1Payload {
+pub struct PktSCHandshakeAck1Payload {
     /// Version of the server, must match `super::PACKET_PROTOCOL_CURRENT_VERSION`
     pub s_version_id: u32,
     /// Server's key exchange public key for this session
@@ -45,4 +58,6 @@ pub struct PktCSHandshakeAck1Payload {
     pub s_server_id: box_::PublicKey,
     /// Server name
     pub s_name: String,
+    /// Server's response to the connection request
+    pub s_response: ConnectionResponse,
 }
