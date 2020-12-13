@@ -167,6 +167,7 @@ dependencies = [
  "rmp",
  "rmp-serde",
  "rstar",
+ "scopeguard",
  "serde",
  "simba",
  "smallvec",

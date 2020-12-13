@@ -435,7 +435,7 @@ pub fn authflow_client_handshake_packet(
     let msg = net_mpack_serialize(&smsg);
     let pkt = PacketV1::encode_handshake(&msg)?;
     Ok((
-        pkt,
+        pkt.clone(),
         ClientHandshakeState1 {
             kx_pk,
             kx_sk,
@@ -488,6 +488,7 @@ pub struct ClientsideConnectionCryptoState {
 pub fn authflow_server_respond_to_handshake_packet(
     state: ServerHandshakeState1,
     my_pubkey: &box_::PublicKey,
+    my_seckey: &box_::SecretKey,
     my_name: String,
     response: ConnectionResponse,
 ) -> Result<(Vec<u8>, ServersideConnectionCryptoState), PacketProcessingError> {
@@ -496,6 +497,14 @@ pub fn authflow_server_respond_to_handshake_packet(
         kx_sk,
         packet: initial_packet,
     } = state;
+    let cookie_bytes = initial_packet.random_cookie.to_le_bytes();
+    let nonce = box_::gen_nonce();
+    let enc_cookie = box_::seal(
+        &cookie_bytes,
+        &nonce,
+        &initial_packet.c_player_id,
+        my_seckey,
+    );
     let smsg = PktSCHandshakeAck1Payload {
         s_version_id: PACKET_PROTOCOL_CURRENT_VERSION,
         s_kx_public: kx_pk.clone(),
@@ -503,6 +512,7 @@ pub fn authflow_server_respond_to_handshake_packet(
         s_name: my_name,
         s_response: response,
         random_cookie: initial_packet.random_cookie,
+        crypted_cookie: (nonce, enc_cookie),
     };
     let msg = net_mpack_serialize(&smsg);
     let (rx, tx) = kx::server_session_keys(&kx_pk, &kx_sk, &initial_packet.c_kx_public)
@@ -534,6 +544,17 @@ pub fn authflow_client_try_accept_handshake_ack(
     let msg: PktSCHandshakeAck1Payload = net_mpack_deserialize(&decoded.message)?;
     if msg.random_cookie != random_cookie {
         return Err(PacketProcessingError::StrayPacket);
+    }
+    let decr_cookie = box_::open(
+        &msg.crypted_cookie.1,
+        &msg.crypted_cookie.0,
+        &msg.s_server_id,
+        my_keypair.1,
+    )
+    .map_err(|_| PacketProcessingError::UntrustedCrypto)?;
+    let bytes_cookie = state.random_cookie.to_le_bytes();
+    if &decr_cookie != &bytes_cookie {
+        return Err(PacketProcessingError::UntrustedCrypto);
     }
     let (rx, tx) = kx::client_session_keys(&kx_pk, &kx_sk, &msg.s_kx_public)
         .map_err(|_| PacketProcessingError::UntrustedCrypto)?;

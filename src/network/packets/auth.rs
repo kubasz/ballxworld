@@ -64,4 +64,6 @@ pub struct PktSCHandshakeAck1Payload {
     pub s_response: ConnectionResponse,
     /// Random number identifying from the client request
     pub random_cookie: u32,
+    /// random_cookie encrypted and authenticated with the server's keys
+    pub crypted_cookie: (box_::Nonce, Vec<u8>),
 }

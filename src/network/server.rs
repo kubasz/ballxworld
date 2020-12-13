@@ -1,7 +1,13 @@
 use crate::config::ConfigHandle;
 use crate::network::new_tokio_runtime;
+use crate::network::packets;
 use crate::network::protocol;
+use crate::network::protocol::authflow_server_respond_to_handshake_packet;
+use bxw_util::bytemuck::__core::sync::atomic::AtomicI32;
+use bxw_util::bytemuck::__core::sync::atomic::Ordering::SeqCst;
 use bxw_util::itertools::Itertools;
+use bxw_util::parking_lot::RwLock;
+use bxw_util::sodiumoxide::crypto::box_;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -25,12 +31,28 @@ pub struct NetServer {
     shared_state: Arc<NetServerSharedState>,
 }
 
-#[derive(Default)]
-pub struct NetServerSharedState {
-    //
+pub struct ConnectedClient {
+    cryptostate: protocol::ServersideConnectionCryptoState,
 }
 
-const SERVER_CONTROL_CHANNEL_BOUND: usize = 32;
+pub struct NetServerSharedState {
+    connection_raw_count: Arc<AtomicI32>,
+    server_id_keys: (box_::PublicKey, box_::SecretKey),
+    server_name: RwLock<String>,
+}
+
+impl NetServerSharedState {
+    pub fn new(server_id_keys: (box_::PublicKey, box_::SecretKey), server_name: String) -> Self {
+        Self {
+            connection_raw_count: Arc::new(AtomicI32::new(0)),
+            server_id_keys,
+            server_name: RwLock::new(server_name),
+        }
+    }
+}
+
+const SERVER_CONTROL_CHANNEL_BOUND: usize = 1024;
+const SERVER_PACKET_CHANNEL_BOUND: usize = 1024;
 
 impl NetServer {
     pub fn new(cfg: ConfigHandle) -> Result<Self, ServerCreationError> {
@@ -61,7 +83,11 @@ impl NetServer {
             }
             v
         };
-        let shared_state = Arc::new(NetServerSharedState::default());
+        // TODO: Save/load identifying keys
+        let shared_state = Arc::new(NetServerSharedState::new(
+            box_::gen_keypair(),
+            String::from("BXW Server"),
+        ));
         let shared_state_copy = Arc::clone(&shared_state);
         let server_thread = thread::Builder::new()
             .name("bxw-netio-main".to_owned())
@@ -81,9 +107,7 @@ impl NetServer {
 
     pub fn send_control_message(&self, msg: ServerControlMessage) {
         match self.server_control.send(msg.clone()) {
-            Ok(_nrecv) => {
-                //
-            }
+            Ok(_nrecv) => {}
             Err(_) => {
                 log::error!(
                     "NET CONTROL MSG failed to send - no listening interface handlers: {:?}",
@@ -106,8 +130,51 @@ struct RawPacket {
     data: Box<[u8]>,
 }
 
-async fn server_connection_handler() {
-    //
+async fn server_connection_handler(
+    source: (usize, SocketAddr),
+    initial_hs_state: protocol::ServerHandshakeState1,
+    mut packet_stream: mpsc::Receiver<RawPacket>,
+    shared_state: Arc<NetServerSharedState>,
+    socket: Arc<net::UdpSocket>,
+) {
+    let target = source.1;
+    let _connguard =
+        bxw_util::scopeguard::guard(Arc::clone(&shared_state.connection_raw_count), |cc| {
+            cc.fetch_sub(1, SeqCst);
+        });
+    log::info!(
+        "New connection from {:?} - version {}, id {}",
+        source,
+        initial_hs_state.get_request().c_version_id,
+        bxw_util::sodiumoxide::hex::encode(&initial_hs_state.get_request().c_player_id)
+    );
+    let connresponse = packets::auth::ConnectionResponse::Accepted;
+    let (hsack_packet, ssccs) = match authflow_server_respond_to_handshake_packet(
+        initial_hs_state,
+        &shared_state.server_id_keys.0,
+        &shared_state.server_id_keys.1,
+        shared_state.server_name.read().clone(),
+        connresponse,
+    ) {
+        Ok(x) => x,
+        Err(e) => {
+            log::warn!("Error from {:?}: {:?}", e, source);
+            packet_stream.close();
+            return;
+        }
+    };
+    match socket.send_to(&hsack_packet, target).await {
+        Ok(_) => {}
+        Err(e) => {
+            log::warn!(
+                "Error sending handshake ack to {:?}, terminating connection: {:?}",
+                source,
+                e
+            );
+            packet_stream.close();
+            return;
+        }
+    }
 }
 
 async fn server_netmain(
@@ -154,7 +221,7 @@ async fn server_netmain(
                         recv_result = sock.recv_from(&mut msgbuf) => {
                             let (pkt_len, pkt_src_addr) = recv_result?;
                             if pkt_len > msgbuf.len() || pkt_len < 32 {
-                                continue;
+                                continue 'sockloop;
                             }
                             let pkt_data_ref: &[u8] = &msgbuf[0 .. pkt_len];
                             let pkt_src: (usize, std::net::SocketAddr) = (sid, pkt_src_addr);
@@ -173,7 +240,16 @@ async fn server_netmain(
                                 }
                             }
                             if !processed {
-                                //
+                                let shs1 = match protocol::authflow_server_try_accept_handshake_packet(pkt_data_ref) {
+                                    Ok(x) => x,
+                                    Err(_) => continue 'sockloop
+                                };
+                                let (packets_tx, packets_rx) = mpsc::channel(SERVER_PACKET_CHANNEL_BOUND);
+                                let shared_state_clone = shared_state.clone();
+                                let sock_clone = sock.clone();
+                                conntable.insert(pkt_src_addr, packets_tx);
+                                shared_state.connection_raw_count.fetch_add(1, SeqCst);
+                                tokio::spawn(async move {server_connection_handler(pkt_src, shs1, packets_rx, shared_state_clone, sock_clone).await});
                             }
                         }
                     }

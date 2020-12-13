@@ -22,6 +22,7 @@ pub use regex;
 pub use rmp;
 pub use rmp_serde;
 pub use rstar;
+pub use scopeguard;
 pub use serde;
 pub use simba;
 pub use smallvec;
