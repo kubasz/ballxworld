@@ -41,6 +41,7 @@ static ZSTD_DECOMPRESSOR: RefCell<zstd::block::Decompressor> = RefCell::new(zstd
 }
 const NET_ZSTD_COMPRESS_LEVEL: i32 = 3;
 const NET_ZSTD_DECOMPRESS_SIZE_LIMIT: usize = 4 * 1024 * 1024;
+const NET_ZSTD_COMPRESS_LEN_THRESHOLD: usize = 128;
 
 pub fn net_zstd_compress(data: &[u8]) -> Vec<u8> {
     ZSTD_COMPRESSOR
@@ -189,6 +190,7 @@ pub enum PacketProcessingError {
     Encode(PacketEncodeError),
     Decode(PacketDecodeError),
     Deserialize(PacketDeserializeError),
+    Decompress(DecompressError),
     UntrustedCrypto,
     /// Invalid identifying information, possibly from a previous connection attempt
     StrayPacket,
@@ -209,6 +211,12 @@ impl From<PacketDecodeError> for PacketProcessingError {
 impl From<PacketDeserializeError> for PacketProcessingError {
     fn from(e: PacketDeserializeError) -> Self {
         Self::Deserialize(e)
+    }
+}
+
+impl From<DecompressError> for PacketProcessingError {
+    fn from(e: DecompressError) -> Self {
+        Self::Decompress(e)
     }
 }
 
@@ -247,6 +255,29 @@ impl<'d> PacketV1<'d> {
         }
     }
 
+    fn fields_from_decrypted_bytes_owned(
+        format: PacketFormat,
+        mut raw_fields: Vec<u8>,
+    ) -> Result<PacketV1<'static>, PacketDecodeError> {
+        if raw_fields.len() < 14 {
+            Err(PacketDecodeError::TooShort)
+        } else {
+            let mut pkt = PacketV1 {
+                format,
+                stream: PacketStream::try_from(raw_fields[0]).map_err(|_| {
+                    PacketDecodeError::UnexpectedFieldValue("stream", raw_fields[0] as u64)
+                })?,
+                packet_id: raw_fields[1],
+                seq_id: u32::from_le_bytes(raw_fields[2..6].try_into().unwrap()),
+                sent_time: u64::from_le_bytes(raw_fields[6..14].try_into().unwrap()),
+                message: Cow::Borrowed(&[]),
+            };
+            raw_fields.drain(..14);
+            pkt.message = Cow::Owned(raw_fields);
+            Ok(pkt)
+        }
+    }
+
     fn write_decrypted_fields<'o>(
         &self,
         output: &'o mut [u8],
@@ -271,6 +302,9 @@ impl<'d> PacketV1<'d> {
 
     fn decrypted_fields_len(&self) -> usize {
         14 + self.message.len()
+    }
+    const fn minimum_fields_len() -> usize {
+        14
     }
 
     pub fn try_decode_handshake(raw: &'d [u8]) -> Result<Self, PacketDecodeError> {
@@ -324,7 +358,7 @@ impl<'d> PacketV1<'d> {
     }
 
     pub fn encode_handshake(message: &[u8]) -> Result<Vec<u8>, PacketEncodeError> {
-        let mut packet: Vec<u8> = Vec::new();
+        let mut packet: Vec<u8> = Vec::with_capacity(HANDSHAKE_MSG_PADSIZE + 32);
         packet.push(PacketFormat::ConnectionHandshakeV1.into());
         if message.len() >= HANDSHAKE_MSG_PADSIZE - 4 {
             return Err(PacketEncodeError::MessageTooLong);
@@ -396,7 +430,7 @@ impl<'d> PacketV1<'d> {
         message: &[u8],
         client_pubkey: &box_::PublicKey,
     ) -> Result<Vec<u8>, PacketEncodeError> {
-        let mut packet: Vec<u8> = Vec::new();
+        let mut packet: Vec<u8> = Vec::with_capacity(256);
         packet.push(PacketFormat::ConnectionHandshakeAckV1.into());
         let pkt = PacketV1 {
             format: PacketFormat::ConnectionHandshakeAckV1,
@@ -410,6 +444,70 @@ impl<'d> PacketV1<'d> {
         let mut encrypted_fields = sealedbox::seal(&fields, client_pubkey);
         packet.append(&mut encrypted_fields);
         Ok(packet)
+    }
+
+    /// Returns a `PacketV1` with an unencrypted, decompressed `message` field.
+    pub fn decode_established(
+        raw: &[u8],
+        rx_key: &secretbox::Key,
+    ) -> Result<PacketV1<'static>, PacketProcessingError> {
+        if raw.len() < 1 + PacketV1::minimum_fields_len() + secretbox::NONCEBYTES {
+            return Err(PacketDecodeError::TooShort.into());
+        }
+        let format: PacketFormat = raw[0]
+            .try_into()
+            .map_err(|_| PacketDecodeError::UnexpectedFieldValue("format", raw[0] as u64))?;
+        if !(format == PacketFormat::EncryptedV1 || format == PacketFormat::EncryptedCompressedV1) {
+            return Err(PacketDecodeError::UnexpectedFieldValue("format", format as u64).into());
+        }
+        let nonce = secretbox::Nonce::from_slice(&raw[1..1 + secretbox::NONCEBYTES]).unwrap();
+        let fields = &raw[1 + secretbox::NONCEBYTES..];
+        let decrypted = secretbox::open(fields, &nonce, rx_key)
+            .map_err(|_| PacketDecodeError::DecryptionError)?;
+        let mut pkt = PacketV1::fields_from_decrypted_bytes_owned(format, decrypted)?;
+        if net_timestamp_delta(pkt.sent_time, current_net_timestamp()) > MAX_NET_TIMESTAMP_DELTA {
+            return Err(PacketDecodeError::TooBigTimeDelta.into());
+        }
+        if format == PacketFormat::EncryptedCompressedV1 {
+            let compressed = std::mem::replace(&mut pkt.message, Cow::Borrowed(&[])).into_owned();
+            pkt.message = Cow::Owned(net_zstd_decompress(&compressed, None)?);
+        }
+        Ok(pkt)
+    }
+
+    pub fn encode_established(
+        stream: PacketStream,
+        packet_id: u8,
+        seq_id: u32,
+        message: &[u8],
+        tx_key: &secretbox::Key,
+    ) -> Vec<u8> {
+        let mut packet: Vec<u8> = Vec::with_capacity(128);
+        let mut decrypted_payload = Cow::Borrowed(message);
+        let mut format = PacketFormat::EncryptedV1;
+        if message.len() > NET_ZSTD_COMPRESS_LEN_THRESHOLD {
+            let compressed = net_zstd_compress(message);
+            if compressed.len() < message.len() {
+                decrypted_payload = Cow::Owned(compressed);
+                format = PacketFormat::EncryptedCompressedV1;
+            }
+        }
+        packet.push(format.into());
+        let pkt = PacketV1 {
+            format,
+            stream,
+            packet_id,
+            seq_id,
+            sent_time: current_net_timestamp(),
+            message: decrypted_payload,
+        };
+        let fields = pkt.write_decrypted_fields_vec();
+        let nonce = secretbox::gen_nonce();
+        let mut encrypted_fields = secretbox::seal(&fields, &nonce, &tx_key);
+        packet.reserve_exact(nonce.0.len() + encrypted_fields.len());
+        packet.extend_from_slice(&nonce.0);
+        packet.append(&mut encrypted_fields);
+        packet
     }
 }
 
@@ -428,14 +526,14 @@ pub fn authflow_client_handshake_packet(
     let smsg = PktCSHandshake1Payload {
         c_version_id: PACKET_PROTOCOL_CURRENT_VERSION,
         c_kx_public: kx_pk,
-        c_player_id: my_pubkey.clone(),
+        c_player_id: *my_pubkey,
         c_type: conn_type,
         random_cookie,
     };
     let msg = net_mpack_serialize(&smsg);
     let pkt = PacketV1::encode_handshake(&msg)?;
     Ok((
-        pkt.clone(),
+        pkt,
         ClientHandshakeState1 {
             kx_pk,
             kx_sk,
@@ -507,8 +605,8 @@ pub fn authflow_server_respond_to_handshake_packet(
     );
     let smsg = PktSCHandshakeAck1Payload {
         s_version_id: PACKET_PROTOCOL_CURRENT_VERSION,
-        s_kx_public: kx_pk.clone(),
-        s_server_id: my_pubkey.clone(),
+        s_kx_public: kx_pk,
+        s_server_id: *my_pubkey,
         s_name: my_name,
         s_response: response,
         random_cookie: initial_packet.random_cookie,
@@ -553,7 +651,7 @@ pub fn authflow_client_try_accept_handshake_ack(
     )
     .map_err(|_| PacketProcessingError::UntrustedCrypto)?;
     let bytes_cookie = state.random_cookie.to_le_bytes();
-    if &decr_cookie != &bytes_cookie {
+    if decr_cookie != bytes_cookie {
         return Err(PacketProcessingError::UntrustedCrypto);
     }
     let (rx, tx) = kx::client_session_keys(&kx_pk, &kx_sk, &msg.s_kx_public)
@@ -563,7 +661,7 @@ pub fn authflow_client_try_accept_handshake_ack(
         ClientsideConnectionCryptoState {
             rx_key: secretbox::Key::from_slice(&rx.0).unwrap(),
             tx_key: secretbox::Key::from_slice(&tx.0).unwrap(),
-            server_id: msg.s_server_id.clone(),
+            server_id: msg.s_server_id,
             server_name: msg.s_name.clone(),
             server_version_id: msg.s_version_id,
         },
@@ -594,10 +692,38 @@ mod test {
         let dpkt = PacketV1::fields_from_decrypted_bytes(pkt.format, oref)
             .expect("Couldn't re-decode packet");
         assert_eq!(dpkt, pkt);
+        let owned_buf = Vec::from(oref);
+        let owpkt = PacketV1::fields_from_decrypted_bytes_owned(pkt.format, owned_buf)
+            .expect("Couldn't re-decode owned packet");
+        assert_eq!(owpkt, pkt);
         let unencoded: &[u8] = &obuf[oref_len..];
         assert!(unencoded.iter().all(|x| *x == 255u8));
         PacketV1::fields_from_decrypted_bytes(pkt.format, &[0, 1, 2])
             .expect_err("Short packet mustn't decode correctly");
+    }
+
+    #[test]
+    fn test_packet_v1_encrypted_encoding() {
+        bxw_util::sodiumoxide::init().unwrap();
+        let skey = secretbox::gen_key();
+        let short_msg = b"Short message" as &[u8];
+        let mut long_msg = vec![121u8; 1024];
+        long_msg[10] = 77;
+        long_msg[103] = 12;
+        for &msg in &[short_msg, &long_msg] {
+            let stream = PacketStream::ConnectionControl;
+            let packet_id = 13;
+            let seq_id = 24;
+            let encoded = PacketV1::encode_established(stream, packet_id, seq_id, msg, &skey);
+            let decoded =
+                PacketV1::decode_established(&encoded, &skey).expect("Couldn't decode packet");
+            assert_eq!(decoded.stream, stream);
+            assert_eq!(decoded.packet_id, packet_id);
+            assert_eq!(decoded.seq_id, seq_id);
+            assert_eq!(decoded.message, msg);
+            // ensure compression works
+            assert!(encoded.len() < 256);
+        }
     }
 
     #[test]
@@ -662,6 +788,7 @@ mod test {
         let (sc1, shs) = authflow_server_respond_to_handshake_packet(
             shs,
             &server_pk,
+            &server_sk,
             server_name.clone(),
             server_response,
         )

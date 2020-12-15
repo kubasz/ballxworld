@@ -90,7 +90,7 @@ impl NetServer {
         ));
         let shared_state_copy = Arc::clone(&shared_state);
         let server_thread = thread::Builder::new()
-            .name("bxw-netio-main".to_owned())
+            .name("bxw-server-netio-main".to_owned())
             .stack_size(2 * 1024 * 1024)
             .spawn(move || {
                 tokrt.block_on(async move {

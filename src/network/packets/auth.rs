@@ -1,4 +1,4 @@
-use bxw_util::sodiumoxide::crypto::{box_, kx, secretbox};
+use bxw_util::sodiumoxide::crypto::{box_, kx};
 use num_enum::*;
 use serde::*;
 
