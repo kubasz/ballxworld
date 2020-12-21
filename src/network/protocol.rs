@@ -133,24 +133,7 @@ pub enum PacketStream {
     Handshake = 0x01,
     /// Keepalive, disconnect, etc. commands
     ConnectionControl = 0x02,
-}
-
-impl PacketStream {
-    /// If the packets are ACKd back and required to arrive
-    pub fn is_reliable(self) -> bool {
-        match self {
-            Self::Handshake => true,
-            Self::ConnectionControl => true,
-        }
-    }
-
-    /// If the packets within this stream must all be processed in order
-    pub fn is_ordered(self) -> bool {
-        match self {
-            Self::Handshake => true,
-            Self::ConnectionControl => true,
-        }
-    }
+    GameMessages = 0x03,
 }
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
@@ -166,7 +149,7 @@ pub struct PacketV1<'d> {
     pub seq_id: u32,
     /// Encrypted, millisecond unix timestamp at the moment of sending - packets are rejected with too big of an offset from now
     pub sent_time: u64,
-    /// Encrypted (and potentially compressed), the attached message
+    /// Encrypted (and potentially compressed), the attached message(s)
     pub message: Cow<'d, [u8]>,
 }
 

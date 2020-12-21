@@ -6,9 +6,9 @@ edition = "2018"
 
 [dependencies]
 bytemuck = "1.4"
-rand = { version = "0.7.3" }
-rand_distr = "0.3"
-rand_xoshiro = "0.4"
+rand = { version = "0.8", features = ["nightly", "simd_support"] }
+rand_distr = "0.4"
+rand_xoshiro = "0.6"
 rstar = "0.8"
 nalgebra = "0.23"
 glm = { version = "0.9", package = "nalgebra-glm" }
@@ -33,5 +33,5 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.5"
 rmp = "0.8"
 rmp-serde = "0.15"
-sodiumoxide = { git = "https://github.com/sodiumoxide/sodiumoxide.git", rev = "bd35f1887d6addadd1cda2b22c9be25b2407e12b" }
-zstd = "0.5"
+sodiumoxide = { git = "https://github.com/sodiumoxide/sodiumoxide.git", rev = "ffd962643109122987b3f709b268c20bc2fd55b4" }
+zstd = "0.6"
