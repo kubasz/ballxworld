@@ -70,8 +70,8 @@ pub fn mesh_from_chunk(
             + (pos.y + 1) as usize * INFLATED_DIM2
     };
 
-    let mut vbuf: Vec<VoxelVertex> = Vec::with_capacity(1024);
-    let mut ibuf: Vec<u32> = Vec::with_capacity(1024);
+    let mut vbuf: Vec<VoxelVertex> = Vec::with_capacity(6144);
+    let mut ibuf: Vec<u32> = Vec::with_capacity(6144);
 
     for (cell_y, cell_z, cell_x) in iproduct!(0..CHUNK_DIM, 0..CHUNK_DIM, 0..CHUNK_DIM) {
         let ipos = vec3(cell_x as i32, cell_y as i32, cell_z as i32);
