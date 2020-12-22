@@ -153,7 +153,7 @@ impl Config {
             });
         self.server_mtu = toml_doc["server"]["mtu"]
             .as_integer()
-            .map_or(self.server_mtu, |v| v as u16);
+            .map_or(self.server_mtu, |v| v as u16).max(1000).min(9216);
 
         self.debug_logging = toml_doc["debug"]["enable_logging"]
             .as_bool()

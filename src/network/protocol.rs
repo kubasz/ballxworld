@@ -612,7 +612,7 @@ pub fn authflow_server_respond_to_handshake_packet(
 }
 
 pub fn authflow_client_try_accept_handshake_ack(
-    state: ClientHandshakeState1,
+    state: &ClientHandshakeState1,
     packet: &[u8],
     my_keypair: (&box_::PublicKey, &box_::SecretKey),
 ) -> Result<(ConnectionResponse, ClientsideConnectionCryptoState), PacketProcessingError> {
@@ -623,7 +623,7 @@ pub fn authflow_client_try_accept_handshake_ack(
     } = state;
     let decoded = PacketV1::try_decode_handshake_ack(packet, my_keypair)?;
     let msg: PktSCHandshakeAck1Payload = net_mpack_deserialize(&decoded.message)?;
-    if msg.random_cookie != random_cookie {
+    if msg.random_cookie != *random_cookie {
         return Err(PacketProcessingError::StrayPacket);
     }
     let decr_cookie = box_::open(

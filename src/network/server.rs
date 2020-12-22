@@ -1,10 +1,10 @@
 use crate::config::ConfigHandle;
-use crate::network::new_tokio_runtime;
+use crate::network::get_tokio_runtime;
 use crate::network::packets;
 use crate::network::protocol;
 use crate::network::protocol::authflow_server_respond_to_handshake_packet;
-use bxw_util::bytemuck::__core::sync::atomic::AtomicI32;
-use bxw_util::bytemuck::__core::sync::atomic::Ordering::SeqCst;
+use std::sync::atomic::AtomicI32;
+use std::sync::atomic::Ordering::SeqCst;
 use bxw_util::itertools::Itertools;
 use bxw_util::parking_lot::RwLock;
 use bxw_util::sodiumoxide::crypto::box_;
@@ -56,7 +56,7 @@ const SERVER_PACKET_CHANNEL_BOUND: usize = 1024;
 
 impl NetServer {
     pub fn new(cfg: ConfigHandle) -> Result<Self, ServerCreationError> {
-        let tokrt = new_tokio_runtime(cfg.clone());
+        let tokrt = get_tokio_runtime(Some(cfg.clone()));
         let cfg_clone = cfg.clone();
         let (scon_tx, scon_rx) = broadcast::channel(SERVER_CONTROL_CHANNEL_BOUND);
         drop(scon_rx);
@@ -97,7 +97,7 @@ impl NetServer {
                     server_netmain(cfg_clone, scon_tx2, sockets, shared_state_copy).await
                 });
             })
-            .expect("Couldn't start main network thread");
+            .expect("Couldn't start main server network thread");
         Ok(Self {
             server_thread,
             server_control: scon_tx,

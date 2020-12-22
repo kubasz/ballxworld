@@ -120,34 +120,30 @@ impl<'i> InputManager<'i> {
                 }
                 _ => {}
             },
-            Event::KeyDown { keycode, .. } => {
-                if let Some(keycode) = keycode {
-                    if keycode == Keycode::Escape {
-                        self.input_state.requesting_exit = true;
-                        return;
-                    } else if keycode == Keycode::F {
-                        self.input_state.capture_mouse_switch =
-                            !self.input_state.capture_mouse_switch;
-                        return;
-                    }
-                    if self.capturing_input {
-                        self.pressed_keys.insert(keycode);
-                        self.just_pressed_keys.insert(keycode);
-                        self.process_captured_key(true, keycode);
-                    } else {
-                        // gui
-                    }
+            Event::KeyDown { keycode: Some(keycode), .. } => {
+                if keycode == Keycode::Escape {
+                    self.input_state.requesting_exit = true;
+                    return;
+                } else if keycode == Keycode::F {
+                    self.input_state.capture_mouse_switch =
+                        !self.input_state.capture_mouse_switch;
+                    return;
+                }
+                if self.capturing_input {
+                    self.pressed_keys.insert(keycode);
+                    self.just_pressed_keys.insert(keycode);
+                    self.process_captured_key(true, keycode);
+                } else {
+                    // gui
                 }
             }
-            Event::KeyUp { keycode, .. } => {
-                if let Some(keycode) = keycode {
-                    // always release, even when not capturing input
-                    self.pressed_keys.remove(&keycode);
-                    if self.capturing_input {
-                        self.process_captured_key(false, keycode);
-                    } else {
-                        // gui
-                    }
+            Event::KeyUp { keycode: Some(keycode), .. } => {
+                // always release, even when not capturing input
+                self.pressed_keys.remove(&keycode);
+                if self.capturing_input {
+                    self.process_captured_key(false, keycode);
+                } else {
+                    // gui
                 }
             }
             Event::MouseMotion {
