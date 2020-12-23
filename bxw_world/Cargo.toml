@@ -1,7 +1,9 @@
 [package]
 name = "bxw_world"
 version = "0.1.0"
-authors = ["kubasz"]
+authors = ["Jakub Szewczyk (kubasz)"]
+license = "GPL-3.0-only"
+repository = "https://github.com/kubasz/ballxworld"
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

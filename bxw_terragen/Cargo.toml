@@ -1,7 +1,9 @@
 [package]
 name = "bxw_terragen"
 version = "0.1.0"
-authors = ["Jakub Szewczyk <kubasz51@gmail.com>"]
+authors = ["Jakub Szewczyk (kubasz)"]
+license = "GPL-3.0-only"
+repository = "https://github.com/kubasz/ballxworld"
 edition = "2018"
 
 [lib]

@@ -63,3 +63,10 @@ Slopes have their triangle sides facing left and right, with the slope being bet
 
 Corner slopes are meant to connect with other slopes with their left and back faces. Their top, front and right faces
 are the "filler" for a neat finish.
+
+## License
+
+The source code of the project is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0-standalone.html).
+
+The assets in the `res/` folder are licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) unless specified otherwise in a file located in the same folder as the asset.
+
