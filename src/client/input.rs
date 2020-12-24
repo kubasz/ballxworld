@@ -120,13 +120,15 @@ impl<'i> InputManager<'i> {
                 }
                 _ => {}
             },
-            Event::KeyDown { keycode: Some(keycode), .. } => {
+            Event::KeyDown {
+                keycode: Some(keycode),
+                ..
+            } => {
                 if keycode == Keycode::Escape {
                     self.input_state.requesting_exit = true;
                     return;
                 } else if keycode == Keycode::F {
-                    self.input_state.capture_mouse_switch =
-                        !self.input_state.capture_mouse_switch;
+                    self.input_state.capture_mouse_switch = !self.input_state.capture_mouse_switch;
                     return;
                 }
                 if self.capturing_input {
@@ -137,7 +139,10 @@ impl<'i> InputManager<'i> {
                     // gui
                 }
             }
-            Event::KeyUp { keycode: Some(keycode), .. } => {
+            Event::KeyUp {
+                keycode: Some(keycode),
+                ..
+            } => {
                 // always release, even when not capturing input
                 self.pressed_keys.remove(&keycode);
                 if self.capturing_input {
