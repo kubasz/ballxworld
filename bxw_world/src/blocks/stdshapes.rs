@@ -622,7 +622,7 @@ fn init_inner_corner_shape() -> VoxelShapeDef {
                         normal: vec3(0.0, 1.0, 1.0).normalize(),
                         barycentric: vec3(0.0, 1.0, 0.0),
                         barycentric_sign: 0,
-                        ao_offsets: corner_ao_set(vec3(-1.0, -1.0, 1.0), vec3(0, 0, 1)),
+                        ao_offsets: corner_ao_set(vec3(-1.0, -1.0, 1.0), vec3(0, 0, 0)),
                     },
                     //
                     VSVertex {
@@ -631,7 +631,7 @@ fn init_inner_corner_shape() -> VoxelShapeDef {
                         normal: vec3(-1.0, 1.0, 0.0).normalize(),
                         barycentric: vec3(0.0, 0.0, 1.0),
                         barycentric_sign: 0,
-                        ao_offsets: corner_ao_set(vec3(-1.0, -1.0, 1.0), vec3(-1, 0, 0)),
+                        ao_offsets: corner_ao_set(vec3(-1.0, -1.0, 1.0), vec3(0, 0, 0)),
                     },
                     VSVertex {
                         offset: vec3(0.5, 0.5, 0.5),
