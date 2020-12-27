@@ -74,6 +74,12 @@ impl NetServer {
                         log::info!("Bound socket #{} to address `{}`", v.len() - 1, addr);
                     }
                     Err(error) => {
+                        log::error!(
+                            "Error binding socket #{} to address `{}`: {}",
+                            v.len(),
+                            addr,
+                            error
+                        );
                         return Err(ServerCreationError::SocketBindError {
                             addr: format!("{}", addr),
                             error,

@@ -25,6 +25,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::client::render::voxrender::MeshDataHandler;
+use crate::network::client::{ClientControlMessage, NetClient};
 use bxw_util::change::Change;
 use bxw_util::collider::AABB;
 use bxw_util::direction::OctahedralOrientation;
@@ -49,6 +50,7 @@ pub fn client_main() {
     let mut sdl_timer = sdl_ctx.timer().unwrap();
 
     let cfg = Config::standard_load();
+    let use_netclient = std::env::args().any(|a| a == "-netclient");
     if std::env::args().any(|a| a == "-renderdoc") {
         let mut cfg = cfg.write();
         cfg.dbg_renderdoc = true;
@@ -123,6 +125,13 @@ pub fn client_main() {
     let mut i_place = 4;
     let mut i_orientation = 0;
     let i_destroy = vxreg.get_definition_from_name("core:void").unwrap();
+
+    let mut netclient = if use_netclient {
+        let addr = std::net::SocketAddr::V4("127.0.0.1:20138".parse().unwrap());
+        Some(NetClient::new(cfg.clone(), &addr).expect("Couldn't create netclient"))
+    } else {
+        None
+    };
 
     'running: loop {
         let current_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
@@ -468,6 +477,13 @@ pub fn client_main() {
                 sdl_timer.delay(ms as u32);
             }
         }
+    }
+
+    if let Some(nc) = netclient {
+        nc.send_control_message(ClientControlMessage::Disconnect);
+        log::info!("Waiting for netclient shutdown");
+        nc.wait_for_shutdown();
+        log::info!("Done netclient shutdown");
     }
 
     drop(world);

@@ -121,7 +121,7 @@ impl NetClient {
 
 const NET_CLIENT_CONNECTION_RETRIES: u32 = 5;
 /// Effective timeout is this multiplied by `NET_CLIENT_CONNECTION_RETRIES`
-const NET_CLIENT_CONNECTION_HANDSHAKE_TIMEOUT: time::Duration = time::Duration::from_micros(500);
+const NET_CLIENT_CONNECTION_HANDSHAKE_TIMEOUT: time::Duration = time::Duration::from_millis(500);
 
 async fn client_netmain(
     cfg: ConfigHandle,

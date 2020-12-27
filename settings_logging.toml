@@ -1,13 +1,13 @@
 
 [appenders]
 
-[appenders.stderr]
+[appenders.stdout]
 kind = "console"
-target = "stderr"
-[appenders.stderr.encoder]
+target = "stdout"
+[appenders.stdout.encoder]
 kind = "pattern"
 pattern = "{d(%_H:%M:%S%.3f)} {h({l:6})} {t} - {m}{n}"
 
 [root]
 level = "debug"
-appenders = ["stderr"]
+appenders = ["stdout"]

@@ -15,7 +15,7 @@ pub(in crate::network) fn get_tokio_runtime(
     cfg: Option<ConfigHandle>,
 ) -> Arc<tokio::runtime::Runtime> {
     Arc::clone(TOKIO_RUNTIME_HANDLE.lock().get_or_insert_with(|| {
-        Arc::new(
+        let rt = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .thread_name("bxw-netio")
@@ -33,6 +33,9 @@ pub(in crate::network) fn get_tokio_runtime(
                 })
                 .build()
                 .expect("Couldn't create network runtime"),
-        )
+        );
+        // give a bit of time for the threads to initialize, makes logs cleaner in case of errors
+        std::thread::sleep(std::time::Duration::from_millis(8));
+        rt
     }))
 }
