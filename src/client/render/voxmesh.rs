@@ -61,7 +61,6 @@ pub fn mesh_from_chunk(
         let vor = block_orientation(vdat, vdef);
         vdecoded.push((vdat, vdef, vshp, vor));
     }
-
     // pos relative to Chunk@cpos
     #[inline(always)]
     fn get_block_idx(pos: Vector3<i32>) -> usize {

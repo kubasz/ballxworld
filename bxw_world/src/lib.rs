@@ -44,6 +44,13 @@ pub fn blockidx_from_blockpos(bpos: BlockPosition) -> usize {
     innerpos.x + CHUNK_DIM * innerpos.z + CHUNK_DIM2 * innerpos.y
 }
 
+pub fn blockpos_from_blockidx(bidx: u32) -> BlockPosition {
+    let x = bidx % CHUNK_DIM as u32;
+    let y = (bidx / CHUNK_DIM as u32) % CHUNK_DIM as u32;
+    let z = (bidx / CHUNK_DIM2 as u32) % CHUNK_DIM as u32;
+    vec3(x as i32, y as i32, z as i32)
+}
+
 pub fn dirty_chunkpos_from_blockpos(bpos: BlockPosition) -> SmallVec<[ChunkPosition; 8]> {
     let cpos = chunkpos_from_blockpos(bpos);
     let mut dirty = SmallVec::new();
@@ -168,7 +175,6 @@ impl Default for VChunkData {
 
 #[derive(Clone)]
 pub struct VChunk {
-    /// Chunk "mip-maps" by level - 0 is VOXEL_CHUNK_DIM-wide, 1 is 1/2 of that, etc.
     pub data: VChunkData,
     pub position: ChunkPosition,
 }
@@ -266,9 +272,113 @@ fn decompress_rle(data: &[u32]) -> Result<Box<UncompressedChunk>, RleDecompressE
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum RleVoxelIteratorState {
+    First,
+    Middle { prev: u32 },
+    InRepetition { what: u32, count: u32 },
+    Finished,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct RleVoxelIterator<'d> {
+    rem_data: &'d [u32],
+    state: RleVoxelIteratorState,
+    pos: u32,
+    bpos: BlockPosition,
+}
+
+impl<'d> RleVoxelIterator<'d> {
+    pub fn new(data: &'d [u32]) -> Self {
+        assert!(data.len() > 2);
+        Self {
+            rem_data: data,
+            state: RleVoxelIteratorState::First,
+            pos: 0,
+            bpos: BlockPosition::zero(),
+        }
+    }
+
+    fn advance_pos(&mut self, data: u32) -> (VoxelDatum, BlockPosition, usize) {
+        let datum = VoxelDatum::from_repr(data);
+        let bpos = self.bpos;
+        let bidx = self.pos as usize;
+        self.pos += 1;
+        self.bpos = blockpos_from_blockidx(self.pos);
+        (datum, bpos, bidx)
+    }
+}
+
+impl<'d> Iterator for RleVoxelIterator<'d> {
+    type Item = (VoxelDatum, BlockPosition, usize);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos >= CHUNK_DIM3 as u32 {
+            return None;
+        }
+        match self.state {
+            RleVoxelIteratorState::First => {
+                let ret = self.rem_data[0];
+                self.state = RleVoxelIteratorState::Middle { prev: ret };
+                self.rem_data = &self.rem_data[1..];
+                if self.rem_data.is_empty() {
+                    assert_eq!(self.pos as usize, CHUNK_DIM3 - 1);
+                    self.state = RleVoxelIteratorState::Finished;
+                }
+                Some(self.advance_pos(ret))
+            }
+            RleVoxelIteratorState::Middle { prev } => {
+                let ret = self.rem_data[0];
+                if prev == ret {
+                    let reps = self.rem_data[1];
+                    self.state = RleVoxelIteratorState::InRepetition {
+                        what: ret,
+                        count: reps,
+                    };
+                    self.rem_data = &self.rem_data[2..];
+                } else {
+                    self.state = RleVoxelIteratorState::Middle { prev: ret };
+                    self.rem_data = &self.rem_data[1..];
+                    if self.rem_data.is_empty() {
+                        assert_eq!(self.pos as usize, CHUNK_DIM3 - 1);
+                        self.state = RleVoxelIteratorState::Finished;
+                    }
+                }
+                Some(self.advance_pos(ret))
+            }
+            RleVoxelIteratorState::InRepetition { count: 0, .. } => {
+                self.state = RleVoxelIteratorState::First;
+                if self.rem_data.is_empty() {
+                    assert_eq!(self.pos as usize, CHUNK_DIM3 - 1);
+                    self.state = RleVoxelIteratorState::Finished;
+                }
+                self.next()
+            }
+            RleVoxelIteratorState::InRepetition { what, count } => {
+                self.state = RleVoxelIteratorState::InRepetition {
+                    what,
+                    count: count - 1,
+                };
+                Some(self.advance_pos(what))
+            }
+            RleVoxelIteratorState::Finished => None,
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = CHUNK_DIM3 - self.pos as usize;
+        (remaining, Some(remaining))
+    }
+
+    fn count(self) -> usize {
+        CHUNK_DIM3 - self.pos as usize
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use crate::{compress_rle, decompress_rle, CHUNK_DIM3};
+    use crate::{compress_rle, decompress_rle, RleVoxelIterator, CHUNK_DIM3};
+    use bxw_util::itertools::Itertools;
 
     #[test]
     fn rle_compress_zero_test() {
@@ -288,14 +398,24 @@ mod test {
     fn rle_decompress_zero_test() {
         let compressed = vec![0, 0, CHUNK_DIM3 as u32 - 2];
         let target = decompress_rle(&compressed).unwrap();
+        let mut decomp_iter = RleVoxelIterator::new(&compressed);
         assert!(target.blocks_yzx.iter().copied().all(|e| e.repr() == 0));
+        assert_eq!(
+            decomp_iter.map(|(vd, _, _)| vd.datum).collect_vec(),
+            vec![0u32; CHUNK_DIM3]
+        );
     }
 
     #[test]
     fn rle_decompress_one_test() {
         let compressed = vec![1, 1, CHUNK_DIM3 as u32 - 2];
         let target = decompress_rle(&compressed).unwrap();
+        let mut decomp_iter = RleVoxelIterator::new(&compressed);
         assert!(target.blocks_yzx.iter().copied().all(|e| e.repr() == 1));
+        assert_eq!(
+            decomp_iter.map(|(vd, _, _)| vd.repr()).collect_vec(),
+            vec![1u32; CHUNK_DIM3]
+        );
     }
 
     #[test]
@@ -316,6 +436,10 @@ mod test {
             .iter()
             .copied()
             .eq(decdata.blocks_yzx.iter().copied().map(|x| x.repr())));
+        let mut decomp_iter = RleVoxelIterator::new(&compdata);
+        assert!(decomp_iter
+            .map(|(vd, _, _)| vd.repr())
+            .eq(randdata.iter().copied()));
     }
 }
 

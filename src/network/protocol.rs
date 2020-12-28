@@ -780,7 +780,7 @@ mod test {
         assert_eq!(shs.client_type, ClientConnectionType::GameClient);
         // Client:
         let (sr, chs) =
-            authflow_client_try_accept_handshake_ack(chs, &sc1, (&client_pk, &client_sk))
+            authflow_client_try_accept_handshake_ack(&chs, &sc1, (&client_pk, &client_sk))
                 .expect("Error in client handshake accept authflow");
         assert_eq!(sr, server_response);
         assert_eq!(chs.server_name, server_name);
