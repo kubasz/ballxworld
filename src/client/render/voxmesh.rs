@@ -27,6 +27,7 @@ pub fn is_chunk_trivial(chunk: &VChunk, registry: &VoxelRegistry) -> bool {
 const AO_OCCLUSION_FACTOR: f32 = 0.88;
 
 #[allow(clippy::cognitive_complexity)]
+#[inline(never)]
 pub fn mesh_from_chunk(
     registry: &VoxelRegistry,
     chunks: &[Arc<VChunk>],
@@ -34,7 +35,7 @@ pub fn mesh_from_chunk(
 ) -> Option<ChunkBuffers> {
     assert_eq!(chunks.len(), 27);
     let premesh = Instant::now();
-    let ucchunks: Vec<Box<UncompressedChunk>> = chunks.iter().map(|c| c.decompress()).collect();
+    let mut ucchunks: Vec<RleVoxelIterator> = chunks.iter().map(|c| c.iter()).collect();
     const INFLATED_DIM: usize = CHUNK_DIM + 2;
     const INFLATED_DIM2: usize = INFLATED_DIM * INFLATED_DIM;
     let mut vdecoded: Vec<(
@@ -55,7 +56,8 @@ pub fn mesh_from_chunk(
         });
         let cidx = rcpos.x + rcpos.z * 3 + rcpos.y * 9;
         let bpos = blockidx_from_blockpos(vec3(x as i32 - 1, y as i32 - 1, z as i32 - 1));
-        let vdat = ucchunks[cidx].blocks_yzx[bpos];
+        let chunkiter = &mut ucchunks[cidx];
+        let vdat = chunkiter.skip_until_index(bpos).unwrap().0;
         let vdef = registry.get_definition_from_datum(vdat);
         let vshp = block_shape(vdat, vdef);
         let vor = block_orientation(vdat, vdef);

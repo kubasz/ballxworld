@@ -299,6 +299,37 @@ impl<'d> RleVoxelIterator<'d> {
         }
     }
 
+    pub fn skip_until_index(
+        &mut self,
+        target: usize,
+    ) -> Option<(VoxelDatum, BlockPosition, usize)> {
+        let t32 = target as u32;
+        while self.pos < t32 {
+            match self.state {
+                RleVoxelIteratorState::Finished => return None,
+                RleVoxelIteratorState::InRepetition { what, count } => {
+                    let endpos = self.pos + count;
+                    if endpos < t32 {
+                        self.state = RleVoxelIteratorState::InRepetition { what, count: 0 };
+                        self.pos = endpos;
+                        self.next();
+                    } else {
+                        let needed_reps = t32 - self.pos;
+                        self.state = RleVoxelIteratorState::InRepetition {
+                            what,
+                            count: count - needed_reps,
+                        };
+                        self.pos += needed_reps;
+                    }
+                }
+                _ => {
+                    self.next();
+                }
+            }
+        }
+        self.next()
+    }
+
     fn advance_pos(&mut self, data: u32) -> (VoxelDatum, BlockPosition, usize) {
         let datum = VoxelDatum::from_repr(data);
         let bpos = self.bpos;
@@ -461,6 +492,20 @@ impl VChunk {
         let mut uc = decompress_rle(vox).expect("Invalid compressed chunk stored");
         uc.position = self.position;
         uc
+    }
+
+    pub fn iter(&self) -> <&Self as IntoIterator>::IntoIter {
+        self.into_iter()
+    }
+}
+
+impl<'v> IntoIterator for &'v VChunk {
+    type Item = <RleVoxelIterator<'v> as Iterator>::Item;
+    type IntoIter = RleVoxelIterator<'v>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let VChunkData::QuickCompressed { vox } = &self.data;
+        RleVoxelIterator::new(vox)
     }
 }
 
