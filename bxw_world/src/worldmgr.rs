@@ -375,18 +375,8 @@ impl World {
                     for kind in delta.handlers {
                         let mut kind = self.handlers[kind].borrow_mut();
                         if kind.status_array()[cid] != ChunkDataState::Unloaded {
-                            let arc = kind.swap_data(self, cid, None);
+                            let _arc = kind.swap_data(self, cid, None);
                             kind.status_array_mut()[cid] = ChunkDataState::Unloaded;
-                            let cnt = self.tasks_in_pool.clone();
-                            tasks.push(Task::new(
-                                move || {
-                                    drop(arc);
-                                    cnt.fetch_sub(1, Ordering::SeqCst);
-                                },
-                                false,
-                                false,
-                            ));
-                            remaining -= 1;
                         }
                     }
                     let mut any_loaded = false;
