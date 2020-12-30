@@ -17,6 +17,8 @@ pub struct DebugData {
     pub wgen_times: TimingRing,
     pub wmesh_times: TimingRing,
     pub phys_times: TimingRing,
+    pub taskpool_active_tasks: AtomicI32,
+    pub chunk_queued_deltas: AtomicI32,
     // Coordinate info in tenths of a meter
     pub local_player_x: AtomicI64,
     pub local_player_y: AtomicI64,
@@ -74,6 +76,8 @@ Generate: {gen}
 Mesh: {mesh}
 Physics: {phys}
 Pos: {lpx:.1} {lpy:.1} {lpz:.1}
+Taskpool active: {tasks}
+Chunk deltas active: {cdeltas}
 
 Heap usage: {heap}
 GPU heap usage: {gpuheap}
@@ -83,6 +87,8 @@ GPU heap usage: {gpuheap}
             gen = &self.wgen_times,
             mesh = &self.wmesh_times,
             phys = &self.phys_times,
+            tasks = self.taskpool_active_tasks.load(Ordering::Acquire),
+            cdeltas = self.chunk_queued_deltas.load(Ordering::Acquire),
             lpx = self.local_player_x.load(Ordering::Acquire) as f32 / 10.0,
             lpy = self.local_player_y.load(Ordering::Acquire) as f32 / 10.0,
             lpz = self.local_player_z.load(Ordering::Acquire) as f32 / 10.0,

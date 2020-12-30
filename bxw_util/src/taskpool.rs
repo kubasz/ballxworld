@@ -1,3 +1,4 @@
+use crate::debug_data::DEBUG_DATA;
 use parking_lot::*;
 use smallvec::alloc::collections::VecDeque;
 use smallvec::alloc::sync::Arc;
@@ -52,6 +53,9 @@ struct TaskPoolRunnerParams {
 fn task_pool_runner(params: TaskPoolRunnerParams) {
     while !params.kill_switch.load(Ordering::Acquire) {
         let mut queue = params.queue.0.lock();
+        DEBUG_DATA
+            .taskpool_active_tasks
+            .store(queue.len() as i32, Ordering::Release);
         if let Some(task) = queue.pop_front() {
             drop(queue);
             task.execute();
@@ -138,6 +142,9 @@ impl TaskPool {
             }
             tasks_added += 1;
         }
+        DEBUG_DATA
+            .taskpool_active_tasks
+            .store(queue.len() as i32, Ordering::Release);
         drop(queue);
         if tasks_added * 3 < self.threads.len() {
             for _ in 0..tasks_added {

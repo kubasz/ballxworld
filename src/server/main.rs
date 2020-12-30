@@ -46,10 +46,10 @@ fn stdin_reader_worker(tx: mpsc::Sender<String>) {
     let mut linebuf = String::with_capacity(128);
     while let Ok(_count) = std::io::stdin().read_line(&mut linebuf) {
         let cmd = linebuf.trim();
-        if cmd.len() == 0 {
+        if cmd.is_empty() {
             continue;
         }
-        if let Err(_) = tx.send(cmd.to_owned()) {
+        if tx.send(cmd.to_owned()).is_err() {
             break;
         }
         if !KEEP_RUNNING.load(Ordering::SeqCst) {
