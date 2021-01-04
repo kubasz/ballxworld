@@ -419,7 +419,9 @@ impl World {
             }
         }
         task_pool.push_tasks(tasks.into_iter());
-        bxw_util::debug_data::DEBUG_DATA.chunk_queued_deltas.store(self.remaining_deltas.len() as i32, Ordering::Release);
+        bxw_util::debug_data::DEBUG_DATA
+            .chunk_queued_deltas
+            .store(self.remaining_deltas.len() as i32, Ordering::Release);
     }
 
     fn check_load_deltas(&mut self, task_pool: &TaskPool) {

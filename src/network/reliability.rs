@@ -1,7 +1,7 @@
 use serde::*;
+use std::cmp::Ordering;
 use std::ops::{Add, AddAssign, Index, IndexMut};
 use std::time::Instant;
-use std::cmp::Ordering;
 
 const SEQUENCE_BUFFER_LEN: usize = 2048;
 
@@ -34,19 +34,28 @@ impl Default for SeqBuffer {
 #[derive(Copy, Clone, Hash)]
 pub struct PacketData {
     pub seq: SeqNumber,
-    pub acked: bool,
     pub send_time: Instant,
     pub first_ack_time: Option<Instant>,
 }
 
 impl Default for PacketData {
     fn default() -> Self {
+        let now = Instant::now();
         Self {
             seq: SeqNumber(u32::MAX),
-            acked: true,
-            send_time: Instant::now(),
-            first_ack_time: None,
+            send_time: now,
+            first_ack_time: Some(now),
         }
+    }
+}
+
+impl PacketData {
+    pub fn acked(&self) -> bool {
+        self.first_ack_time.is_some()
+    }
+
+    fn on_ack(&mut self, time: Instant) {
+        self.first_ack_time.get_or_insert(time);
     }
 }
 
@@ -62,13 +71,25 @@ impl ReliablePeerState {
         let mut ack_bitvec = 0u64;
         for seq_offset in 0..64u32 {
             let seq = rsq.wrapping_sub(seq_offset + 1);
-            if self.received[seq].acked {
+            if self.received[seq].acked() {
                 ack_bitvec |= (1u64 << seq_offset);
             }
         }
         AckHeader {
             last_recv_seq: self.received.most_recent_seq,
             ack_bitvec,
+        }
+    }
+
+    pub fn accept_ack_header(&mut self, header: &AckHeader, time: Instant) {
+        let mut rsq = header.last_recv_seq.0;
+        self.sent[rsq].on_ack(time);
+        for seq_offset in 0..64u32 {
+            let acked = (header.ack_bitvec & (1u64 << seq_offset)) != 0;
+            if acked {
+                let seq = rsq.wrapping_sub(seq_offset + 1);
+                self.sent[seq].on_ack(time);
+            }
         }
     }
 }
@@ -122,8 +143,12 @@ impl PartialOrd for SeqNumber {
 impl Ord for SeqNumber {
     fn cmp(&self, other: &Self) -> Ordering {
         let ord = self.0.cmp(&other.0);
-        let (max, min) = if self.0 > other.0 {(self.0, other.0)} else {(other.0, self.0)};
-        if max-min > u32::MAX/4 {
+        let (max, min) = if self.0 > other.0 {
+            (self.0, other.0)
+        } else {
+            (other.0, self.0)
+        };
+        if max - min > u32::MAX / 4 {
             ord.reverse()
         } else {
             ord

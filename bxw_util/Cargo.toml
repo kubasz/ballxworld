@@ -12,8 +12,8 @@ rand = { version = "0.8", features = ["nightly", "simd_support"] }
 rand_distr = "0.4"
 rand_xoshiro = "0.6"
 rstar = "0.8"
-nalgebra = "0.23"
-glm = { version = "0.9", package = "nalgebra-glm" }
+nalgebra = "0.24"
+glm = { version = "0.10", package = "nalgebra-glm" }
 packed_simd = { version = "0.3.4", package = "packed_simd_2" }
 simba = { version = "0.3", features = ["packed_simd"] }
 toml_edit = "0.2"
