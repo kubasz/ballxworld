@@ -20,9 +20,12 @@ use bxw_world::entities::player::PLAYER_EYE_HEIGHT;
 use bxw_world::generation::WorldBlocks;
 use bxw_world::BlockPosition;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::f64::consts::PI;
+use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::client::render::voxrender::MeshDataHandler;
 use crate::network::client::{ClientControlMessage, NetClient};
@@ -32,8 +35,6 @@ use bxw_util::direction::OctahedralOrientation;
 use bxw_world::blocks::stdshapes::StdMeta;
 use bxw_world::physics::SMALL_V_CUTOFF;
 use bxw_world::physics::TIMESTEP as PHYSICS_FRAME_TIME;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 #[derive(Debug, Clone, Default)]
 struct InputState {
@@ -47,7 +48,6 @@ struct InputState {
 pub fn client_main() {
     let sdl_ctx = sdl2::init().unwrap();
     let sdl_vid = sdl_ctx.video().unwrap();
-    let mut sdl_timer = sdl_ctx.timer().unwrap();
 
     let cfg = Config::standard_load();
     let use_netclient = std::env::args().any(|a| a == "-netclient");
@@ -97,8 +97,7 @@ pub fn client_main() {
     );
     let wgen = WorldBlocks::new(vxreg.clone(), 0);
 
-    let pf_mult = 1.0 / sdl_timer.performance_frequency() as f64;
-    let mut previous_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
+    let mut previous_frame_time = Instant::now();
     let mut physics_accum_time = 0.0f64;
     //
 
@@ -134,10 +133,14 @@ pub fn client_main() {
     };
 
     'running: loop {
-        let current_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
+        let current_frame_time = Instant::now();
 
         // avoid any nasty divisions by 0
-        let frame_delta_time = 1.0e-6f64.max(current_frame_time - previous_frame_time);
+        let frame_delta_time = 1.0e-6f64.max(
+            current_frame_time
+                .saturating_duration_since(previous_frame_time)
+                .as_secs_f64(),
+        );
         DEBUG_DATA.frame_times.push_sec(frame_delta_time);
         DEBUG_DATA
             .fps
@@ -470,11 +473,11 @@ pub fn client_main() {
         }
 
         if let Some(fps) = cfg.read().render_fps_lock {
-            let end_current_frame_time = sdl_timer.performance_counter() as f64 * pf_mult;
-            let target_ft = 1.0 / f64::from(fps);
-            let ms = (target_ft - end_current_frame_time + current_frame_time) * 1000.0;
-            if ms > 0.0 {
-                sdl_timer.delay(ms as u32);
+            let end_current_frame_time = Instant::now() + Duration::from_micros(100);
+            let target_ft = Duration::from_secs_f64(1.0 / f64::from(fps));
+            let elapsed_ft = end_current_frame_time.saturating_duration_since(current_frame_time);
+            if target_ft > elapsed_ft {
+                std::thread::sleep(target_ft - elapsed_ft);
             }
         }
     }

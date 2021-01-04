@@ -418,7 +418,9 @@ impl World {
                 break;
             }
         }
-        task_pool.push_tasks(tasks.into_iter());
+        if !tasks.is_empty() {
+            task_pool.push_tasks(tasks.into_iter());
+        }
         bxw_util::debug_data::DEBUG_DATA
             .chunk_queued_deltas
             .store(self.remaining_deltas.len() as i32, Ordering::Release);
