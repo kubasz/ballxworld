@@ -35,5 +35,5 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.5"
 rmp = "0.8"
 rmp-serde = "0.15"
-sodiumoxide = { git = "https://github.com/sodiumoxide/sodiumoxide.git", rev = "ffd962643109122987b3f709b268c20bc2fd55b4" }
+sodiumoxide = { git = "https://github.com/sodiumoxide/sodiumoxide.git", rev = "dc1d2a87e0e95af2f6055f33fe953e24c0e2bd85" }
 zstd = "0.6"
