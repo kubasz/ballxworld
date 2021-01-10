@@ -69,7 +69,7 @@ pub fn mesh_from_chunk(
         (pos.x + 1) as usize
             + (pos.z + 1) as usize * INFLATED_DIM
             + (pos.y + 1) as usize * INFLATED_DIM2
-    };
+    }
 
     let mut vbuf: Vec<VoxelVertex> = Vec::with_capacity(6144);
     let mut ibuf: Vec<u32> = Vec::with_capacity(6144);

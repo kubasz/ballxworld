@@ -28,14 +28,14 @@ pub fn server_main() {
     let mut vxreg: Box<bxw_world::voxregistry::VoxelRegistry> = Box::default();
     register_standard_blocks(&mut vxreg, &|_| 0);
     let vxreg: Arc<bxw_world::voxregistry::VoxelRegistry> = Arc::from(vxreg);
-    let (mut world, mut server_world) = ServerWorld::new_world("world".to_owned(), vxreg.clone());
-    let wgen = WorldBlocks::new(vxreg.clone(), 0);
+    let (mut world, mut _server_world) = ServerWorld::new_world("world".to_owned(), vxreg.clone());
+    let _wgen = WorldBlocks::new(vxreg, 0);
 
     let mut previous_frame_time = Instant::now();
     let mut physics_accum_time = 0.0f64;
 
-    let netserver = NetServer::new(cfg.clone()).expect("Couldn't start network server");
-    let mut stdin = stdin_reader();
+    let netserver = NetServer::new(cfg).expect("Couldn't start network server");
+    let stdin = stdin_reader();
     'running: while KEEP_RUNNING.load(Ordering::SeqCst) {
         let current_frame_time = Instant::now();
 
@@ -76,14 +76,14 @@ pub fn server_main() {
 
         if let Ok(cmd) = stdin.try_recv() {
             if cmd == "quit" || cmd == "stop" {
-                break;
+                break 'running;
             } else {
                 log::warn!("Unrecognized command: `{}`", cmd);
             }
         }
 
         let end_current_frame_time = Instant::now();
-        let target_ft = Duration::from_secs_f64(0.25 * f64::from(PHYSICS_FRAME_TIME));
+        let target_ft = Duration::from_secs_f64(0.25 * PHYSICS_FRAME_TIME);
         let elapsed_ft = end_current_frame_time.saturating_duration_since(current_frame_time);
         if target_ft > elapsed_ft {
             std::thread::sleep(target_ft - elapsed_ft);

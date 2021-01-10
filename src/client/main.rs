@@ -125,7 +125,7 @@ pub fn client_main() {
     let mut i_orientation = 0;
     let i_destroy = vxreg.get_definition_from_name("core:void").unwrap();
 
-    let mut netclient = if use_netclient {
+    let netclient = if use_netclient {
         let addr = std::net::SocketAddr::V4("127.0.0.1:20138".parse().unwrap());
         Some(NetClient::new(cfg.clone(), &addr).expect("Couldn't create netclient"))
     } else {

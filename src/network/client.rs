@@ -60,7 +60,6 @@ const CLIENT_CONTROL_CHANNEL_BOUND: usize = 1024;
 impl NetClient {
     pub fn new(cfg: ConfigHandle, address: &SocketAddr) -> Result<Self, ClientCreationError> {
         let tokrt = get_tokio_runtime(Some(cfg.clone()));
-        let cfg_clone = cfg.clone();
         let (ccon_tx, ccon_rx) = broadcast::channel(CLIENT_CONTROL_CHANNEL_BOUND);
         drop(ccon_rx);
         let ccon_tx2 = ccon_tx.clone();
@@ -85,9 +84,7 @@ impl NetClient {
             .stack_size(2 * 1024 * 1024)
             .spawn(move || {
                 tokrt.block_on(async move {
-                    if let Err(e) =
-                        client_netmain(cfg_clone, ccon_tx2, socket, shared_state_copy).await
-                    {
+                    if let Err(e) = client_netmain(cfg, ccon_tx2, socket, shared_state_copy).await {
                         log::error!("Client netmain terminated with error: {:?}", e);
                     }
                 });
@@ -131,7 +128,7 @@ async fn client_netmain(
 ) -> std::io::Result<()> {
     let socket = Arc::new(net::UdpSocket::from_std(socket).unwrap());
     let mtu = cfg.read().server_mtu;
-    let mut control_rx = control.subscribe();
+    let mut _control_rx = control.subscribe();
     let mut msgbuf = vec![0u8; mtu as usize * 2];
     log::info!(
         "Attempting connection to {:?} from {:?}",

@@ -67,12 +67,13 @@ pub struct AckHeader {
 
 impl ReliablePeerState {
     pub fn generate_ack_header(&self) -> AckHeader {
-        let mut rsq = self.received.most_recent_seq.0;
+        let rsq = self.received.most_recent_seq.0;
         let mut ack_bitvec = 0u64;
         for seq_offset in 0..64u32 {
             let seq = rsq.wrapping_sub(seq_offset + 1);
-            if self.received[seq].acked() {
-                ack_bitvec |= (1u64 << seq_offset);
+            let pkt = &self.received[seq];
+            if pkt.seq.0 == seq && pkt.acked() {
+                ack_bitvec |= 1u64 << seq_offset;
             }
         }
         AckHeader {
@@ -82,15 +83,38 @@ impl ReliablePeerState {
     }
 
     pub fn accept_ack_header(&mut self, header: &AckHeader, time: Instant) {
-        let mut rsq = header.last_recv_seq.0;
+        let rsq = header.last_recv_seq.0;
         self.sent[rsq].on_ack(time);
         for seq_offset in 0..64u32 {
             let acked = (header.ack_bitvec & (1u64 << seq_offset)) != 0;
             if acked {
                 let seq = rsq.wrapping_sub(seq_offset + 1);
-                self.sent[seq].on_ack(time);
+                let pkt = &mut self.sent[seq];
+                if pkt.seq.0 == seq {
+                    self.sent[seq].on_ack(time);
+                }
             }
         }
+    }
+
+    pub fn get_next_send_seq(&mut self, time: Instant) -> SeqNumber {
+        self.sent.most_recent_seq += 1;
+        let seq = self.sent.most_recent_seq;
+        self.sent[seq] = PacketData {
+            seq,
+            send_time: time,
+            first_ack_time: None,
+        };
+        seq
+    }
+
+    pub fn mark_received(&mut self, seq: SeqNumber, time: Instant) {
+        self.received.most_recent_seq = self.received.most_recent_seq.max(seq);
+        self.received[seq] = PacketData {
+            seq,
+            send_time: time,
+            first_ack_time: None,
+        };
     }
 }
 

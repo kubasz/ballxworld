@@ -155,7 +155,7 @@ async fn server_connection_handler(
         bxw_util::sodiumoxide::hex::encode(&initial_hs_state.get_request().c_player_id)
     );
     let connresponse = packets::auth::ConnectionResponse::Accepted;
-    let (hsack_packet, ssccs) = match authflow_server_respond_to_handshake_packet(
+    let (hsack_packet, _ssccs) = match authflow_server_respond_to_handshake_packet(
         initial_hs_state,
         &shared_state.server_id_keys.0,
         &shared_state.server_id_keys.1,
