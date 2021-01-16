@@ -220,6 +220,10 @@ impl<'i> InputManager<'i> {
         self.update_walk();
     }
 
+    pub fn capturing_input(&self) -> bool {
+        self.capturing_input
+    }
+
     fn update_input_capture(&mut self) {
         let should_capture =
             self.input_state.capture_mouse_switch & self.input_state.capture_input_requested;

@@ -28,10 +28,10 @@ fn setup_logging() {
 }
 
 mod rpmalloc {
-    use std::alloc::GlobalAlloc;
-    use std::alloc::Layout;
     use rpmalloc_sys as rpm;
     use rpmalloc_sys::c_void;
+    use std::alloc::GlobalAlloc;
+    use std::alloc::Layout;
 
     pub struct RpMalloc;
 
@@ -45,7 +45,13 @@ mod rpmalloc {
         }
 
         unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-            rpm::rpaligned_realloc(ptr as *mut c_void, layout.align().max(16), new_size, layout.size(), 0) as *mut u8
+            rpm::rpaligned_realloc(
+                ptr as *mut c_void,
+                layout.align().max(16),
+                new_size,
+                layout.size(),
+                0,
+            ) as *mut u8
         }
     }
 }

@@ -509,7 +509,7 @@ impl<'v> IntoIterator for &'v VChunk {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct TextureMapping<T> {
     mapping: [T; 6],
 }

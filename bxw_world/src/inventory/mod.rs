@@ -4,7 +4,7 @@ use crate::itemregistry::ItemID;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SlotType {
     Item,
-    Fluid
+    Fluid,
 }
 
 pub type StackSize = u32;
@@ -31,7 +31,7 @@ impl CInventory {
             id,
             slots: Vec::with_capacity(slot_count as usize),
         };
-        for islot in 0 .. slot_count {
+        for islot in 0..slot_count {
             inv.slots.push(InventorySlot {
                 name: islot.to_be_bytes(),
                 type_: SlotType::Item,
@@ -55,6 +55,4 @@ impl Component for CInventory {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum InventoryChange {
-
-}
+pub enum InventoryChange {}

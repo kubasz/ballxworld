@@ -8,7 +8,7 @@ pub struct ServerWorld {}
 
 impl ServerWorld {
     pub fn new_world(name: String, registry: Arc<VoxelRegistry>) -> (World, ServerWorld) {
-        let mut world = World::new(name);
+        let mut world = World::new(name, registry.clone());
         world.replace_handler(CHUNK_BLOCK_DATA, Box::new(WorldBlocks::new(registry, 0)));
 
         let sw = ServerWorld {};

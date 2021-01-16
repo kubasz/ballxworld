@@ -13,7 +13,7 @@ use bxw_world::TextureMapping;
 use itertools::zip;
 use std::borrow::Cow;
 use std::ffi::CString;
-use std::ops::{Add, Neg, Sub};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::sync::Arc;
 use vk_mem as vma;
 
@@ -32,6 +32,12 @@ pub mod z {
     pub const GUI_Z_LAYER_UI_POPUP: i32 = GUI_Z_LAYER_UI_HIGH + GUI_ZFACTOR_LAYER;
     pub const GUI_Z_LAYER_OVERLAY: i32 = GUI_Z_LAYER_UI_POPUP + GUI_ZFACTOR_LAYER;
     pub const GUI_Z_LAYER_CURSOR: i32 = i32::max_value() - GUI_ZFACTOR_LAYER;
+}
+
+pub mod theme {
+    pub const SLOT_SIZE: f32 = 48.0;
+    pub const SLOT_GAP: f32 = 10.0;
+    pub const SLOT_INNER_MARGIN: f32 = 5.0;
 }
 
 const GUI_ATLAS_DIM: f32 = 128.0;
@@ -62,16 +68,23 @@ enum ControlStyleRenderInfo {
 
 impl GuiControlStyle {
     fn render_info(self) -> ControlStyleRenderInfo {
+        // can't be const due to float arithmetic not allowed :(
         fn p(x: i32) -> f32 {
             (x as f32) / GUI_ATLAS_DIM
         }
-        let p4 = |a, b, c, d| ControlStyleRenderInfo::LRTB([p(a), p(b), p(c), p(d)]);
-        let p8 = |a, b, c, d, e, f, g, h| {
+        fn p4(a: i32, b: i32, c: i32, d: i32) -> ControlStyleRenderInfo {
+            ControlStyleRenderInfo::LRTB([p(a), p(b), p(c), p(d)])
+        }
+        #[allow(clippy::many_single_char_names)]
+        #[allow(clippy::too_many_arguments)]
+        #[rustfmt::skip]
+        fn p8(a: i32, b: i32, c: i32, d: i32,
+              e: i32, f: i32, g: i32, h: i32) -> ControlStyleRenderInfo {
             ControlStyleRenderInfo::Box9(
                 [p(a), p(b), p(c), p(d), p(e), p(f), p(g), p(h)],
                 [b - a + 1, d - c + 1, f - e + 1, h - g + 1],
             )
-        };
+        }
         match self {
             GuiControlStyle::FullBlack => p4(2, 6, 4, 8),
             GuiControlStyle::FullWhite => p4(6, 6, 8, 8),
@@ -147,6 +160,22 @@ impl Neg for GuiCoord {
     }
 }
 
+impl Mul<f32> for GuiCoord {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self(self.0 * rhs, self.1 * rhs)
+    }
+}
+
+impl Div<f32> for GuiCoord {
+    type Output = Self;
+
+    fn div(self, rhs: f32) -> Self::Output {
+        Self(self.0 / rhs, self.1 / rhs)
+    }
+}
+
 /// A gui 2D position/size vector
 #[derive(Copy, Clone, Default, Debug, PartialEq)]
 pub struct GuiVec2(pub GuiCoord, pub GuiCoord);
@@ -175,6 +204,22 @@ impl Neg for GuiVec2 {
     }
 }
 
+impl Mul<f32> for GuiVec2 {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self(self.0 * rhs, self.1 * rhs)
+    }
+}
+
+impl Div<f32> for GuiVec2 {
+    type Output = Self;
+
+    fn div(self, rhs: f32) -> Self::Output {
+        Self(self.0 / rhs, self.1 / rhs)
+    }
+}
+
 impl GuiVec2 {
     pub fn to_absolute_from_dim(self, dimensions: (u32, u32)) -> Vector2<f32> {
         vec2(
@@ -191,6 +236,14 @@ impl GuiVec2 {
 
 pub fn gv2(x: (f32, f32), y: (f32, f32)) -> GuiVec2 {
     GuiVec2(GuiCoord(x.0, x.1), GuiCoord(y.0, y.1))
+}
+
+pub fn gv2a(x: f32, y: f32) -> GuiVec2 {
+    GuiVec2(GuiCoord(0.0, x), GuiCoord(0.0, y))
+}
+
+pub fn gv2r(x: f32, y: f32) -> GuiVec2 {
+    GuiVec2(GuiCoord(0.0, x), GuiCoord(0.0, y))
 }
 
 /// A gui 2D position/size vector
@@ -240,6 +293,7 @@ impl GuiColor {
 }
 
 pub const GUI_WHITE: GuiColor = GuiColor([1.0, 1.0, 1.0, 1.0]);
+pub const GUI_RED: GuiColor = GuiColor([0.9, 0.1, 0.1, 1.0]);
 pub const GUI_BLACK: GuiColor = GuiColor([0.0, 0.0, 0.0, 1.0]);
 
 #[derive(Debug, Clone)]

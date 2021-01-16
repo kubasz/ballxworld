@@ -119,6 +119,7 @@ pub type SynchronousUpdateTask = Box<dyn FnOnce(&mut World) + Send + 'static>;
 
 pub struct World {
     pub name: String,
+    voxregistry: Arc<VoxelRegistry>,
     allocation: FnvHashMap<ChunkPosition, usize>,
     chunk_positions: Vec<Option<ChunkPosition>>,
     free_indices: Vec<usize>,
@@ -202,7 +203,7 @@ struct LoadData {
 }
 
 impl World {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: String, voxregistry: Arc<VoxelRegistry>) -> Self {
         let default_capacity = 64;
         let busy_arc = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel();
@@ -214,6 +215,7 @@ impl World {
         }
         Self {
             name,
+            voxregistry,
             allocation: FnvHashMap::with_capacity_and_hasher(default_capacity, Default::default()),
             chunk_positions: Vec::with_capacity(default_capacity),
             free_indices: Vec::with_capacity(default_capacity),
@@ -233,6 +235,10 @@ impl World {
             remaining_deltas: Vec::new(),
             sync_task_queue: (tx, rx),
         }
+    }
+
+    pub fn voxel_registry(&self) -> &Arc<VoxelRegistry> {
+        &self.voxregistry
     }
 
     pub fn get_handler(&self, id: usize) -> &RefCell<Box<dyn ChunkDataHandler>> {

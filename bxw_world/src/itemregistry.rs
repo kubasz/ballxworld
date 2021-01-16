@@ -10,4 +10,3 @@ pub struct ItemDefinition {
 pub struct ItemRegistry {
     //
 }
-

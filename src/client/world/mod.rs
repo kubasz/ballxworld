@@ -18,7 +18,7 @@ pub struct ClientWorld {
 
 impl ClientWorld {
     pub fn new_world(name: String, registry: Arc<VoxelRegistry>) -> (World, ClientWorld) {
-        let mut world = World::new(name);
+        let mut world = World::new(name, registry.clone());
         world.replace_handler(CHUNK_BLOCK_DATA, Box::new(WorldBlocks::new(registry, 0)));
         let entities = world.ecs();
         let mut local_player = bxw_world::entities::player::create_player(

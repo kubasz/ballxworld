@@ -3,6 +3,7 @@
 
 use crate::client::input::InputManager;
 use crate::client::render::resources::RenderingResources;
+use crate::client::render::ui;
 use crate::client::render::ui::z::*;
 use crate::client::render::ui::{
     gv2, GuiCmd, GuiControlStyle, GuiCoord, GuiOrderedCmd, GuiRect, GuiRenderer, GuiVec2,
@@ -28,6 +29,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::client::render::voxrender::MeshDataHandler;
+use crate::client::screens::player_inventory::UiPlayerInventory;
+use crate::client::screens::UiScreen;
 use crate::network::client::{ClientControlMessage, NetClient};
 use bxw_util::change::Change;
 use bxw_util::collider::AABB;
@@ -319,9 +322,9 @@ pub fn client_main() {
                         .gui_rect_centered(GuiVec2(GuiCoord(0.5, 0.0), GuiCoord(0.5, 0.0))),
                 },
             });
-            {
-                let bsize = 48.0;
-                let bgap = 10.0;
+            if input_mgr.capturing_input() {
+                let bsize = ui::theme::SLOT_SIZE;
+                let bgap = ui::theme::SLOT_GAP;
                 let mut x = -(i_placeable.len() as f32) / 2.0 * (bsize + bgap);
                 let y = -bsize - bgap - 8.0;
                 for (i, &def) in i_placeable.iter().enumerate() {
@@ -329,7 +332,7 @@ pub fn client_main() {
                         z_index: GUI_Z_LAYER_HUD + GUI_Z_OFFSET_CONTROL,
                         color: GUI_WHITE,
                         cmd: GuiCmd::VoxelPreview {
-                            texture: def.texture_mapping.clone(),
+                            texture: def.texture_mapping,
                             rect: GuiRect::from_xywh(
                                 (0.5, x + bgap / 2.0),
                                 (1.0, y),
@@ -357,6 +360,9 @@ pub fn client_main() {
                     });
                     x += bsize + bgap;
                 }
+            } else {
+                let mut iscreen = UiPlayerInventory {};
+                iscreen.draw(gui, Some((&world, &client_world)));
             }
             fc.end_region();
             let mut fc = RenderingContext::frame_goto_pass(fc);
