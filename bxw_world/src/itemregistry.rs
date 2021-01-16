@@ -11,8 +11,3 @@ pub struct ItemRegistry {
     //
 }
 
-#[derive(Clone, Debug, Hash, Eq, PartialEq)]
-pub struct ItemStack {
-    id: ItemID,
-    quantity: i64,
-}

@@ -204,6 +204,7 @@ pub fn world_physics_tick(world: &mut World) {
                 },
                 debug_info: Default::default(),
                 load_anchor: Default::default(),
+                inventory: Default::default(),
             });
         }
     }

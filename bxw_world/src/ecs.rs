@@ -198,6 +198,8 @@ impl Component for CLoadAnchor {
     }
 }
 
+pub use crate::inventory::CInventory;
+
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct ComponentId<T: Component>(usize, PhantomData<T>);
 
@@ -220,6 +222,7 @@ pub struct Entity {
     pub physics: Option<ComponentId<CPhysics>>,
     pub debug_info: Option<ComponentId<CDebugInfo>>,
     pub load_anchor: Option<ComponentId<CLoadAnchor>>,
+    pub inventory: Option<ComponentId<CInventory>>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -242,6 +245,7 @@ pub struct EntityChange {
     pub physics: Change<CPhysics>,
     pub debug_info: Change<CDebugInfo>,
     pub load_anchor: Change<CLoadAnchor>,
+    pub inventory: Change<CInventory>,
 }
 
 impl Entity {
@@ -252,6 +256,7 @@ impl Entity {
             physics: None,
             debug_info: None,
             load_anchor: None,
+            inventory: None,
         }
     }
 }
@@ -266,6 +271,7 @@ pub struct ECS {
     physicss: SparseVec<CPhysics>,
     debug_infos: SparseVec<CDebugInfo>,
     load_anchors: SparseVec<CLoadAnchor>,
+    inventories: SparseVec<CInventory>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -343,6 +349,9 @@ impl ECS {
         if let Some(ComponentId(cid, _)) = ent.load_anchor {
             self.load_anchors.remove(cid);
         }
+        if let Some(ComponentId(cid, _)) = ent.inventory {
+            self.inventories.remove(cid);
+        }
     }
 
     pub fn apply_entity_changes(&mut self, changes: &[EntityChange]) {
@@ -364,6 +373,7 @@ impl ECS {
             self.change_component(eid, change.physics.clone());
             self.change_component(eid, change.debug_info.clone());
             self.change_component(eid, change.load_anchor.clone());
+            self.change_component(eid, change.inventory.clone());
         }
     }
 }
@@ -460,3 +470,4 @@ impl_ecs_fns!(CLocation, location, locations);
 impl_ecs_fns!(CPhysics, physics, physicss);
 impl_ecs_fns!(CDebugInfo, debug_info, debug_infos);
 impl_ecs_fns!(CLoadAnchor, load_anchor, load_anchors);
+impl_ecs_fns!(CInventory, inventory, inventories);

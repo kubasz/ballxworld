@@ -24,11 +24,13 @@ pub fn create_player(ecs: &ECS, local: bool, name: String) -> EntityChange {
     physics.control_max_force = vec3(30000.0, 0.0, 30000.0);
     let debug_info = CDebugInfo::new(id, name);
     let load_anchor = CLoadAnchor::new(id, 1, true);
+    let inventory = CInventory::new(id, 32);
     EntityChange {
         kind: EntityChangeKind::NewEntity(id),
         location: Change::Create { new: location },
         physics: Change::Create { new: physics },
         debug_info: Change::Create { new: debug_info },
         load_anchor: Change::Create { new: load_anchor },
+        inventory: Change::Create { new: inventory }
     }
 }
