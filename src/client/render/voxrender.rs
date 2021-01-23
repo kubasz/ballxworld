@@ -407,6 +407,23 @@ impl ChunkDataHandler for MeshDataHandler {
         anchor.load_mesh
     }
 
+    fn serializable(&self) -> bool {
+        false
+    }
+
+    fn serialize_data(&self, _world: &World, _index: usize) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn deserialize_data(
+        &mut self,
+        _world: &World,
+        _index: usize,
+        _data: &[u8],
+    ) -> Result<AnyChunkData, &'static str> {
+        Err("Trying to serialize chunk mesh data")
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

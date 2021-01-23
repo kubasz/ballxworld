@@ -2,6 +2,7 @@ use crate::ecs::CLoadAnchor;
 use crate::stdgen::StdGenerator;
 use crate::worldmgr::*;
 use crate::*;
+use bxw_util::itertools::Itertools;
 use bxw_util::taskpool::Task;
 use std::any::Any;
 use std::sync::Arc;
@@ -147,6 +148,48 @@ impl ChunkDataHandler for WorldBlocks {
 
     fn needs_loading_for_anchor(&self, _anchor: &CLoadAnchor) -> bool {
         true
+    }
+
+    fn serializable(&self) -> bool {
+        true
+    }
+
+    fn serialize_data(&self, _world: &World, index: usize) -> Option<Vec<u8>> {
+        let data = self.compressed_storage.get(index)?.as_ref()?;
+        let VChunkData::QuickCompressed { vox } = &data.data;
+        let mut out: Vec<u8> = Vec::with_capacity(vox.len() * 4);
+        vox.iter()
+            .map(|word| word.to_le_bytes())
+            .for_each(|bytes| out.extend_from_slice(&bytes));
+        Some(out)
+    }
+
+    fn deserialize_data(
+        &mut self,
+        world: &World,
+        index: usize,
+        data: &[u8],
+    ) -> Result<AnyChunkData, &'static str> {
+        if (data.len() % 4) != 0 {
+            return Err("Invalid serialized data length");
+        }
+        let mut vox: Vec<u32> = Vec::with_capacity(data.len() / 4);
+        vox.extend(
+            data.iter()
+                .tuples()
+                .map(|(&a, &b, &c, &d)| u32::from_le_bytes([a, b, c, d])),
+        );
+        let new_data = VChunk {
+            data: VChunkData::QuickCompressed { vox },
+            position: world
+                .get_chunk_position(index)
+                .ok_or("Trying to deserialize a chunk without an assigned position")?,
+        };
+        let old_data = std::mem::replace(
+            &mut self.compressed_storage[index],
+            Some(Arc::new(new_data)),
+        );
+        Ok(old_data.map(|x| x as AnyChunkDataArc))
     }
 
     fn as_any(&self) -> &dyn Any {

@@ -55,6 +55,15 @@ pub trait ChunkDataHandler {
         index: usize,
     ) -> Option<Task>;
     fn needs_loading_for_anchor(&self, anchor: &CLoadAnchor) -> bool;
+    fn serializable(&self) -> bool;
+    fn serialize_data(&self, world: &World, index: usize) -> Option<Vec<u8>>;
+    /// Returns old data
+    fn deserialize_data(
+        &mut self,
+        world: &World,
+        index: usize,
+        data: &[u8],
+    ) -> Result<AnyChunkData, &'static str>;
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
@@ -104,6 +113,23 @@ impl ChunkDataHandler for NoopChunkDataHandler {
 
     fn needs_loading_for_anchor(&self, _anchor: &CLoadAnchor) -> bool {
         false
+    }
+
+    fn serializable(&self) -> bool {
+        false
+    }
+
+    fn serialize_data(&self, _world: &World, _index: usize) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn deserialize_data(
+        &mut self,
+        _world: &World,
+        _index: usize,
+        _data: &[u8],
+    ) -> Result<AnyChunkData, &'static str> {
+        Err("No-op data handler forced to deserialize data")
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -255,6 +281,10 @@ impl World {
 
     pub fn get_chunk_index(&self, cpos: ChunkPosition) -> Option<usize> {
         self.allocation.get(&cpos).copied()
+    }
+
+    pub fn get_chunk_position(&self, index: usize) -> Option<ChunkPosition> {
+        *self.chunk_positions.get(index)?
     }
 
     pub fn ecs(&self) -> &ECS {

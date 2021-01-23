@@ -7,7 +7,7 @@ repository = "https://github.com/kubasz/ballxworld"
 edition = "2018"
 
 [dependencies]
-bytemuck = "1.4"
+bytemuck = { version = "1.4", features = ["extern_crate_alloc"] }
 rand = { version = "0.8", features = ["nightly", "simd_support"] }
 rand_distr = "0.4"
 rand_xoshiro = "0.6"
