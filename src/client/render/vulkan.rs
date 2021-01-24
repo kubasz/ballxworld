@@ -317,7 +317,7 @@ impl RenderingHandles {
             } else {
                 vec![0.75, 0.25]
             };
-            let mut queue_families = vec![vk::DeviceQueueCreateInfo {
+            let queue_families = vec![vk::DeviceQueueCreateInfo {
                 queue_family_index: queue_family.0,
                 queue_count: queue_cnt,
                 p_queue_priorities: priorities.as_ptr(),

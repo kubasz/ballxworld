@@ -1,0 +1,11 @@
+PRAGMA analysis_limit = 512;
+PRAGMA auto_vacuum = INCREMENTAL; -- needs manual trigger by PRAGMA incremental_vacuum;
+PRAGMA automatic_index = TRUE;
+PRAGMA cell_size_check = TRUE;
+PRAGMA encoding = 'UTF-8';
+PRAGMA foreign_keys = TRUE;
+PRAGMA page_size = 8192;
+PRAGMA recursive_triggers = TRUE;
+PRAGMA synchronous = NORMAL;
+PRAGMA trusted_schema = FALSE;
+PRAGMA journal_mode = WAL;

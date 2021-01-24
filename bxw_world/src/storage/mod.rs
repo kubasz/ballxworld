@@ -1,7 +1,12 @@
 use bxw_util::itertools::Itertools;
+use bxw_util::parking_lot::Mutex;
+pub use rusqlite;
 use rusqlite::Connection;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+mod schemas;
 
 pub fn saves_folder_path() -> PathBuf {
     PathBuf::from("saves")
@@ -90,20 +95,32 @@ pub fn saves_folder_listing() -> std::io::Result<Vec<WorldSave>> {
 
 pub struct WorldDiskStorage {
     db_path: PathBuf,
-    db: Connection,
+    db: Arc<Mutex<Connection>>,
 }
 
 impl WorldDiskStorage {
-    pub fn open(save: &WorldSave) -> std::io::Result<Self> {
+    pub fn open(save: &WorldSave) -> rusqlite::Result<Self> {
         let db_path = save.0.clone();
         use rusqlite::OpenFlags;
-        let db = Connection::open_with_flags(
+        let mut db = Connection::open_with_flags(
             &db_path,
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_FULL_MUTEX,
-        )
-        .map_err(|e| std::io::Error::new(ErrorKind::Other, e))?;
-        Ok(Self { db_path, db })
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        schemas::db_configure_conn(&mut db)?;
+        schemas::setup_db_schema(&mut db)?;
+        Ok(Self {
+            db_path,
+            db: Arc::new(Mutex::new(db)),
+        })
+    }
+}
+
+impl Drop for WorldDiskStorage {
+    fn drop(&mut self) {
+        schemas::db_on_exit(&mut self.db.lock()).unwrap_or_else(|e| {
+            eprintln!("Warning: error on database pre-close optimization: {}", e)
+        });
     }
 }
