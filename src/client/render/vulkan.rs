@@ -317,13 +317,12 @@ impl RenderingHandles {
             } else {
                 vec![0.75, 0.25]
             };
-            let mut queue_families = Vec::new();
-            queue_families.push(vk::DeviceQueueCreateInfo {
+            let mut queue_families = vec![vk::DeviceQueueCreateInfo {
                 queue_family_index: queue_family.0,
                 queue_count: queue_cnt,
                 p_queue_priorities: priorities.as_ptr(),
                 ..Default::default()
-            });
+            }];
 
             let dci = vk::DeviceCreateInfo::builder()
                 .enabled_extension_names(&exts)

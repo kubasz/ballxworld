@@ -152,9 +152,9 @@ impl From<u32> for SeqNumber {
     }
 }
 
-impl Into<u32> for SeqNumber {
-    fn into(self) -> u32 {
-        self.0
+impl From<SeqNumber> for u32 {
+    fn from(v: SeqNumber) -> Self {
+        v.0
     }
 }
 

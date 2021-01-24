@@ -7,6 +7,7 @@ pub mod itemregistry;
 pub mod physics;
 pub mod raycast;
 pub mod stdgen;
+pub mod storage;
 pub mod voxregistry;
 pub mod worldmgr;
 

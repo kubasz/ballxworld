@@ -10,4 +10,5 @@ edition = "2018"
 
 [dependencies]
 noise = "0.7"
+rusqlite = { version = "0.24.2", features = ["bundled", "backup", "blob", "limits"] }
 bxw_util = { path = "../bxw_util" }
