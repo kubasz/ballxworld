@@ -177,6 +177,7 @@ dependencies = [
  "thread_local",
  "toml",
  "toml_edit",
+ "tracy-client",
  "zstd",
 ]
 
@@ -1593,6 +1594,24 @@ dependencies = [
  "chrono",
  "combine",
  "linked-hash-map",
+]
+
+[[package]]
+name = "tracy-client"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e8ccdb37ca05e354a50011b8a195f115215e46324f65be92495859882cea453"
+dependencies = [
+ "tracy-client-sys",
+]
+
+[[package]]
+name = "tracy-client-sys"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ee6f0f7878155b6102ab5aba86a92ec4357702ad44683df68ab5493ba3c86a2"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

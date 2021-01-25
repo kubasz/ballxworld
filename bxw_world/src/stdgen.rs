@@ -302,6 +302,14 @@ impl StdGenerator {
     }
 
     pub fn generate_chunk(&self, chunk: &mut UncompressedChunk, registry: &VoxelRegistry) {
+        let _p_frame = bxw_util::tracy_client::start_noncontinuous_frame!("StdGenerator");
+        let _p_zone = bxw_util::tracy_client::Span::new(
+            "Generate chunk",
+            "StdGenerator",
+            file!(),
+            line!(),
+            4,
+        );
         let i_air = registry
             .get_definition_from_name("core:void")
             .expect("No standard air block definition found")

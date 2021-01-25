@@ -643,11 +643,19 @@ impl RenderingHandles {
     }
 
     pub fn flush_destroy_queue(&self) {
-        let mut vmalloc = self.vmalloc.lock();
-        for mut vdo in self.destroy_queue.lock().drain(..) {
+        let mut vmalloc = self.vmalloc.lock_traced("vmalloc", file!(), line!());
+        for mut vdo in self
+            .destroy_queue
+            .lock_traced("vdo destroy queue", file!(), line!())
+            .drain(..)
+        {
             vdo.destroy(&mut vmalloc, &self);
         }
-        for queue in self.frame_destroy_queues.lock().iter_mut() {
+        for queue in self
+            .frame_destroy_queues
+            .lock_traced("frame destroy queues", file!(), line!())
+            .iter_mut()
+        {
             for mut vdo in queue.drain(..) {
                 vdo.destroy(&mut vmalloc, &self);
             }
@@ -762,10 +770,14 @@ impl Swapchain {
             }
         }
         // Don't destroy swapimages - they are owned by the swapchain object
-        self.depth_image
-            .destroy(&mut handles.vmalloc.lock(), handles);
-        self.color_image
-            .destroy(&mut handles.vmalloc.lock(), handles);
+        self.depth_image.destroy(
+            &mut handles.vmalloc.lock_traced("vmalloc", file!(), line!()),
+            handles,
+        );
+        self.color_image.destroy(
+            &mut handles.vmalloc.lock_traced("vmalloc", file!(), line!()),
+            handles,
+        );
         if destroy_swapchain && self.swapchain != vk::SwapchainKHR::null() {
             unsafe {
                 handles
@@ -920,7 +932,7 @@ impl Swapchain {
                 ..Default::default()
             };
             OwnedImage::from(
-                &mut handles.vmalloc.lock(),
+                &mut handles.vmalloc.lock_traced("vmalloc", file!(), line!()),
                 handles,
                 &ici,
                 &aci,
@@ -958,7 +970,7 @@ impl Swapchain {
                 ..Default::default()
             };
             OwnedImage::from(
-                &mut handles.vmalloc.lock(),
+                &mut handles.vmalloc.lock_traced("vmalloc", file!(), line!()),
                 handles,
                 &ici,
                 &aci,
@@ -1107,7 +1119,10 @@ impl RenderingContext {
             .expect("Failed waiting for fence");
         unsafe { device.reset_fences(&[inflight_fence]) }.expect("Couldn't reset fence");
 
-        let mut vmalloc = self.handles.vmalloc.lock();
+        let mut vmalloc = self
+            .handles
+            .vmalloc
+            .lock_traced("vmalloc", file!(), line!());
 
         let memstats = vmalloc.calculate_stats();
         if let Ok(memstats) = memstats {
@@ -1300,6 +1315,7 @@ impl RenderingContext {
 
         let queue = me.handles.queues.lock_primary_queue();
 
+        bxw_util::tracy_client::message("vk Frame Queue Submit", 4);
         unsafe {
             me.handles.device.queue_submit(
                 *queue,
@@ -1315,6 +1331,7 @@ impl RenderingContext {
             .wait_semaphores(&rendfinish)
             .swapchains(&swchs)
             .image_indices(&imgids);
+        bxw_util::tracy_client::message("vk Queue Present", 4);
         match unsafe { me.handles.ext_swapchain.queue_present(*queue, &pi) } {
             Ok(false) => {}
             Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
@@ -1324,5 +1341,6 @@ impl RenderingContext {
                 panic!("{:?}", err);
             }
         }
+        bxw_util::tracy_client::message("Presented", 4);
     }
 }

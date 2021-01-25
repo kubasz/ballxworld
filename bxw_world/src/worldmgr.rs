@@ -464,7 +464,9 @@ impl World {
 
     fn check_load_deltas(&mut self, task_pool: &TaskPool) {
         if !self.load_data_busy.load(Ordering::Acquire) {
-            let mut load_data = self.load_data.lock();
+            let mut load_data = self
+                .load_data
+                .lock_traced("chunk load_data", file!(), line!());
             if !load_data.remaining_deltas.is_empty() {
                 std::mem::swap(&mut self.remaining_deltas, &mut load_data.remaining_deltas);
                 load_data.remaining_deltas.clear();
@@ -525,7 +527,7 @@ impl World {
 }
 
 fn recalculate_load_deltas(load_data: Arc<Mutex<LoadData>>) {
-    let mut load_data = load_data.lock();
+    let mut load_data = load_data.lock_traced("chunk load_data", file!(), line!());
     let mut chunks_to_unload: FnvHashMap<ChunkPosition, (KindsSmallVec, i32)> = Default::default();
     chunks_to_unload.reserve(64);
     for (&cpos, &cid) in load_data.allocation.iter() {

@@ -37,3 +37,9 @@ rmp = "0.8"
 rmp-serde = "0.15"
 sodiumoxide = { git = "https://github.com/sodiumoxide/sodiumoxide.git", rev = "9f6a18d40a4db253edfebac9f2ce5c22d09b1f47" }
 zstd = "0.6"
+
+tracy-client = { version = "0.10.0", default-features = false, features = ["delayed-init"] }
+
+[features]
+default = []
+profile-with-tracy = ["tracy-client/enable"]

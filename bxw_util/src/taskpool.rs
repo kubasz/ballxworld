@@ -1,4 +1,5 @@
 use crate::debug_data::DEBUG_DATA;
+use crate::TracedMutex;
 use parking_lot::*;
 use smallvec::alloc::collections::VecDeque;
 use smallvec::alloc::sync::Arc;
@@ -52,7 +53,10 @@ struct TaskPoolRunnerParams {
 
 fn task_pool_runner(params: TaskPoolRunnerParams) {
     while !params.kill_switch.load(Ordering::Acquire) {
-        let mut queue = params.queue.0.lock();
+        let mut queue = params
+            .queue
+            .0
+            .lock_traced("taskpool queue", file!(), line!());
         DEBUG_DATA
             .taskpool_active_tasks
             .store(queue.len() as i32, Ordering::Release);
@@ -60,6 +64,7 @@ fn task_pool_runner(params: TaskPoolRunnerParams) {
             drop(queue);
             task.execute();
         } else {
+            let _p_zone = tracy_client::Span::new("Idle", "task_pool_runner", file!(), line!(), 4);
             params.queue.1.wait(&mut queue);
         }
     }
@@ -106,6 +111,7 @@ impl TaskPool {
                     .name(format!("ballxworld-worker-{}", wid))
                     .stack_size(4 * 1024 * 1024) // 4 MiB stack for each worker
                     .spawn(move || {
+                        tracy_client::set_thread_name(std::thread::current().name().unwrap());
                         task_pool_runner(params);
                     })
                     .expect("Could not spawn worker thread");
@@ -133,7 +139,8 @@ impl TaskPool {
 
     pub fn push_tasks<TaskIter: Iterator<Item = Task>>(&self, tasks: TaskIter) {
         let mut tasks_added = 0usize;
-        let mut queue = self.queue.0.lock();
+        let mut queue = self.queue.0.lock_traced("taskpool queue", file!(), line!());
+        queue.reserve(tasks.size_hint().0);
         for task in tasks {
             if task.high_priority {
                 queue.push_front(task);

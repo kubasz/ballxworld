@@ -32,6 +32,8 @@ pub use toml;
 pub use toml_edit;
 pub use zstd;
 
+pub use tracy_client;
+
 // Own modules
 pub mod change;
 pub mod collider;
@@ -40,3 +42,27 @@ pub mod direction;
 pub mod math;
 pub mod sparsevec;
 pub mod taskpool;
+
+pub trait TracedMutex {
+    type GuardedType;
+    fn lock_traced(
+        &self,
+        mutex_name: &'static str,
+        file: &'static str,
+        line: u32,
+    ) -> parking_lot::MutexGuard<'_, Self::GuardedType>;
+}
+
+impl<T> TracedMutex for parking_lot::Mutex<T> {
+    type GuardedType = T;
+
+    fn lock_traced(
+        &self,
+        mutex_name: &'static str,
+        file: &'static str,
+        line: u32,
+    ) -> parking_lot::MutexGuard<'_, Self::GuardedType> {
+        let _lockspan = tracy_client::Span::new(mutex_name, "lock_traced", file, line, 6);
+        self.lock()
+    }
+}

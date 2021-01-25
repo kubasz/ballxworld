@@ -18,8 +18,10 @@ required-features = ["images"]
 [features]
 default = []
 images = ["image"]
+profile-with-tracy = ["bxw_util/profile-with-tracy", "bxw_world/profile-with-tracy"]
 
 [dependencies]
 bxw_util = { path = "../bxw_util" }
 bxw_world = { path = "../bxw_world" }
 image = { version = "0.23", optional = true }
+

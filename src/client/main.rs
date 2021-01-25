@@ -166,6 +166,13 @@ pub fn client_main() {
             let (pitch, yaw) = (*pitch, *yaw);
         }
         if physics_frames > 0 {
+            let _p_physics_zone = bxw_util::tracy_client::Span::new(
+                "Physics frames handling",
+                "mainloop",
+                file!(),
+                line!(),
+                4,
+            );
             physics_accum_time -= f64::from(physics_frames) * PHYSICS_FRAME_TIME;
             let physics_frames = if physics_frames > 10 {
                 log::warn!(
@@ -214,6 +221,13 @@ pub fn client_main() {
             }
 
             for _pfrm in 0..physics_frames {
+                let _p_physics_zone = bxw_util::tracy_client::Span::new(
+                    "Physics tick",
+                    "mainloop",
+                    file!(),
+                    line!(),
+                    4,
+                );
                 // do physics tick
                 let entities = world.ecs();
                 let lp_loc: &CLocation = entities.get_component(local_player).unwrap();
@@ -275,9 +289,29 @@ pub fn client_main() {
             }
         }
 
-        world.main_loop_tick(&task_pool);
-        task_pool.main_thread_tick();
+        {
+            let _p_zone = bxw_util::tracy_client::Span::new(
+                "Main world loop tick",
+                "mainloop",
+                file!(),
+                line!(),
+                4,
+            );
+            world.main_loop_tick(&task_pool);
+        }
+        {
+            let _p_zone = bxw_util::tracy_client::Span::new(
+                "Task pool loop tick",
+                "mainloop",
+                file!(),
+                line!(),
+                4,
+            );
+            task_pool.main_thread_tick();
+        }
 
+        let _p_span_prepass =
+            bxw_util::tracy_client::Span::new("Render prepass", "mainloop", file!(), line!(), 4);
         if let Some(mut fc) = rctx.frame_begin_prepass(&cfg.read(), &client_world, frame_delta_time)
         {
             let mut vctx = vctx.borrow_mut();
@@ -365,6 +399,9 @@ pub fn client_main() {
                 iscreen.draw(gui, Some((&world, &client_world)));
             }
             fc.end_region();
+            drop(_p_span_prepass);
+            let _p_span_inpass =
+                bxw_util::tracy_client::Span::new("Render inpass", "mainloop", file!(), line!(), 4);
             let mut fc = RenderingContext::frame_goto_pass(fc);
             fc.begin_region([0.3, 0.3, 0.8, 1.0], || "vctx.inpass_draw");
             vctx.inpass_draw(&mut fc, &world);
@@ -374,11 +411,25 @@ pub fn client_main() {
             guictx.inpass_draw(&mut fc);
             fc.end_region();
 
+            drop(_p_span_inpass);
+            let _p_span_postpass = bxw_util::tracy_client::Span::new(
+                "Render postpass",
+                "mainloop",
+                file!(),
+                line!(),
+                4,
+            );
             let fc = RenderingContext::frame_goto_postpass(fc);
             fc.insert_label([0.1, 0.8, 0.1, 1.0], || "frame_finish");
+            drop(_p_span_postpass);
+            let _p_frame_finish =
+                bxw_util::tracy_client::Span::new("Frame finish", "mainloop", file!(), line!(), 4);
             RenderingContext::frame_finish(fc);
+            bxw_util::tracy_client::finish_continuous_frame!();
         }
 
+        let _p_span_input =
+            bxw_util::tracy_client::Span::new("Input processing", "mainloop", file!(), line!(), 4);
         input_mgr.pre_process();
         for event in event_pump.poll_iter() {
             input_mgr.process(&mut rctx, event);
@@ -477,7 +528,10 @@ pub fn client_main() {
                 }
             }
         }
+        drop(_p_span_input);
 
+        let _p_fps_keeper =
+            bxw_util::tracy_client::Span::new("FPS Target Keeper", "mainloop", file!(), line!(), 4);
         if let Some(fps) = cfg.read().render_fps_lock {
             let end_current_frame_time = Instant::now() + Duration::from_micros(100);
             let target_ft = Duration::from_secs_f64(1.0 / f64::from(fps));

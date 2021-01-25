@@ -838,7 +838,10 @@ impl GuiRenderer {
             flags: vma::AllocationCreateFlags::MAPPED,
             ..Default::default()
         };
-        let mut vmalloc = rctx.handles.vmalloc.lock();
+        let mut vmalloc = rctx
+            .handles
+            .vmalloc
+            .lock_traced("vmalloc", file!(), line!());
         let vb = OwnedBuffer::from(&mut vmalloc, &vbi, &ai);
         let ib = OwnedBuffer::from(&mut vmalloc, &ibi, &ai);
         (vb, ib)
@@ -858,7 +861,7 @@ impl GuiRenderer {
             handles
                 .device
                 .destroy_descriptor_set_layout(self.texture_ds_layout, allocation_cbs());
-            let mut vmalloc = handles.vmalloc.lock();
+            let mut vmalloc = handles.vmalloc.lock_traced("vmalloc", file!(), line!());
             for (mut b1, mut b2) in self.gui_buffers.drain(..) {
                 b1.destroy(&mut vmalloc, handles);
                 b2.destroy(&mut vmalloc, handles);

@@ -149,7 +149,9 @@ impl Drop for DrawnChunk {
         let buffer = std::mem::take(&mut self.buffer);
         let destroy_handle = std::mem::take(&mut self.destroy_handle);
         if let Some(destroy_handle) = destroy_handle.upgrade() {
-            destroy_handle.lock().push(Box::new(buffer));
+            destroy_handle
+                .lock_traced("vdo destroy queue", file!(), line!())
+                .push(Box::new(buffer));
         }
         self.vcount = 0;
         self.icount = 0;
@@ -298,7 +300,11 @@ impl ChunkDataHandler for MeshDataHandler {
                                 | vma::AllocationCreateFlags::DEDICATED_MEMORY,
                             ..Default::default()
                         };
-                        OwnedBuffer::from(&mut handles.vmalloc.lock(), &bi, &ai)
+                        OwnedBuffer::from(
+                            &mut handles.vmalloc.lock_traced("vmalloc", file!(), line!()),
+                            &bi,
+                            &ai,
+                        )
                     };
                     let buffer = {
                         let pool = &alloc_pool.0;
@@ -316,7 +322,11 @@ impl ChunkDataHandler for MeshDataHandler {
                             pool: Some(pool.clone()),
                             ..Default::default()
                         };
-                        OwnedBuffer::from(&mut handles.vmalloc.lock(), &bi, &ai)
+                        OwnedBuffer::from(
+                            &mut handles.vmalloc.lock_traced("vmalloc", file!(), line!()),
+                            &bi,
+                            &ai,
+                        )
                     };
                     buffer.give_name(&handles, || {
                         format!("chunk({},{},{})", cpos.x, cpos.y, cpos.z)
@@ -338,7 +348,7 @@ impl ChunkDataHandler for MeshDataHandler {
                         }
                         handles
                             .vmalloc
-                            .lock()
+                            .lock_traced("vmalloc", file!(), line!())
                             .flush_allocation(&ai.0, 0, tot_sz)
                             .unwrap();
                     }
@@ -358,7 +368,10 @@ impl ChunkDataHandler for MeshDataHandler {
                         }
                         cmd.execute(&handles.queues.lock_gtransfer_queue());
                     }
-                    staging.destroy(&mut handles.vmalloc.lock(), &handles);
+                    staging.destroy(
+                        &mut handles.vmalloc.lock_traced("vmalloc", file!(), line!()),
+                        &handles,
+                    );
 
                     DrawnChunk {
                         cpos,
@@ -436,7 +449,10 @@ impl ChunkDataHandler for MeshDataHandler {
 impl VoxelRenderer {
     pub fn new(cfg: &Config, rctx: &mut RenderingContext, res: Arc<RenderingResources>) -> Self {
         let chunk_pool = {
-            let vmalloc = rctx.handles.vmalloc.lock();
+            let vmalloc = rctx
+                .handles
+                .vmalloc
+                .lock_traced("vmalloc", file!(), line!());
             let qfs = [rctx.handles.queues.get_primary_family()];
             let ex_bi = vk::BufferCreateInfo::builder()
                 .usage(
@@ -557,7 +573,10 @@ impl VoxelRenderer {
         let ubo_sz = vox::VoxelUBO::aligned_size(&rctx.handles.physical_limits) as u64;
 
         let ubuffer = {
-            let mut vmalloc = rctx.handles.vmalloc.lock();
+            let mut vmalloc = rctx
+                .handles
+                .vmalloc
+                .lock_traced("vmalloc", file!(), line!());
             let qfis = [rctx.handles.queues.get_primary_family()];
             let bci = vk::BufferCreateInfo::builder()
                 .sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -749,7 +768,7 @@ impl VoxelRenderer {
             handles
                 .device
                 .destroy_descriptor_set_layout(self.uniform_ds_layout, allocation_cbs());
-            let mut vmalloc = handles.vmalloc.lock();
+            let mut vmalloc = handles.vmalloc.lock_traced("vmalloc", file!(), line!());
             self.ubuffer.destroy(&mut vmalloc, handles);
             let vpool = Arc::try_unwrap(self.chunk_pool)
                 .or(Err(()))
@@ -855,7 +874,7 @@ impl VoxelRenderer {
             fctx.rctx
                 .handles
                 .vmalloc
-                .lock()
+                .lock_traced("vmalloc", file!(), line!())
                 .flush_allocation(&ai.0, ubo_start, ubo_sz)
                 .unwrap();
             self.uniform_dss[fctx.inflight_index]

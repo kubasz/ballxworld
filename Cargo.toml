@@ -23,7 +23,7 @@ serde = { version = "1.0", features = ["derive"] } # Errors in macros if only in
 num_enum = "0.5"
 log = "0.4"
 log4rs = { version = "1.0.0", features = ["all_components", "console_writer", "background_rotation", "config_parsing", "toml_format"] }
-rpmalloc-sys = { version = "0.2.1", features = ["preload"] }
+rpmalloc-sys = { version = "0.2.1", features = [] }
 
 bxw_util = { path = "bxw_util" }
 bxw_world = { path = "bxw_world" }
@@ -32,6 +32,11 @@ bxw_terragen = { path = "bxw_terragen" }
 [dependencies.sdl2]
 version = "0.34"
 features = []
+
+[features]
+default = ["use-rpmalloc"]
+use-rpmalloc = ["rpmalloc-sys/preload"]
+profile-with-tracy = ["use-rpmalloc", "bxw_util/profile-with-tracy", "bxw_world/profile-with-tracy", "bxw_terragen/profile-with-tracy"]
 
 [profile.dev]
 opt-level = 2

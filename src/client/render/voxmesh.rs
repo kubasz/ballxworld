@@ -33,6 +33,13 @@ pub fn mesh_from_chunk(
     chunks: &[Arc<VChunk>],
     _texture_dim: (u32, u32),
 ) -> Option<ChunkBuffers> {
+    let _p_zone = bxw_util::tracy_client::Span::new(
+        "Mesh chunk: Collect",
+        "mesh_from_chunk",
+        file!(),
+        line!(),
+        4,
+    );
     assert_eq!(chunks.len(), 27);
     let premesh = Instant::now();
     let mut ucchunks: Vec<RleVoxelIterator> = chunks.iter().map(|c| c.iter()).collect();
@@ -74,6 +81,14 @@ pub fn mesh_from_chunk(
     let mut vbuf: Vec<VoxelVertex> = Vec::with_capacity(6144);
     let mut ibuf: Vec<u32> = Vec::with_capacity(6144);
 
+    drop(_p_zone);
+    let _p_zone = bxw_util::tracy_client::Span::new(
+        "Mesh chunk: Assemble",
+        "mesh_from_chunk",
+        file!(),
+        line!(),
+        4,
+    );
     for (cell_y, cell_z, cell_x) in iproduct!(0..CHUNK_DIM, 0..CHUNK_DIM, 0..CHUNK_DIM) {
         let ipos = vec3(cell_x as i32, cell_y as i32, cell_z as i32);
         let vidx = get_block_idx(ipos);
