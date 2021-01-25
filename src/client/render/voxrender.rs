@@ -269,6 +269,13 @@ impl ChunkDataHandler for MeshDataHandler {
 
         Some(Task::new(
             move || {
+                let _p_span_generate_mesh = bxw_util::tracy_client::Span::new(
+                    "Mesh chunk",
+                    "mesh_chunk_task",
+                    file!(),
+                    line!(),
+                    4,
+                );
                 let cpci = vk::CommandPoolCreateInfo::builder()
                     .queue_family_index(handles.queues.get_gtransfer_family())
                     .flags(vk::CommandPoolCreateFlags::TRANSIENT);
@@ -288,6 +295,13 @@ impl ChunkDataHandler for MeshDataHandler {
                 let dchunk = if tot_sz > 0 {
                     let qfs = [handles.queues.get_primary_family()];
                     let mut staging = {
+                        let _p_span = bxw_util::tracy_client::Span::new(
+                            "Allocate staging buf",
+                            "mesh_chunk_task",
+                            file!(),
+                            line!(),
+                            4,
+                        );
                         let bi = vk::BufferCreateInfo::builder()
                             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
                             .size(tot_sz as u64)
@@ -307,6 +321,13 @@ impl ChunkDataHandler for MeshDataHandler {
                         )
                     };
                     let buffer = {
+                        let _p_span = bxw_util::tracy_client::Span::new(
+                            "Allocate gpu buf",
+                            "mesh_chunk_task",
+                            file!(),
+                            line!(),
+                            4,
+                        );
                         let pool = &alloc_pool.0;
                         let bi = vk::BufferCreateInfo::builder()
                             .usage(
@@ -333,6 +354,13 @@ impl ChunkDataHandler for MeshDataHandler {
                     });
                     // write to staging
                     {
+                        let _p_span = bxw_util::tracy_client::Span::new(
+                            "Write to staging",
+                            "mesh_chunk_task",
+                            file!(),
+                            line!(),
+                            4,
+                        );
                         let ai = staging.allocation.as_ref().unwrap();
                         unsafe {
                             std::ptr::copy_nonoverlapping(
@@ -354,6 +382,13 @@ impl ChunkDataHandler for MeshDataHandler {
                     }
                     // copy from staging to gpu
                     {
+                        let _p_span = bxw_util::tracy_client::Span::new(
+                            "Copy staging to gpu",
+                            "mesh_chunk_task",
+                            file!(),
+                            line!(),
+                            4,
+                        );
                         let cmd = OnetimeCmdGuard::new(&handles, Some(cmd_pool.pool));
                         let bci = vk::BufferCopy::builder()
                             .size(tot_sz as vk::DeviceSize)
@@ -368,10 +403,19 @@ impl ChunkDataHandler for MeshDataHandler {
                         }
                         cmd.execute(&handles.queues.lock_gtransfer_queue());
                     }
-                    staging.destroy(
-                        &mut handles.vmalloc.lock_traced("vmalloc", file!(), line!()),
-                        &handles,
-                    );
+                    {
+                        let _p_span = bxw_util::tracy_client::Span::new(
+                            "Free staging vb",
+                            "mesh_chunk_task",
+                            file!(),
+                            line!(),
+                            4,
+                        );
+                        staging.destroy(
+                            &mut handles.vmalloc.lock_traced("vmalloc", file!(), line!()),
+                            &handles,
+                        );
+                    }
 
                     DrawnChunk {
                         cpos,
