@@ -527,6 +527,13 @@ impl World {
 }
 
 fn recalculate_load_deltas(load_data: Arc<Mutex<LoadData>>) {
+    let _p_zone = tracy_client::Span::new(
+        "recalculate load deltas",
+        "recalculate_load_deltas",
+        file!(),
+        line!(),
+        4,
+    );
     let mut load_data = load_data.lock_traced("chunk load_data", file!(), line!());
     let mut chunks_to_unload: FnvHashMap<ChunkPosition, (KindsSmallVec, i32)> = Default::default();
     chunks_to_unload.reserve(64);
