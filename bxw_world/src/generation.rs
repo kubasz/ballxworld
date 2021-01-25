@@ -105,6 +105,13 @@ impl ChunkDataHandler for WorldBlocks {
         let worldgen = Arc::downgrade(&self.generator);
         Some(Task::new(
             move || {
+                let _p_zone = bxw_util::tracy_client::Span::new(
+                    "Chunk generate task",
+                    "mainloop",
+                    file!(),
+                    line!(),
+                    4,
+                );
                 let worldgen = match worldgen.upgrade() {
                     Some(g) => g,
                     None => return,

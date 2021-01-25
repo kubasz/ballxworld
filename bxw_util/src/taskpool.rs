@@ -52,6 +52,8 @@ struct TaskPoolRunnerParams {
 }
 
 fn task_pool_runner(params: TaskPoolRunnerParams) {
+    use std::fmt::Write;
+    let mut tracy_msg = String::with_capacity(64);
     while !params.kill_switch.load(Ordering::Acquire) {
         let mut queue = params
             .queue
@@ -60,6 +62,9 @@ fn task_pool_runner(params: TaskPoolRunnerParams) {
         DEBUG_DATA
             .taskpool_active_tasks
             .store(queue.len() as i32, Ordering::Release);
+        tracy_msg.clear();
+        write!(&mut tracy_msg, "Tasks in queue left: {}", queue.len()).unwrap_or(());
+        tracy_client::message(&tracy_msg, 1);
         if let Some(task) = queue.pop_front() {
             drop(queue);
             task.execute();

@@ -1115,9 +1115,18 @@ impl RenderingContext {
         self.handles.inflight_index = (self.handles.inflight_index + 1) % INFLIGHT_FRAMES;
         let inflight_index = self.handles.inflight_index as usize;
         let inflight_fence = self.swapchain.inflight_fences[inflight_index];
-        unsafe { device.wait_for_fences(&[inflight_fence], true, u64::max_value()) }
-            .expect("Failed waiting for fence");
-        unsafe { device.reset_fences(&[inflight_fence]) }.expect("Couldn't reset fence");
+        {
+            let _p_zone = bxw_util::tracy_client::Span::new(
+                "Wait for inflight fences",
+                "mainloop",
+                file!(),
+                line!(),
+                4,
+            );
+            unsafe { device.wait_for_fences(&[inflight_fence], true, u64::max_value()) }
+                .expect("Failed waiting for fence");
+            unsafe { device.reset_fences(&[inflight_fence]) }.expect("Couldn't reset fence");
+        }
 
         let mut vmalloc = self
             .handles
@@ -1131,10 +1140,19 @@ impl RenderingContext {
                 .store(memstats.total.usedBytes as i64, Ordering::Release);
         }
 
-        for mut vdo in
-            self.handles.frame_destroy_queues.lock()[old_inflight_index as usize].drain(..)
         {
-            vdo.destroy(&mut vmalloc, &self.handles);
+            let _p_zone = bxw_util::tracy_client::Span::new(
+                "Run frame destroy queue tasks",
+                "mainloop",
+                file!(),
+                line!(),
+                4,
+            );
+            for mut vdo in
+                self.handles.frame_destroy_queues.lock()[old_inflight_index as usize].drain(..)
+            {
+                vdo.destroy(&mut vmalloc, &self.handles);
+            }
         }
         vmalloc.set_current_frame_index(self.frame_index).unwrap();
         drop(vmalloc);
