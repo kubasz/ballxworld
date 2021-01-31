@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod schemas;
+pub mod serializer;
 
 pub fn saves_folder_path() -> PathBuf {
     PathBuf::from("saves")
@@ -109,7 +110,7 @@ impl WorldDiskStorage {
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         schemas::db_configure_conn(&mut db)?;
-        schemas::setup_db_schema(&mut db)?;
+        schemas::db_setup_schema(&mut db)?;
         Ok(Self {
             db_path,
             db: Arc::new(Mutex::new(db)),
