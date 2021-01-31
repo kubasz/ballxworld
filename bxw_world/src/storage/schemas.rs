@@ -6,14 +6,30 @@ use std::fmt::Write;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 pub fn db_configure_conn(db: &mut Connection) -> rusqlite::Result<()> {
+    let _p_section = bxw_util::tracy_client::Span::new(
+        "db_configure_conn",
+        "db_configure_conn",
+        file!(),
+        line!(),
+        8,
+    );
     db.execute_batch(include_str!("sql/00_conn_pragmas.sql"))
 }
 
 pub fn db_on_exit(db: &mut Connection) -> rusqlite::Result<()> {
+    let _p_section =
+        bxw_util::tracy_client::Span::new("db_on_exit", "db_on_exit", file!(), line!(), 8);
     db.execute_batch(include_str!("sql/00_conn_on_exit.sql"))
 }
 
 pub fn db_setup_schema(db: &mut Connection) -> rusqlite::Result<()> {
+    let _p_section = bxw_util::tracy_client::Span::new(
+        "db_setup_schema",
+        "db_setup_schema",
+        file!(),
+        line!(),
+        8,
+    );
     let needs_initial_tables = db
         .query_row(
             "SELECT name FROM sqlite_schema WHERE type='table' AND name='bxw_save_meta';",
@@ -34,8 +50,16 @@ pub fn db_store_chunk_data(
     chunk_data: &[(ChunkPosition, Vec<u8>, Vec<u8>)],
     chunks_processed_counter: &AtomicI64,
 ) -> rusqlite::Result<()> {
+    let _p_section = bxw_util::tracy_client::Span::new(
+        "db_store_chunk_data",
+        "db_store_chunk_data",
+        file!(),
+        line!(),
+        8,
+    );
     let transaction = db.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
     {
+        bxw_util::tracy_client::message("Preparing cached transaction", 0);
         let mut stmt = transaction
             .prepare_cached(
                 r#"INSERT OR REPLACE INTO bxw_chunk_storage
@@ -45,6 +69,7 @@ pub fn db_store_chunk_data(
         ;"#,
             )
             .expect("Invalid SQL insert/update statement for bxw_chunk_storage rows");
+        bxw_util::tracy_client::message("DONE preparing cached transaction", 0);
         for (cpos, chunk_data, entity_data) in chunk_data.iter() {
             stmt.execute_named(&[
                 (":x", &cpos.x),
@@ -54,9 +79,12 @@ pub fn db_store_chunk_data(
                 (":ent", entity_data),
             ])?;
             chunks_processed_counter.fetch_add(1 as i64, Ordering::AcqRel);
+            bxw_util::tracy_client::message("Finished a chunk stmt execute", 0);
         }
     }
+    bxw_util::tracy_client::message("SQL commit", 0);
     transaction.commit()?;
+    bxw_util::tracy_client::message("Done SQL commit", 0);
     Ok(())
 }
 
@@ -65,6 +93,13 @@ pub fn db_load_chunk_data(
     positions: &[ChunkPosition],
     chunks_processed_counter: &AtomicI64,
 ) -> rusqlite::Result<Vec<(ChunkPosition, Option<(Vec<u8>, Vec<u8>)>)>> {
+    let _p_section = bxw_util::tracy_client::Span::new(
+        "db_load_chunk_data",
+        "db_load_chunk_data",
+        file!(),
+        line!(),
+        8,
+    );
     use bxw_util::math::vec3;
     let transaction = db.transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)?;
     let sql_prelude = "SELECT x, y, z, voxel_data, entity_data FROM bxw_chunk_storage WHERE (x, y, z) IN (VALUES ";
@@ -85,9 +120,11 @@ pub fn db_load_chunk_data(
     query.push_str(");");
     let mut out_table = Vec::with_capacity(positions.len());
     {
+        bxw_util::tracy_client::message("Preparing dynamic transaction", 0);
         let mut stmt = transaction
             .prepare(&query)
             .expect("Invalid SQL select statement for bxw_chunk_storage rows");
+        bxw_util::tracy_client::message("DONE preparing dynamic transaction", 0);
         {
             let mut rows = stmt.query(rusqlite::NO_PARAMS)?;
             while let Some(row) = rows.next()? {
@@ -100,6 +137,7 @@ pub fn db_load_chunk_data(
                 missing_chunks.remove(&cpos);
                 out_table.push((cpos, Some((voxel_data, entity_data))));
                 chunks_processed_counter.fetch_add(1, Ordering::AcqRel);
+                bxw_util::tracy_client::message("Finished a chunk row", 0);
             }
         }
         stmt.finalize()?;
