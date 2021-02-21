@@ -1,5 +1,4 @@
 use crate::ChunkPosition;
-use bxw_util::bytemuck::__core::sync::atomic::AtomicI64;
 use bxw_util::itertools::Itertools;
 use bxw_util::log;
 use bxw_util::parking_lot::{Mutex, MutexGuard};
@@ -9,7 +8,7 @@ use rusqlite::Connection;
 use std::collections::VecDeque;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 
 mod schemas;
