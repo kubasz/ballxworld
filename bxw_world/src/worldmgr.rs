@@ -422,14 +422,11 @@ impl World {
                             kind.status_array_mut()[cid] = ChunkDataState::Unloaded;
                         }
                     }
-                    let mut any_loaded = false;
-                    for kind in self.handlers.iter() {
-                        if kind.borrow().status_array()[cid] != ChunkDataState::Unloaded {
-                            any_loaded = true;
-                            break;
-                        }
-                    }
-                    if !any_loaded {
+                    let all_unloaded = self
+                        .handlers
+                        .iter()
+                        .all(|kind| kind.borrow().status_array()[cid] == ChunkDataState::Unloaded);
+                    if all_unloaded {
                         self.free_chunk_index(delta.cpos, cid);
                     }
                 } else {
@@ -546,7 +543,7 @@ fn recalculate_load_deltas(load_data: Arc<Mutex<LoadData>>) {
     chunks_to_unload.reserve(64);
     for (&cpos, &cid) in load_data.allocation.iter() {
         let mut kind_should_be_loaded = [false; 8];
-        let mut min_dist = i32::max_value();
+        let mut min_dist = i32::MAX;
         for anchor in load_data.anchors.iter() {
             let dist: i32 = (cpos - anchor.cpos).iter().map(|x| x * x).sum();
             min_dist = dist.min(min_dist);
@@ -657,16 +654,14 @@ fn does_anchor_load_coords(loader: &LoadAnchor, cpos: ChunkPosition) -> bool {
 pub fn iter_neighbors(
     cpos: ChunkPosition,
     include_self: bool,
-) -> Box<dyn Iterator<Item = ChunkPosition>> {
-    Box::new(
-        iproduct!(
-            cpos.y - 1..=cpos.y + 1,
-            cpos.z - 1..=cpos.z + 1,
-            cpos.x - 1..=cpos.x + 1
-        )
-        .filter(move |&(y, z, x)| include_self || x != cpos.x || y != cpos.y || z != cpos.z)
-        .map(|(y, z, x)| vec3(x, y, z)),
+) -> impl Iterator<Item = ChunkPosition> {
+    iproduct!(
+        cpos.y - 1..=cpos.y + 1,
+        cpos.z - 1..=cpos.z + 1,
+        cpos.x - 1..=cpos.x + 1
     )
+    .filter(move |&(y, z, x)| include_self || x != cpos.x || y != cpos.y || z != cpos.z)
+    .map(|(y, z, x)| vec3(x, y, z))
 }
 
 fn can_request_load(
