@@ -1,5 +1,6 @@
 use crate::ecs::*;
 use crate::generation::WorldBlocks;
+use crate::storage::WorldStorageBackend;
 use crate::*;
 use bxw_util::fnv::*;
 use bxw_util::itertools::*;
@@ -159,6 +160,7 @@ pub struct World {
         Sender<SynchronousUpdateTask>,
         Receiver<SynchronousUpdateTask>,
     ),
+    storage: Box<dyn WorldStorageBackend>,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -229,7 +231,11 @@ struct LoadData {
 }
 
 impl World {
-    pub fn new(name: String, voxregistry: Arc<VoxelRegistry>) -> Self {
+    pub fn new(
+        name: String,
+        voxregistry: Arc<VoxelRegistry>,
+        storage: Box<dyn WorldStorageBackend>,
+    ) -> Self {
         let default_capacity = 64;
         let busy_arc = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel();
@@ -260,6 +266,7 @@ impl World {
             tasks_in_pool: Arc::new(Default::default()),
             remaining_deltas: Vec::new(),
             sync_task_queue: (tx, rx),
+            storage,
         }
     }
 

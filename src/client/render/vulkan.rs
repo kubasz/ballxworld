@@ -1179,7 +1179,7 @@ impl RenderingContext {
         let image_index = match unsafe {
             self.handles.ext_swapchain.acquire_next_image(
                 self.swapchain.swapchain,
-                u64::max_value(),
+                u64::MAX,
                 self.swapchain.inflight_image_available_semaphores[inflight_index],
                 vk::Fence::null(),
             )

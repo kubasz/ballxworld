@@ -457,7 +457,7 @@ mod test {
 }
 
 /// Cross product table for a pair of directions, indexed by 6*a+b (a,b being signed axis indices)
-const DIRECTION_CROSS_TABLE: [Option<Direction>; 36] = {
+static DIRECTION_CROSS_TABLE: [Option<Direction>; 36] = {
     use Direction::*;
     [
         None,         // XMinus*XMinus

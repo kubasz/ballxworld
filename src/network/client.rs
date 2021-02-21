@@ -5,6 +5,7 @@ use crate::network::packets::auth::{ClientConnectionType, ConnectionResponse};
 use crate::network::protocol::{
     authflow_client_handshake_packet, authflow_client_try_accept_handshake_ack,
 };
+use bxw_util::log;
 use bxw_util::sodiumoxide::crypto::box_;
 use std::net::SocketAddr;
 use std::sync::Arc;

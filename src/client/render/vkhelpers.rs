@@ -264,7 +264,7 @@ impl<'h> FenceGuard<'h> {
         match unsafe { self.handles.device.get_fence_status(self.fence) } {
             Ok(_) => true,
             Err(vk::Result::NOT_READY) => false,
-            Err(e) => panic!(e),
+            Err(e) => panic!("{}", e),
         }
     }
 

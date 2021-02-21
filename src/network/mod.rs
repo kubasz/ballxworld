@@ -6,6 +6,7 @@ pub mod server;
 
 use crate::config::ConfigHandle;
 
+use bxw_util::log;
 use bxw_util::parking_lot::Mutex;
 use std::sync::Arc;
 

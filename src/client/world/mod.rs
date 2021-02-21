@@ -1,6 +1,7 @@
 use bxw_util::change::Change;
 use bxw_world::ecs::*;
 use bxw_world::generation::WorldBlocks;
+use bxw_world::storage::{WorldDiskStorage, WorldSave};
 use bxw_world::worldmgr::*;
 use bxw_world::VoxelRegistry;
 use std::sync::Arc;
@@ -16,9 +17,19 @@ pub struct ClientWorld {
     pub camera_settings: CameraSettings,
 }
 
+#[derive(Debug)]
+pub enum WorldOpenError {
+    StorageError(bxw_world::storage::rusqlite::Error),
+}
+
 impl ClientWorld {
-    pub fn new_world(name: String, registry: Arc<VoxelRegistry>) -> (World, ClientWorld) {
-        let mut world = World::new(name, registry.clone());
+    pub fn new_local_world(
+        registry: Arc<VoxelRegistry>,
+        save: &WorldSave,
+    ) -> Result<(World, ClientWorld), WorldOpenError> {
+        let world_disk_storage =
+            Box::new(WorldDiskStorage::open(save).map_err(WorldOpenError::StorageError)?);
+        let mut world = World::new(save.name(), registry.clone(), world_disk_storage);
         world.replace_handler(CHUNK_BLOCK_DATA, Box::new(WorldBlocks::new(registry, 0)));
         let entities = world.ecs();
         let mut local_player = bxw_world::entities::player::create_player(
@@ -45,6 +56,6 @@ impl ClientWorld {
                 yaw: 0.0,
             },
         };
-        (world, cw)
+        Ok((world, cw))
     }
 }

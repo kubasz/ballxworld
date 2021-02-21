@@ -2,9 +2,11 @@ use crate::config::Config;
 use crate::network::server::{NetServer, ServerControlMessage};
 use crate::server::world::ServerWorld;
 use bxw_util::debug_data::DEBUG_DATA;
+use bxw_util::log;
 use bxw_world::blocks::register_standard_blocks;
 use bxw_world::generation::WorldBlocks;
 use bxw_world::physics::TIMESTEP as PHYSICS_FRAME_TIME;
+use bxw_world::storage::WorldSave;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -28,7 +30,20 @@ pub fn server_main() {
     let mut vxreg: Box<bxw_world::voxregistry::VoxelRegistry> = Box::default();
     register_standard_blocks(&mut vxreg, &|_| 0);
     let vxreg: Arc<bxw_world::voxregistry::VoxelRegistry> = Arc::from(vxreg);
-    let (mut world, mut _server_world) = ServerWorld::new_world("world".to_owned(), vxreg.clone());
+    let savefile = {
+        let name = "serverworld";
+        if let Some(ws) = WorldSave::list_existing()
+            .expect("Couldn't list world savefiles")
+            .into_iter()
+            .find(|ws| ws.name() == name)
+        {
+            ws
+        } else {
+            WorldSave::new(name).expect("Couldn't create a new world savefile")
+        }
+    };
+    let (mut world, mut _server_world) =
+        ServerWorld::new_world(vxreg.clone(), &savefile).expect("Couldn't create a new world");
     let _wgen = WorldBlocks::new(vxreg, 0);
 
     let mut previous_frame_time = Instant::now();

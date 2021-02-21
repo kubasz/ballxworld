@@ -78,7 +78,7 @@ pub fn db_store_chunk_data(
                 (":vox", chunk_data),
                 (":ent", entity_data),
             ])?;
-            chunks_processed_counter.fetch_add(1 as i64, Ordering::AcqRel);
+            chunks_processed_counter.fetch_add(1i64, Ordering::AcqRel);
             bxw_util::tracy_client::message("Finished a chunk stmt execute", 0);
         }
     }
@@ -88,11 +88,13 @@ pub fn db_store_chunk_data(
     Ok(())
 }
 
+pub type DbChunkLoadResults = Vec<(ChunkPosition, Option<(Vec<u8>, Vec<u8>)>)>;
+
 pub fn db_load_chunk_data(
     db: &mut Connection,
     positions: &[ChunkPosition],
     chunks_processed_counter: &AtomicI64,
-) -> rusqlite::Result<Vec<(ChunkPosition, Option<(Vec<u8>, Vec<u8>)>)>> {
+) -> rusqlite::Result<DbChunkLoadResults> {
     let _p_section = bxw_util::tracy_client::Span::new(
         "db_load_chunk_data",
         "db_load_chunk_data",
@@ -110,7 +112,7 @@ pub fn db_load_chunk_data(
     for cpos in positions.iter().with_position() {
         use bxw_util::itertools::Position;
         if matches!(cpos, Position::Middle(_) | Position::Last(_)) {
-            query.push_str(",");
+            query.push(',');
         }
         let cv = cpos.into_inner();
         missing_chunks.insert(*cv);

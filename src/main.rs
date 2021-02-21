@@ -1,3 +1,5 @@
+#![allow(clippy::upper_case_acronyms)]
+
 pub mod client;
 pub mod config;
 pub mod network;
@@ -5,6 +7,7 @@ pub mod server;
 pub mod util;
 
 use bxw_util::debug_data::TrackingAllocator;
+use bxw_util::log;
 
 #[global_allocator]
 static TRACK_ALLOCATOR: TrackingAllocator<rpmalloc::RpMalloc> = TrackingAllocator {

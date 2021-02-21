@@ -21,7 +21,6 @@ image = "0.23"
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] } # Errors in macros if only in bxw_util, hence it's repeated here
 num_enum = "0.5"
-log = "0.4"
 log4rs = { version = "1.0.0", features = ["all_components", "console_writer", "background_rotation", "config_parsing", "toml_format"] }
 rpmalloc-sys = { version = "0.2.1", features = [] }
 

@@ -1,5 +1,5 @@
 #![allow(clippy::unused_unit)]
-
+#![allow(clippy::upper_case_acronyms)]
 // Re-export dependencies
 pub use blake3;
 pub use bytemuck;
@@ -8,6 +8,7 @@ pub use fnv;
 pub use glm;
 pub use itertools;
 pub use lazy_static;
+pub use log;
 pub use lru;
 pub use nalgebra as na;
 pub use num_cpus;

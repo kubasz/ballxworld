@@ -18,7 +18,6 @@ use bxw_util::*;
 use bxw_world::blocks::register_standard_blocks;
 use bxw_world::ecs::*;
 use bxw_world::entities::player::PLAYER_EYE_HEIGHT;
-use bxw_world::generation::WorldBlocks;
 use bxw_world::BlockPosition;
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -38,6 +37,7 @@ use bxw_util::direction::OctahedralOrientation;
 use bxw_world::blocks::stdshapes::StdMeta;
 use bxw_world::physics::SMALL_V_CUTOFF;
 use bxw_world::physics::TIMESTEP as PHYSICS_FRAME_TIME;
+use bxw_world::storage::WorldSave;
 
 #[derive(Debug, Clone, Default)]
 struct InputState {
@@ -77,7 +77,20 @@ pub fn client_main() {
         register_standard_blocks(&mut vxreg, &|nm| vctx.get_texture_id(nm));
     }
     let vxreg: Arc<bxw_world::voxregistry::VoxelRegistry> = Arc::from(vxreg);
-    let (mut world, mut client_world) = ClientWorld::new_world("world".to_owned(), vxreg.clone());
+    let savefile = {
+        let name = "clientworld";
+        if let Some(ws) = WorldSave::list_existing()
+            .expect("Couldn't list world savefiles")
+            .into_iter()
+            .find(|ws| ws.name() == name)
+        {
+            ws
+        } else {
+            WorldSave::new(name).expect("Couldn't create a new world savefile")
+        }
+    };
+    let (mut world, mut client_world) = ClientWorld::new_local_world(vxreg.clone(), &savefile)
+        .expect("Couldn't create a new world");
     {
         let lp = client_world.local_player;
         let ents = world.ecs();
@@ -98,7 +111,6 @@ pub fn client_main() {
         bxw_world::worldmgr::CHUNK_MESH_DATA,
         Box::new(MeshDataHandler::new(vctx.clone(), &rctx.handles)),
     );
-    let wgen = WorldBlocks::new(vxreg.clone(), 0);
 
     let mut previous_frame_time = Instant::now();
     let mut physics_accum_time = 0.0f64;

@@ -3,19 +3,19 @@ use num_enum::*;
 use serde::*;
 
 #[repr(u8)]
-#[serde(try_from = "u8", into = "u8")]
 #[derive(
     Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize,
 )]
+#[serde(try_from = "u8", into = "u8")]
 pub enum ClientConnectionType {
     GameClient = 1,
 }
 
 #[repr(u8)]
-#[serde(try_from = "u8", into = "u8")]
 #[derive(
     Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize,
 )]
+#[serde(try_from = "u8", into = "u8")]
 pub enum PacketTypeHandshake {
     CSHandshake1 = 10,
     SCHandshakeAck1 = 11,
@@ -37,10 +37,10 @@ pub struct PktCSHandshake1Payload {
 }
 
 #[repr(u8)]
-#[serde(try_from = "u8", into = "u8")]
 #[derive(
     Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize,
 )]
+#[serde(try_from = "u8", into = "u8")]
 pub enum ConnectionResponse {
     Accepted = 1,
     BadVersion,

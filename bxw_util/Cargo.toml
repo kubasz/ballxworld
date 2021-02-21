@@ -27,6 +27,7 @@ num-traits = "0.2"
 fnv = "1.0"
 itertools = "0.10"
 regex = "1.4"
+log = "0.4"
 lru = "0.6"
 lazy_static = "1.4"
 num_cpus = "1.13"
@@ -38,7 +39,7 @@ rmp-serde = "0.15"
 sodiumoxide = { git = "https://github.com/sodiumoxide/sodiumoxide.git", rev = "9f6a18d40a4db253edfebac9f2ce5c22d09b1f47" }
 zstd = "0.6"
 
-tracy-client = { version = "0.10.0", default-features = false, features = ["delayed-init"] }
+tracy-client = { version = "0.11.0", default-features = false, features = ["delayed-init"] }
 
 [features]
 default = []

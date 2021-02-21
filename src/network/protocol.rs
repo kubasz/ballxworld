@@ -86,10 +86,10 @@ pub fn net_mpack_deserialize<'a, M: Deserialize<'a>>(
 }
 
 #[repr(u8)]
-#[serde(try_from = "u8", into = "u8")]
 #[derive(
     Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize,
 )]
+#[serde(try_from = "u8", into = "u8")]
 pub enum PacketFormatVersion {
     V1 = 1,
 }
@@ -100,10 +100,10 @@ pub enum PacketFormatVersion {
  * E1 = Encrypted version 1 (current)
  */
 #[repr(u8)]
-#[serde(try_from = "u8", into = "u8")]
 #[derive(
     Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize,
 )]
+#[serde(try_from = "u8", into = "u8")]
 pub enum PacketFormat {
     /// Unencrypted, first packet send client->server
     ConnectionHandshakeV1 = 0xB0,
@@ -125,10 +125,10 @@ impl PacketFormat {
  * Stream ID for the packet
  */
 #[repr(u8)]
-#[serde(try_from = "u8", into = "u8")]
 #[derive(
     Copy, Clone, Debug, Hash, Eq, PartialEq, IntoPrimitive, TryFromPrimitive, Deserialize, Serialize,
 )]
+#[serde(try_from = "u8", into = "u8")]
 pub enum PacketStream {
     Handshake = 0x01,
     /// Keepalive, disconnect, etc. commands
