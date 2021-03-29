@@ -13,7 +13,7 @@ categories = ["games"]
 edition = "2018"
 
 [dependencies]
-ash = "0.31"
+ash = "0.32"
 ctrlc = { version = "3.1", features = ["termination"] }
 vk-mem = "0.2"
 vk-sync = { path = "./vk-sync-rs-master", version = "*" }

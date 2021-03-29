@@ -247,7 +247,8 @@ impl RenderingHandles {
             window.fullscreen();
         }
         let window = window.build().expect("Failed to create the game window");
-        let entry = ash::Entry::new().expect("Can't load Vulkan system library entrypoints");
+        let entry =
+            unsafe { ash::Entry::new() }.expect("Can't load Vulkan system library entrypoints");
         let (instance, debug_utils, ext_debug) = Self::create_instance(&entry, &window, cfg);
         let ext_surface = ash::extensions::khr::Surface::new(&entry, &instance);
         let surface = {
