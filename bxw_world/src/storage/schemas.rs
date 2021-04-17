@@ -1,7 +1,7 @@
 use crate::ChunkPosition;
 use bxw_util::fnv::FnvHashSet;
 use bxw_util::itertools::Itertools;
-use rusqlite::{Connection, OptionalExtension, NO_PARAMS};
+use rusqlite::{named_params, Connection, OptionalExtension};
 use std::fmt::Write;
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -33,7 +33,7 @@ pub fn db_setup_schema(db: &mut Connection) -> rusqlite::Result<()> {
     let needs_initial_tables = db
         .query_row(
             "SELECT name FROM sqlite_schema WHERE type='table' AND name='bxw_save_meta';",
-            NO_PARAMS,
+            [],
             |r| r.get::<_, String>(0),
         )
         .optional()?
@@ -71,13 +71,13 @@ pub fn db_store_chunk_data(
             .expect("Invalid SQL insert/update statement for bxw_chunk_storage rows");
         bxw_util::tracy_client::message("DONE preparing cached transaction", 0);
         for (cpos, chunk_data, entity_data) in chunk_data.iter() {
-            stmt.execute_named(&[
-                (":x", &cpos.x),
-                (":y", &cpos.y),
-                (":z", &cpos.z),
-                (":vox", chunk_data),
-                (":ent", entity_data),
-            ])?;
+            stmt.execute(named_params! {
+                ":x": &cpos.x,
+                ":y": &cpos.y,
+                ":z": &cpos.z,
+                ":vox": chunk_data,
+                ":ent": entity_data,
+            })?;
             chunks_processed_counter.fetch_add(1i64, Ordering::AcqRel);
             bxw_util::tracy_client::message("Finished a chunk stmt execute", 0);
         }
@@ -128,7 +128,7 @@ pub fn db_load_chunk_data(
             .expect("Invalid SQL select statement for bxw_chunk_storage rows");
         bxw_util::tracy_client::message("DONE preparing dynamic transaction", 0);
         {
-            let mut rows = stmt.query(rusqlite::NO_PARAMS)?;
+            let mut rows = stmt.query([])?;
             while let Some(row) = rows.next()? {
                 let x: i32 = row.get_unwrap(0);
                 let y: i32 = row.get_unwrap(1);

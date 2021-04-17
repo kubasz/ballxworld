@@ -144,7 +144,7 @@ impl Config {
 
         self.server_listen_addresses = toml_doc["server"]["listen_addresses"]
             .as_array()
-            .map_or(std::mem::replace(&mut self.server_listen_addresses, vec![]), |varr| {
+            .map_or(std::mem::take(&mut self.server_listen_addresses), |varr| {
                 varr.iter().map(|v| v.as_str()
                     .expect("Address not a IP:Port string in config server.listen_addresses [type is not a string]")
                     .parse::<SocketAddr>()

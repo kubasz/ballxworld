@@ -12,8 +12,8 @@ rand = { version = "0.8", features = ["nightly", "simd_support"] }
 rand_distr = "0.4"
 rand_xoshiro = "0.6"
 rstar = "0.8"
-nalgebra = "0.25"
-glm = { version = "0.11", package = "nalgebra-glm" }
+nalgebra = "0.26"
+glm = { version = "0.12", package = "nalgebra-glm" }
 packed_simd = { version = "0.3.4", package = "packed_simd_2" }
 simba = { version = "0.4", features = ["packed_simd"] }
 toml_edit = "0.2"
@@ -36,8 +36,8 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.5"
 rmp = "0.8"
 rmp-serde = "0.15"
-sodiumoxide = { git = "https://github.com/sodiumoxide/sodiumoxide.git", rev = "9f6a18d40a4db253edfebac9f2ce5c22d09b1f47" }
-zstd = "0.6"
+sodiumoxide = { git = "https://github.com/sodiumoxide/sodiumoxide.git", rev = "f067482076597a03c957f2260100fbe709c9a475" }
+zstd = "0.7"
 
 tracy-client = { version = "0.12.0", default-features = false, features = ["delayed-init"] }
 

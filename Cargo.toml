@@ -1,6 +1,7 @@
 [workspace]
 members = ["bxw_util", "bxw_world"]
 exclude = ["vk-sync-rs-master"]
+resolver = "2"
 
 [package]
 name = "ballxworld"

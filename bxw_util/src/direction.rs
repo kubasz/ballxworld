@@ -217,7 +217,7 @@ impl OctahedralOrientation {
         if Direction::lh_cross(right, up) != Some(front) {
             None
         } else {
-            Some(Self { up, right })
+            Some(Self { right, up })
         }
     }
 
@@ -225,24 +225,16 @@ impl OctahedralOrientation {
         if Direction::lh_cross(right, up).is_none() {
             None
         } else {
-            Some(Self { up, right })
+            Some(Self { right, up })
         }
     }
 
     pub fn from_up_front(up: Direction, front: Direction) -> Option<Self> {
-        if let Some(right) = Direction::lh_cross(up, front) {
-            Some(Self { up, right })
-        } else {
-            None
-        }
+        Direction::lh_cross(up, front).map(|right| Self { right, up })
     }
 
     pub fn from_front_right(front: Direction, right: Direction) -> Option<Self> {
-        if let Some(up) = Direction::lh_cross(front, right) {
-            Some(Self { up, right })
-        } else {
-            None
-        }
+        Direction::lh_cross(front, right).map(|up| Self { right, up })
     }
 
     pub fn from_matrixi(matrix: Matrix3<i32>) -> Option<Self> {
