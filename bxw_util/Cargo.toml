@@ -22,11 +22,11 @@ smallvec = "1"
 rayon = "1.5"
 scopeguard = "1.1"
 parking_lot = { version = "0.11", features = ["nightly"] }
-divrem = "0.1"
+divrem = "1"
 num-traits = "0.2"
 fnv = "1.0"
 itertools = "0.10"
-regex = "1.4"
+regex = "1.5"
 log = "0.4"
 lru = "0.6"
 lazy_static = "1.4"
@@ -37,7 +37,7 @@ toml = "0.5"
 rmp = "0.8"
 rmp-serde = "0.15"
 sodiumoxide = { git = "https://github.com/sodiumoxide/sodiumoxide.git", rev = "f067482076597a03c957f2260100fbe709c9a475" }
-zstd = "0.7"
+zstd = "0.8"
 
 tracy-client = { version = "0.12.0", default-features = false, features = ["delayed-init"] }
 

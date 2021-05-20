@@ -432,7 +432,7 @@ mod test {
     fn rle_decompress_zero_test() {
         let compressed = vec![0, 0, CHUNK_DIM3 as u32 - 2];
         let target = decompress_rle(&compressed).unwrap();
-        let mut decomp_iter = RleVoxelIterator::new(&compressed);
+        let decomp_iter = RleVoxelIterator::new(&compressed);
         assert!(target.blocks_yzx.iter().copied().all(|e| e.repr() == 0));
         assert_eq!(
             decomp_iter.map(|(vd, _, _)| vd.datum).collect_vec(),
@@ -444,7 +444,7 @@ mod test {
     fn rle_decompress_one_test() {
         let compressed = vec![1, 1, CHUNK_DIM3 as u32 - 2];
         let target = decompress_rle(&compressed).unwrap();
-        let mut decomp_iter = RleVoxelIterator::new(&compressed);
+        let decomp_iter = RleVoxelIterator::new(&compressed);
         assert!(target.blocks_yzx.iter().copied().all(|e| e.repr() == 1));
         assert_eq!(
             decomp_iter.map(|(vd, _, _)| vd.repr()).collect_vec(),
@@ -470,7 +470,7 @@ mod test {
             .iter()
             .copied()
             .eq(decdata.blocks_yzx.iter().copied().map(|x| x.repr())));
-        let mut decomp_iter = RleVoxelIterator::new(&compdata);
+        let decomp_iter = RleVoxelIterator::new(&compdata);
         assert!(decomp_iter
             .map(|(vd, _, _)| vd.repr())
             .eq(randdata.iter().copied()));

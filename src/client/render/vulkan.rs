@@ -557,10 +557,9 @@ impl RenderingHandles {
         let avail_layers = entry
             .enumerate_instance_layer_properties()
             .expect("Could not enumerate available Vulkan layers");
-        let avail_lnames: Vec<&CStr> = avail_layers
+        let avail_lnames = avail_layers
             .iter()
-            .map(|l| unsafe { CStr::from_ptr(l.layer_name.as_ptr()) })
-            .collect();
+            .map(|l| unsafe { CStr::from_ptr(l.layer_name.as_ptr()) });
         let mut raw_layers: Vec<CString> = Vec::new();
 
         let mut has_debug = false;
@@ -572,7 +571,7 @@ impl RenderingHandles {
             }
             if !cfg.dbg_renderdoc {
                 let lname = CString::new("VK_LAYER_KHRONOS_validation").unwrap();
-                if avail_lnames.contains(&lname.as_c_str()) {
+                if avail_lnames.clone().any(|e| e == lname.as_c_str()) {
                     raw_layers.push(lname);
                 }
             }

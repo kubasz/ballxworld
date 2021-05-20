@@ -162,12 +162,14 @@ mod test {
     use rusqlite::Connection;
     use std::sync::atomic::{AtomicI64, Ordering};
 
+    type ChunkTestData = Option<(Vec<u8>, Vec<u8>)>;
+
     fn testutil_data_hash(
-        data: &[(ChunkPosition, Option<(Vec<u8>, Vec<u8>)>)],
-    ) -> FnvHashMap<ChunkPosition, Option<(Vec<u8>, Vec<u8>)>> {
+        data: &[(ChunkPosition, ChunkTestData)],
+    ) -> FnvHashMap<ChunkPosition, ChunkTestData> {
         let mut hash = FnvHashMap::with_capacity_and_hasher(data.len() * 2, Default::default());
         for (cpos, opt) in data.iter() {
-            if !hash.insert(*cpos, opt.clone()).is_none() {
+            if hash.insert(*cpos, opt.clone()).is_some() {
                 panic!("Duplicate row of data for cpos {:?}", cpos);
             }
         }

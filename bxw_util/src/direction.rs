@@ -381,7 +381,7 @@ mod test {
                         assert_eq!(orn.back(), d3.opposite());
                         let idx = orn.to_index();
                         assert_eq!(Some(orn), OctahedralOrientation::from_index(idx));
-                        assert_eq!(indices_used.insert(idx), true);
+                        assert!(indices_used.insert(idx));
                         assert_eq!(
                             Some(orn),
                             OctahedralOrientation::from_dirs(orn.right(), orn.up(), orn.front())
