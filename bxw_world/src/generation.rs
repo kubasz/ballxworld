@@ -49,7 +49,7 @@ impl WorldBlocks {
         let chunk = cache.get_uncompressed_chunk_mut(world, self, cpos);
         if let Some(chunk) = chunk {
             for change in changes {
-                let bidx = blockidx_from_blockpos(change.bpos);
+                let bidx = change.bpos.as_blockidx();
                 if chunk.blocks_yzx[bidx] == change.from {
                     chunk.blocks_yzx[bidx] = change.to;
                 }
@@ -278,13 +278,13 @@ impl VCache {
         voxels: &WorldBlocks,
         bpos: BlockPosition,
     ) -> Option<VoxelDatum> {
-        let cpos = chunkpos_from_blockpos(bpos);
+        let cpos: ChunkPosition = bpos.into();
         self.ensure_newest_cached(world, voxels, cpos)?;
-        Some(self.uncompressed_chunks.get(&cpos)?.blocks_yzx[blockidx_from_blockpos(bpos)])
+        Some(self.uncompressed_chunks.get(&cpos)?.blocks_yzx[bpos.as_blockidx()])
     }
 
     pub fn peek_block(&self, bpos: BlockPosition) -> Option<VoxelDatum> {
-        let cpos = chunkpos_from_blockpos(bpos);
-        Some(self.uncompressed_chunks.peek(&cpos)?.blocks_yzx[blockidx_from_blockpos(bpos)])
+        let cpos: ChunkPosition = bpos.into();
+        Some(self.uncompressed_chunks.peek(&cpos)?.blocks_yzx[bpos.as_blockidx()])
     }
 }

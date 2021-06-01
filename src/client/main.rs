@@ -119,7 +119,7 @@ pub fn client_main() {
     let mut input_mgr = InputManager::new(&sdl_ctx);
     input_mgr.input_state.capture_input_requested = true;
 
-    let mut look_pos: BlockPosition = zero();
+    let mut look_pos = BlockPosition::default();
     let mut look_precise_pos: Vector3<f64> = zero();
     let mut click_pos: Option<BlockPosition> = None;
     let mut click_datum: bxw_world::VoxelDatum = Default::default();
@@ -522,7 +522,7 @@ pub fn client_main() {
                         .map(|d| vxreg.get_definition_from_datum(d).selection_shape.is_none())
                         .unwrap_or(false)
                     {
-                        let place_pos = *position + normal.to_vec();
+                        let place_pos = *position + BlockPosition(normal.to_vec());
                         let player_aabb = lp_loc
                             .bounding_shape
                             .aabb(lp_loc.position)
@@ -530,7 +530,7 @@ pub fn client_main() {
                         let voxel_aabb = i_placeable[i_place]
                             .collision_shape
                             .unwrap_or_default()
-                            .translate(place_pos.map(|c| c as f64));
+                            .translate(place_pos.0.map(|c| c as f64));
                         let intersecting = AABB::intersection(player_aabb, voxel_aabb).is_some();
                         if !intersecting {
                             click_pos = Some(place_pos);

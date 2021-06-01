@@ -4,7 +4,6 @@ use crate::storage::WorldStorageBackend;
 use crate::*;
 use bxw_util::fnv::*;
 use bxw_util::itertools::*;
-use bxw_util::math::*;
 use bxw_util::parking_lot::*;
 use bxw_util::smallvec::*;
 use bxw_util::taskpool::{Task, TaskPool};
@@ -305,10 +304,10 @@ impl World {
     pub fn apply_voxel_changes(&mut self, changes: &[VoxelChange]) {
         let mut changes: Vec<(ChunkPosition, VoxelChange)> = changes
             .iter()
-            .map(|vc| (chunkpos_from_blockpos(vc.bpos), vc.clone()))
+            .map(|vc| (ChunkPosition::from(vc.bpos), vc.clone()))
             .collect();
         changes.sort_unstable_by(|(p1, _), (p2, _)| {
-            std::cmp::Ord::cmp(p1.as_ref() as &[i32; 3], p2.as_ref() as &[i32; 3])
+            std::cmp::Ord::cmp(p1.0.as_ref() as &[i32; 3], p2.0.as_ref() as &[i32; 3])
         });
         let mut blocks_ref = self.get_handler(CHUNK_BLOCK_DATA).borrow_mut();
         let blocks: &mut WorldBlocks = blocks_ref.as_any_mut().downcast_mut().unwrap();
@@ -321,7 +320,7 @@ impl World {
         drop(blocks_ref);
         let mut chunks_to_update: FnvHashSet<ChunkPosition> = Default::default();
         for (_, change) in changes.iter() {
-            for upos in dirty_chunkpos_from_blockpos(change.bpos) {
+            for upos in change.bpos.touching_chunks() {
                 chunks_to_update.insert(upos);
             }
         }
@@ -494,7 +493,7 @@ impl World {
                 let loc = loc.unwrap();
                 new_anchors.push(LoadAnchor {
                     eid: anchor.entity_id().u64(),
-                    cpos: chunkpos_from_blockpos(blockpos_from_worldpos(loc.position)),
+                    cpos: ChunkPosition::from(loc.position),
                     radius: anchor.radius,
                     requested_kinds: anchor_kinds,
                 });
@@ -545,7 +544,7 @@ fn recalculate_load_deltas(load_data: Arc<Mutex<LoadData>>) {
         let mut kind_should_be_loaded = [false; 8];
         let mut min_dist = i32::MAX;
         for anchor in load_data.anchors.iter() {
-            let dist: i32 = (cpos - anchor.cpos).iter().map(|x| x * x).sum();
+            let dist: i32 = (cpos - anchor.cpos).0.iter().map(|x| x * x).sum();
             min_dist = dist.min(min_dist);
             if does_anchor_load_coords(anchor, cpos) {
                 for &kind in anchor.requested_kinds.iter() {
@@ -583,7 +582,7 @@ fn recalculate_load_deltas(load_data: Arc<Mutex<LoadData>>) {
             };
             for kind in missing {
                 if can_request_load(&load_data, kind, cpos, cid) {
-                    let dist: i32 = (cpos - anchor.cpos).iter().map(|x| x * x).sum();
+                    let dist: i32 = (cpos - anchor.cpos).0.iter().map(|x| x * x).sum();
                     let (rkinds, rmindist) = chunks_to_load
                         .entry(cpos)
                         .or_insert((Default::default(), Cell::new(dist)));
@@ -644,11 +643,11 @@ fn iter_coords_to_load(loader: &LoadAnchor) -> Box<dyn Iterator<Item = ChunkPosi
     let rrange = -r..=r;
     let cube_range = iproduct!(rrange.clone(), rrange.clone(), rrange);
     let sphere_range = cube_range.filter(move |(x, y, z)| x * x + y * y + z * z <= r2);
-    Box::new(sphere_range.map(move |(x, y, z)| origin + vec3(x, y, z)))
+    Box::new(sphere_range.map(move |(x, y, z)| origin + ChunkPosition::new(x, y, z)))
 }
 
 fn does_anchor_load_coords(loader: &LoadAnchor, cpos: ChunkPosition) -> bool {
-    (cpos - loader.cpos).map(|x| x * x).sum() <= (loader.radius * loader.radius) as i32
+    (cpos - loader.cpos).0.map(|x| x * x).sum() <= (loader.radius * loader.radius) as i32
 }
 
 pub fn iter_neighbors(
@@ -656,12 +655,12 @@ pub fn iter_neighbors(
     include_self: bool,
 ) -> impl Iterator<Item = ChunkPosition> {
     iproduct!(
-        cpos.y - 1..=cpos.y + 1,
-        cpos.z - 1..=cpos.z + 1,
-        cpos.x - 1..=cpos.x + 1
+        cpos.0.y - 1..=cpos.0.y + 1,
+        cpos.0.z - 1..=cpos.0.z + 1,
+        cpos.0.x - 1..=cpos.0.x + 1
     )
-    .filter(move |&(y, z, x)| include_self || x != cpos.x || y != cpos.y || z != cpos.z)
-    .map(|(y, z, x)| vec3(x, y, z))
+    .filter(move |&(y, z, x)| include_self || x != cpos.0.x || y != cpos.0.y || z != cpos.0.z)
+    .map(|(y, z, x)| ChunkPosition::new(x, y, z))
 }
 
 fn can_request_load(

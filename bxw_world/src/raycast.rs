@@ -91,7 +91,7 @@ impl<'q> RaycastQuery<'q> {
             let voxels = voxels.as_any().downcast_ref::<WorldBlocks>().unwrap();
             let offset_start: Vector3<f64> = self.start_point + vec3(0.5, 0.5, 0.5);
             let mut bpos: Vector3<i32> = offset_start.map(|c| c.floor() as i32);
-            let mut cpos: Vector3<i32> = chunkpos_from_blockpos(bpos);
+            let mut cpos: Vector3<i32> = ChunkPosition::from(BlockPosition(bpos)).0;
             let end_bpos: Vector3<i32> =
                 (offset_start + direction * self.distance_limit).map(|c| c.floor() as i32);
             let iters: i32 = (end_bpos - bpos).iter().map(|c| c.abs()).sum::<i32>() + 1;
@@ -124,14 +124,14 @@ impl<'q> RaycastQuery<'q> {
             let ichunk_dim = CHUNK_DIM as i32;
             bpos -= cpos * ichunk_dim;
             let mut vcache = voxels.get_vcache();
-            let mut chunk = vcache.get_uncompressed_chunk(self.world, voxels, cpos);
+            let mut chunk = vcache.get_uncompressed_chunk(self.world, voxels, ChunkPosition(cpos));
             let mut normal_datum = None;
             let mut t_total = 0.0;
 
             for _ in 0..iters {
                 // check block
                 if let Some(chunk) = chunk {
-                    let bidx = blockidx_from_blockpos(bpos);
+                    let bidx = BlockPosition(bpos).as_blockidx();
                     let datum = chunk.blocks_yzx[bidx];
                     let vdef = voxels.voxel_registry.get_definition_from_datum(datum);
                     if vdef.selection_shape.is_some() {
@@ -143,7 +143,7 @@ impl<'q> RaycastQuery<'q> {
                         // hit!
                         return RaycastResult {
                             hit: Hit::Voxel {
-                                position: block_position,
+                                position: BlockPosition(block_position),
                                 datum,
                                 normal,
                                 normal_datum,
@@ -175,7 +175,7 @@ impl<'q> RaycastQuery<'q> {
                 if bpos[min_tmax] < 0 || bpos[min_tmax] >= ichunk_dim {
                     bpos[min_tmax] -= ichunk_dim * step[min_tmax];
                     cpos[min_tmax] += step[min_tmax];
-                    chunk = vcache.get_uncompressed_chunk(self.world, voxels, cpos);
+                    chunk = vcache.get_uncompressed_chunk(self.world, voxels, ChunkPosition(cpos));
                 }
                 t_total = t_max[min_tmax];
                 t_max[min_tmax] += t_delta[min_tmax];

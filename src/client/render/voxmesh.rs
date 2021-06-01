@@ -62,7 +62,7 @@ pub fn mesh_from_chunk(
             }
         });
         let cidx = rcpos.x + rcpos.z * 3 + rcpos.y * 9;
-        let bpos = blockidx_from_blockpos(vec3(x as i32 - 1, y as i32 - 1, z as i32 - 1));
+        let bpos = BlockPosition::new(x as i32 - 1, y as i32 - 1, z as i32 - 1).as_blockidx();
         let chunkiter = &mut ucchunks[cidx];
         let vdat = chunkiter.skip_until_index(bpos).unwrap().0;
         let vdef = registry.get_definition_from_datum(vdat);
@@ -92,7 +92,7 @@ pub fn mesh_from_chunk(
     for (cell_y, cell_z, cell_x) in iproduct!(0..CHUNK_DIM, 0..CHUNK_DIM, 0..CHUNK_DIM) {
         let ipos = vec3(cell_x as i32, cell_y as i32, cell_z as i32);
         let vidx = get_block_idx(ipos);
-        let ic_vidx = blockidx_from_blockpos(ipos);
+        let ic_vidx = BlockPosition(ipos).as_blockidx();
         let (_vdat, vdef, vshape, vor) = vdecoded[vidx];
 
         if vdef.mesh.is_none() {

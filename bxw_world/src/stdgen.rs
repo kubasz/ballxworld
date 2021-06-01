@@ -342,8 +342,8 @@ impl StdGenerator {
             let mut vparams: [MaybeUninit<VoxelParams>; CHUNK_DIM * CHUNK_DIM] =
                 unsafe { std::mem::MaybeUninit::uninit().assume_init() };
             for (i, v) in vparams[..].iter_mut().enumerate() {
-                let x = (i % CHUNK_DIM) as i32 + (chunk.position.x * VCD);
-                let z = ((i / CHUNK_DIM) % CHUNK_DIM) as i32 + (chunk.position.z * VCD);
+                let x = (i % CHUNK_DIM) as i32 + (chunk.position.0.x * VCD);
+                let z = ((i / CHUNK_DIM) % CHUNK_DIM) as i32 + (chunk.position.0.z * VCD);
                 let p = cellgen.calc_voxel_params(vec2(x, z));
                 unsafe {
                     std::ptr::write(v.as_mut_ptr(), p);
@@ -356,9 +356,9 @@ impl StdGenerator {
             let xc = (vidx % CHUNK_DIM) as i32;
             let zc = ((vidx / CHUNK_DIM) % CHUNK_DIM) as i32;
             let yc = ((vidx / CHUNK_DIM / CHUNK_DIM) % CHUNK_DIM) as i32;
-            //let x = (chunk.position.x * VCD) as i32 + xc;
-            let y = (chunk.position.y * VCD) as i32 + yc;
-            //let z = (chunk.position.z * VCD) as i32 + zc;
+            //let x = (chunk.position.0.x * VCD) as i32 + xc;
+            let y = (chunk.position.0.y * VCD) as i32 + yc;
+            //let z = (chunk.position.0.z * VCD) as i32 + zc;
             let vp = vparams[(xc + zc * (CHUNK_DIM as i32)) as usize];
 
             let h = vp.height;

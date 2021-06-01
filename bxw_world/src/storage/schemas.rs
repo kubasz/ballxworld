@@ -72,9 +72,9 @@ pub fn db_store_chunk_data(
         bxw_util::tracy_client::message("DONE preparing cached transaction", 0);
         for (cpos, chunk_data, entity_data) in chunk_data.iter() {
             stmt.execute(named_params! {
-                ":x": &cpos.x,
-                ":y": &cpos.y,
-                ":z": &cpos.z,
+                ":x": &cpos.0.x,
+                ":y": &cpos.0.y,
+                ":z": &cpos.0.z,
                 ":vox": chunk_data,
                 ":ent": entity_data,
             })?;
@@ -102,7 +102,6 @@ pub fn db_load_chunk_data(
         line!(),
         8,
     );
-    use bxw_util::math::vec3;
     let transaction = db.transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)?;
     let sql_prelude = "SELECT x, y, z, voxel_data, entity_data FROM bxw_chunk_storage WHERE (x, y, z) IN (VALUES ";
     let mut query = String::with_capacity(sql_prelude.len() + 16 * positions.len() + 16);
@@ -117,7 +116,12 @@ pub fn db_load_chunk_data(
         let cv = cpos.into_inner();
         missing_chunks.insert(*cv);
         // SQL Injection Safety: formatting simple integers into the query can't generate non-{digit, +, -} characters
-        write!(query, "({},{},{})", cv.x as i32, cv.y as i32, cv.z as i32).unwrap();
+        write!(
+            query,
+            "({},{},{})",
+            cv.0.x as i32, cv.0.y as i32, cv.0.z as i32
+        )
+        .unwrap();
     }
     query.push_str(");");
     let mut out_table = Vec::with_capacity(positions.len());
@@ -135,7 +139,7 @@ pub fn db_load_chunk_data(
                 let z: i32 = row.get_unwrap(2);
                 let voxel_data: Vec<u8> = row.get_unwrap(3);
                 let entity_data: Vec<u8> = row.get_unwrap(4);
-                let cpos = vec3(x, y, z);
+                let cpos = ChunkPosition::new(x, y, z);
                 missing_chunks.remove(&cpos);
                 out_table.push((cpos, Some((voxel_data, entity_data))));
                 chunks_processed_counter.fetch_add(1, Ordering::AcqRel);
@@ -178,8 +182,6 @@ mod test {
 
     #[test]
     pub fn db_simple_test() {
-        use bxw_util::math::*;
-
         // Use an in-memory db for testing the SQL queries
         let mut inmem = Connection::open_in_memory().unwrap();
         // Initial setup
@@ -187,9 +189,9 @@ mod test {
         db_setup_schema(&mut inmem).expect("setup_db_schema failed");
         // Insert first set of test data
         let sample_data_1 = [
-            (vec3(0, 0, 0), vec![0, 0, 0], vec![1]),
-            (vec3(0, 1, 0), vec![0, 1, 0], vec![2]),
-            (vec3(0, 0, 1), vec![0, 0, 1], vec![3]),
+            (ChunkPosition::new(0, 0, 0), vec![0, 0, 0], vec![1]),
+            (ChunkPosition::new(0, 1, 0), vec![0, 1, 0], vec![2]),
+            (ChunkPosition::new(0, 0, 1), vec![0, 0, 1], vec![3]),
         ];
         let counter = AtomicI64::new(0);
         db_store_chunk_data(&mut inmem, &sample_data_1, &counter)
@@ -198,16 +200,16 @@ mod test {
         counter.store(0, Ordering::SeqCst);
         // Test first set of test data
         let sample_query_1 = [
-            vec3(0, 0, 1), //
-            vec3(0, 1, 0), //
-            vec3(0, 0, 0), //
-            vec3(1, 1, 1), //
+            ChunkPosition::new(0, 0, 1), //
+            ChunkPosition::new(0, 1, 0), //
+            ChunkPosition::new(0, 0, 0), //
+            ChunkPosition::new(1, 1, 1), //
         ];
         let sample_expected_1 = testutil_data_hash(&[
-            (vec3(0, 0, 0), Some((vec![0, 0, 0], vec![1]))),
-            (vec3(0, 1, 0), Some((vec![0, 1, 0], vec![2]))),
-            (vec3(0, 0, 1), Some((vec![0, 0, 1], vec![3]))),
-            (vec3(1, 1, 1), None),
+            (ChunkPosition::new(0, 0, 0), Some((vec![0, 0, 0], vec![1]))),
+            (ChunkPosition::new(0, 1, 0), Some((vec![0, 1, 0], vec![2]))),
+            (ChunkPosition::new(0, 0, 1), Some((vec![0, 0, 1], vec![3]))),
+            (ChunkPosition::new(1, 1, 1), None),
         ]);
         let sample_qresult_1 = db_load_chunk_data(&mut inmem, &sample_query_1, &counter)
             .expect("Couldn't query for initially stored chunks");
@@ -221,9 +223,9 @@ mod test {
         assert_eq!(sample_expected_1, sample_qhash_1);
         // Insert and replace more data
         let sample_data_2 = [
-            (vec3(0, 0, 0), vec![0, 0, 0], vec![1]),
-            (vec3(0, 0, 1), vec![0, 6, 1, 5, 3], vec![3, 4]),
-            (vec3(1, 1, 1), vec![24, 1, 0, 32], vec![6, 7]),
+            (ChunkPosition::new(0, 0, 0), vec![0, 0, 0], vec![1]),
+            (ChunkPosition::new(0, 0, 1), vec![0, 6, 1, 5, 3], vec![3, 4]),
+            (ChunkPosition::new(1, 1, 1), vec![24, 1, 0, 32], vec![6, 7]),
         ];
         db_store_chunk_data(&mut inmem, &sample_data_2, &counter)
             .expect("Couldn't store sample data 2");
@@ -231,18 +233,24 @@ mod test {
         counter.store(0, Ordering::SeqCst);
         // Check updated data
         let sample_query_2 = [
-            vec3(0, 0, 1), //
-            vec3(0, 1, 0), //
-            vec3(0, 0, 0), //
-            vec3(1, 1, 1), //
-            vec3(1, 1, 2), //
+            ChunkPosition::new(0, 0, 1), //
+            ChunkPosition::new(0, 1, 0), //
+            ChunkPosition::new(0, 0, 0), //
+            ChunkPosition::new(1, 1, 1), //
+            ChunkPosition::new(1, 1, 2), //
         ];
         let sample_expected_2 = testutil_data_hash(&[
-            (vec3(0, 0, 0), Some((vec![0, 0, 0], vec![1]))),
-            (vec3(0, 1, 0), Some((vec![0, 1, 0], vec![2]))),
-            (vec3(0, 0, 1), Some((vec![0, 6, 1, 5, 3], vec![3, 4]))),
-            (vec3(1, 1, 1), Some((vec![24, 1, 0, 32], vec![6, 7]))),
-            (vec3(1, 1, 2), None),
+            (ChunkPosition::new(0, 0, 0), Some((vec![0, 0, 0], vec![1]))),
+            (ChunkPosition::new(0, 1, 0), Some((vec![0, 1, 0], vec![2]))),
+            (
+                ChunkPosition::new(0, 0, 1),
+                Some((vec![0, 6, 1, 5, 3], vec![3, 4])),
+            ),
+            (
+                ChunkPosition::new(1, 1, 1),
+                Some((vec![24, 1, 0, 32], vec![6, 7])),
+            ),
+            (ChunkPosition::new(1, 1, 2), None),
         ]);
         let sample_qresult_2 = db_load_chunk_data(&mut inmem, &sample_query_2, &counter)
             .expect("Couldn't query for updated stored chunks");

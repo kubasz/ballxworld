@@ -1,8 +1,8 @@
-use crate::ecs::*;
+use crate::{ecs::*, BlockPosition, ChunkPosition};
 //use crate::raycast::*;
 use crate::generation::WorldBlocks;
 use crate::worldmgr::*;
-use crate::{blockpos_from_worldpos, chunkpos_from_blockpos, Direction};
+use crate::Direction;
 use bxw_util::change::Change;
 use bxw_util::collider::AABB;
 use bxw_util::math::*;
@@ -22,7 +22,7 @@ pub const WORLD_LIMIT: f64 = i32::max_value() as f64 / 4.0;
 pub const TOUCH_EPSILON: f64 = 1.0e-2;
 
 fn check_suffocation(world: &World, voxels: &WorldBlocks, position: Vector3<f64>) -> bool {
-    let bpos = blockpos_from_worldpos(position);
+    let bpos = BlockPosition::from(position);
     let bidx = voxels.get_vcache().get_block(world, voxels, bpos);
     if let Some(bidx) = bidx {
         let vdef = voxels.voxel_registry.get_definition_from_datum(bidx);
@@ -61,7 +61,7 @@ pub fn world_physics_tick(world: &mut World) {
         let mass = new_phys.mass;
 
         let old_pos = new_loc.position;
-        let old_cpos = chunkpos_from_blockpos(blockpos_from_worldpos(old_pos));
+        let old_cpos: ChunkPosition = BlockPosition::from(old_pos).into();
         // don't calculate physics where blocks aren't loaded yet
         if voxels.get_chunk(world, old_cpos).is_none() {
             continue;
@@ -252,8 +252,8 @@ pub fn aabb_voxel_intersection(
     if let Some(ref mut out) = out_intersections {
         out.clear();
     }
-    let vx_mins: Vector3<i32> = blockpos_from_worldpos(entity_aabb.mins);
-    let vx_maxs: Vector3<i32> = blockpos_from_worldpos(entity_aabb.maxs);
+    let vx_mins: Vector3<i32> = BlockPosition::from(entity_aabb.mins).0;
+    let vx_maxs: Vector3<i32> = BlockPosition::from(entity_aabb.maxs).0;
     let mut vcache = voxels.get_vcache();
 
     let mut intersecting = false;
@@ -262,7 +262,7 @@ pub fn aabb_voxel_intersection(
         .multi_cartesian_product()
     {
         let bpos: Vector3<i32> = vec3(vx_pos[0], vx_pos[1], vx_pos[2]);
-        let bidx = vcache.get_block(world, voxels, bpos);
+        let bidx = vcache.get_block(world, voxels, BlockPosition(bpos));
         if let Some(bidx) = bidx {
             let bdef = voxels.voxel_registry.get_definition_from_datum(bidx);
             if bdef.collision_shape.is_none() {

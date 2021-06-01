@@ -349,9 +349,7 @@ impl ChunkDataHandler for MeshDataHandler {
                             &ai,
                         )
                     };
-                    buffer.give_name(&handles, || {
-                        format!("chunk({},{},{})", cpos.x, cpos.y, cpos.z)
-                    });
+                    buffer.give_name(&handles, || format!("{}", cpos));
                     // write to staging
                     {
                         let _p_span = bxw_util::tracy_client::Span::new(
@@ -839,7 +837,7 @@ impl VoxelRenderer {
 
     #[allow(clippy::cast_ptr_alignment)]
     pub fn inpass_draw(&mut self, fctx: &mut InPassFrameContext, world: &World) {
-        let (mut hichunk, mut hiidx) = (vec3(0, 0, 0), -1);
+        let (mut hichunk, mut hiidx) = (ChunkPosition::default(), -1);
         let fwd: Vector3<f32>;
         let player_pos;
         let player_cpos;
@@ -849,8 +847,8 @@ impl VoxelRenderer {
             let entities = world.ecs();
             let lp_loc: &CLocation = entities.get_component(client.local_player).unwrap();
             player_pos = lp_loc.position + fctx.delta_time * lp_loc.velocity; // predict with delta-time
-            player_cpos = chunkpos_from_blockpos(blockpos_from_worldpos(player_pos));
-            player_incpos = player_pos - (player_cpos * CHUNK_DIM as i32).map(|c| c as f64);
+            player_cpos = ChunkPosition::from(player_pos);
+            player_incpos = player_pos - (player_cpos.0 * CHUNK_DIM as i32).map(|c| c as f64);
             let player_ang = lp_loc.orientation;
             let mview: Matrix4<f32>;
             let mrot: Matrix3<f32>;
@@ -876,8 +874,8 @@ impl VoxelRenderer {
             )
             .execute();
             if let raycast::Hit::Voxel { position, .. } = rc.hit {
-                hichunk = chunkpos_from_blockpos(position);
-                hiidx = blockidx_from_blockpos(position) as i32;
+                hichunk = ChunkPosition::from(position);
+                hiidx = position.as_blockidx() as i32;
             }
             mview
         };
@@ -957,7 +955,9 @@ impl VoxelRenderer {
             if chunk.icount == 0 {
                 continue;
             }
-            let ch_offset = (pos - player_cpos).map(|x| (x as f32) * (CHUNK_DIM as f32));
+            let ch_offset = (pos - player_cpos)
+                .0
+                .map(|x| (x as f32) * (CHUNK_DIM as f32));
             let rpos = ch_offset - (player_incpos.map(|c| c as f32) - fwd * (CHUNK_DIM as f32));
             let ang = fwd.dot(&rpos);
             if ang < 0.0 && rpos.norm_squared() > always_dist {

@@ -29,56 +29,141 @@ pub const CHUNK_DIM: usize = 32;
 pub const CHUNK_DIM2: usize = CHUNK_DIM * CHUNK_DIM;
 pub const CHUNK_DIM3: usize = CHUNK_DIM * CHUNK_DIM * CHUNK_DIM;
 
-pub type ChunkPosition = Vector3<i32>;
-pub type BlockPosition = Vector3<i32>;
+/// Position of a chunk in the world, as a vector of coordinates in the units of chunks
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct ChunkPosition(pub Vector3<i32>);
 
-pub fn blockpos_from_worldpos(wpos: Vector3<f64>) -> BlockPosition {
-    wpos.map(|c| (c + 0.5).floor() as i32)
+impl ChunkPosition {
+    pub fn new(x: i32, y: i32, z: i32) -> Self {
+        Self(vec3(x, y, z))
+    }
+
+    pub fn from_vec(v: Vector3<i32>) -> Self {
+        Self(v)
+    }
 }
 
-pub fn chunkpos_from_blockpos(bpos: BlockPosition) -> ChunkPosition {
-    let cd = CHUNK_DIM as i32;
-    bpos.map(|p| p.div_floor(&cd))
+impl From<BlockPosition> for ChunkPosition {
+    fn from(bpos: BlockPosition) -> Self {
+        let cd = CHUNK_DIM as i32;
+        Self::from_vec(bpos.0.map(|p| p.div_floor(&cd)))
+    }
 }
 
-pub fn blockidx_from_blockpos(bpos: BlockPosition) -> usize {
-    let cd = CHUNK_DIM as i32;
-    let innerpos = bpos.map(|p| p.rem_floor(cd) as usize);
-    innerpos.x + CHUNK_DIM * innerpos.z + CHUNK_DIM2 * innerpos.y
+impl From<Vector3<f64>> for ChunkPosition {
+    fn from(wpos: Vector3<f64>) -> Self {
+        Self::from(BlockPosition::from(wpos))
+    }
 }
 
-pub fn blockpos_from_blockidx(bidx: u32) -> BlockPosition {
-    let x = bidx % CHUNK_DIM as u32;
-    let y = (bidx / CHUNK_DIM as u32) % CHUNK_DIM as u32;
-    let z = (bidx / CHUNK_DIM2 as u32) % CHUNK_DIM as u32;
-    vec3(x as i32, y as i32, z as i32)
+impl std::ops::Add for ChunkPosition {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
 }
 
-pub fn dirty_chunkpos_from_blockpos(bpos: BlockPosition) -> SmallVec<[ChunkPosition; 8]> {
-    let cpos = chunkpos_from_blockpos(bpos);
-    let mut dirty = SmallVec::new();
-    dirty.push(cpos);
-    let ipos = bpos - (CHUNK_DIM as i32) * cpos;
-    let maxdim = CHUNK_DIM as i32 - 1;
-    if ipos.x == 0 {
-        dirty.push(cpos + vec3(-1, 0, 0));
+impl std::ops::Sub for ChunkPosition {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
     }
-    if ipos.x == maxdim {
-        dirty.push(cpos + vec3(1, 0, 0));
+}
+
+impl std::fmt::Display for ChunkPosition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Chunk({}, {}, {})", self.0.x, self.0.y, self.0.z)
     }
-    if ipos.y == 0 {
-        dirty.push(cpos + vec3(0, -1, 0));
+}
+
+/// Position of a block in the world, as a vector of coordinates in the units of blocks
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct BlockPosition(pub Vector3<i32>);
+
+impl BlockPosition {
+    pub fn new(x: i32, y: i32, z: i32) -> Self {
+        Self(vec3(x, y, z))
     }
-    if ipos.y == maxdim {
-        dirty.push(cpos + vec3(0, 1, 0));
+
+    pub fn from_vec(v: Vector3<i32>) -> Self {
+        Self(v)
     }
-    if ipos.z == 0 {
-        dirty.push(cpos + vec3(0, 0, -1));
+
+    pub fn from_blockidx(bidx: u32) -> Self {
+        let x = bidx % CHUNK_DIM as u32;
+        let y = (bidx / CHUNK_DIM as u32) % CHUNK_DIM as u32;
+        let z = (bidx / CHUNK_DIM2 as u32) % CHUNK_DIM as u32;
+        Self::new(x as i32, y as i32, z as i32)
     }
-    if ipos.z == maxdim {
-        dirty.push(cpos + vec3(0, 0, 1));
+
+    pub fn as_blockidx(self) -> usize {
+        let cd = CHUNK_DIM as i32;
+        let innerpos = self.0.map(|p| p.rem_floor(cd) as usize);
+        innerpos.x + CHUNK_DIM * innerpos.z + CHUNK_DIM2 * innerpos.y
     }
-    dirty
+
+    pub fn touching_chunks(self) -> SmallVec<[ChunkPosition; 8]> {
+        let cpos: ChunkPosition = self.into();
+        let mut touching = SmallVec::new();
+        touching.push(cpos);
+        let ipos = self.0 - (CHUNK_DIM as i32) * cpos.0;
+        let maxdim = CHUNK_DIM as i32 - 1;
+        if ipos.x == 0 {
+            touching.push(cpos + ChunkPosition::new(-1, 0, 0));
+        }
+        if ipos.x == maxdim {
+            touching.push(cpos + ChunkPosition::new(1, 0, 0));
+        }
+        if ipos.y == 0 {
+            touching.push(cpos + ChunkPosition::new(0, -1, 0));
+        }
+        if ipos.y == maxdim {
+            touching.push(cpos + ChunkPosition::new(0, 1, 0));
+        }
+        if ipos.z == 0 {
+            touching.push(cpos + ChunkPosition::new(0, 0, -1));
+        }
+        if ipos.z == maxdim {
+            touching.push(cpos + ChunkPosition::new(0, 0, 1));
+        }
+        touching
+    }
+
+    pub fn voxel_center(self) -> Vector3<f64> {
+        self.0.map(f64::from)
+    }
+}
+
+impl From<Vector3<f64>> for BlockPosition {
+    fn from(wpos: Vector3<f64>) -> Self {
+        Self::from_vec(wpos.map(|c| (c + 0.5).floor() as i32))
+    }
+}
+
+impl std::ops::Add for BlockPosition {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
+impl std::ops::Sub for BlockPosition {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
+impl std::fmt::Display for BlockPosition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Block({}, {}, {})", self.0.x, self.0.y, self.0.z)
+    }
 }
 
 pub type VoxelId = u16;
@@ -144,7 +229,7 @@ impl Default for UncompressedChunk {
     fn default() -> Self {
         Self {
             blocks_yzx: [Default::default(); CHUNK_DIM3],
-            position: vec3(0, 0, 0),
+            position: ChunkPosition::default(),
             dirty: 1,
         }
     }
@@ -176,19 +261,10 @@ impl Default for VChunkData {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct VChunk {
     pub data: VChunkData,
     pub position: ChunkPosition,
-}
-
-impl Default for VChunk {
-    fn default() -> Self {
-        Self {
-            data: Default::default(),
-            position: vec3(0, 0, 0),
-        }
-    }
 }
 
 fn compress_rle<I: Iterator<Item = u32>>(data: I) -> Vec<u32> {
@@ -298,7 +374,7 @@ impl<'d> RleVoxelIterator<'d> {
             rem_data: data,
             state: RleVoxelIteratorState::First,
             pos: 0,
-            bpos: BlockPosition::zero(),
+            bpos: BlockPosition::default(),
         }
     }
 
@@ -338,7 +414,7 @@ impl<'d> RleVoxelIterator<'d> {
         let bpos = self.bpos;
         let bidx = self.pos as usize;
         self.pos += 1;
-        self.bpos = blockpos_from_blockidx(self.pos);
+        self.bpos = BlockPosition::from_blockidx(self.pos);
         (datum, bpos, bidx)
     }
 }

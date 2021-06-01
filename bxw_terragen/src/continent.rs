@@ -58,7 +58,7 @@ pub fn continent_tilepos_from_blockpos(
     bpos: BlockPosition,
 ) -> ContinentTilePosition {
     let sz = settings.continent_size as i32;
-    bpos.xz().map(|p| p.div_floor(&sz))
+    bpos.0.xz().map(|p| p.div_floor(&sz))
 }
 
 pub fn continent_tile_inner_pos(
@@ -66,7 +66,7 @@ pub fn continent_tile_inner_pos(
     bpos: BlockPosition,
 ) -> ContinentBlockInnerPosition {
     let sz = settings.continent_size as i32;
-    bpos.xz().map(|p| p.rem_floor(&sz))
+    bpos.0.xz().map(|p| p.rem_floor(&sz))
 }
 
 pub type ValueAndGradient2<T> = (T, Vector2<T>);
