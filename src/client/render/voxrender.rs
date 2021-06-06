@@ -868,7 +868,7 @@ impl VoxelRenderer {
                 player_pos + vec3(0.0, PLAYER_EYE_HEIGHT / 2.0, 0.0),
                 fwd.map(|c| c as f64),
                 32.0,
-                &world,
+                world,
                 true,
                 false,
             )

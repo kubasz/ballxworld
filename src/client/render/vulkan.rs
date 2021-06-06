@@ -649,7 +649,7 @@ impl RenderingHandles {
             .lock_traced("vdo destroy queue", file!(), line!())
             .drain(..)
         {
-            vdo.destroy(&mut vmalloc, &self);
+            vdo.destroy(&mut vmalloc, self);
         }
         for queue in self
             .frame_destroy_queues
@@ -657,7 +657,7 @@ impl RenderingHandles {
             .iter_mut()
         {
             for mut vdo in queue.drain(..) {
-                vdo.destroy(&mut vmalloc, &self);
+                vdo.destroy(&mut vmalloc, self);
             }
         }
     }
@@ -941,7 +941,7 @@ impl Swapchain {
             )
         };
         self.depth_image
-            .give_name(&handles, || "swapchain.depth_image");
+            .give_name(handles, || "swapchain.depth_image");
 
         self.color_image = {
             let qfis = [handles.queues.get_primary_family()];
@@ -979,7 +979,7 @@ impl Swapchain {
             )
         };
         self.depth_image
-            .give_name(&handles, || "swapchain.depth_image");
+            .give_name(handles, || "swapchain.depth_image");
 
         for img in self.swapimageviews.iter() {
             let attachs = [
@@ -1172,7 +1172,7 @@ impl RenderingContext {
 
         if self.swapchain.outdated {
             self.swapchain
-                .recreate_swapchain(&self.window, &self.handles, &cfg);
+                .recreate_swapchain(&self.window, &self.handles, cfg);
             return None;
         }
 
@@ -1192,7 +1192,7 @@ impl RenderingContext {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 self.swapchain.outdated = true;
                 self.swapchain
-                    .recreate_swapchain(&self.window, &self.handles, &cfg);
+                    .recreate_swapchain(&self.window, &self.handles, cfg);
                 return None;
             }
             Err(err) => panic!("{:?}", err),

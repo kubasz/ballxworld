@@ -486,7 +486,7 @@ impl<'d> PacketV1<'d> {
         };
         let fields = pkt.write_decrypted_fields_vec();
         let nonce = secretbox::gen_nonce();
-        let mut encrypted_fields = secretbox::seal(&fields, &nonce, &tx_key);
+        let mut encrypted_fields = secretbox::seal(&fields, &nonce, tx_key);
         packet.reserve_exact(nonce.0.len() + encrypted_fields.len());
         packet.extend_from_slice(&nonce.0);
         packet.append(&mut encrypted_fields);
@@ -637,7 +637,7 @@ pub fn authflow_client_try_accept_handshake_ack(
     if decr_cookie != bytes_cookie {
         return Err(PacketProcessingError::UntrustedCrypto);
     }
-    let (rx, tx) = kx::client_session_keys(&kx_pk, &kx_sk, &msg.s_kx_public)
+    let (rx, tx) = kx::client_session_keys(kx_pk, kx_sk, &msg.s_kx_public)
         .map_err(|_| PacketProcessingError::UntrustedCrypto)?;
     Ok((
         msg.s_response,

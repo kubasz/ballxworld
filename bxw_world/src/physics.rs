@@ -47,7 +47,7 @@ pub fn world_physics_tick(world: &mut World) {
     let pretick = Instant::now();
     let mut intersections = Vec::with_capacity(10);
     let mut changes: Vec<EntityChange> = Vec::new();
-    for old_phys in ECSHandler::<CPhysics>::iter(&entities as &ECS) {
+    for old_phys in ECSHandler::<CPhysics>::iter(entities) {
         let eid = old_phys.entity_id();
         let old_loc: &CLocation = match entities.get_component(eid) {
             Some(loc) => loc,
@@ -71,7 +71,7 @@ pub fn world_physics_tick(world: &mut World) {
         let mut new_accel = vec3(0.0, 0.0, 0.0);
         // determine wall contacts
 
-        new_phys.against_wall = determine_wall_contacts(old_aabb, world, &voxels);
+        new_phys.against_wall = determine_wall_contacts(old_aabb, world, voxels);
 
         // air friction
         new_accel += drag_force(&new_loc, old_vel) / mass;
@@ -127,7 +127,7 @@ pub fn world_physics_tick(world: &mut World) {
         {
             for _iter in 0..4 {
                 let new_aabb = new_loc.bounding_shape.aabb(new_pos);
-                if !aabb_voxel_intersection(new_aabb, world, &voxels, Some(&mut intersections)) {
+                if !aabb_voxel_intersection(new_aabb, world, voxels, Some(&mut intersections)) {
                     break;
                 }
                 // find the largest intersection volume and use as the heuristic for the most important intersection
@@ -162,15 +162,15 @@ pub fn world_physics_tick(world: &mut World) {
         }
 
         // check for suffocation
-        let new_suffocation = check_suffocation(world, &voxels, new_pos);
+        let new_suffocation = check_suffocation(world, voxels, new_pos);
         if new_suffocation {
-            let old_suffocation = check_suffocation(world, &voxels, old_pos);
+            let old_suffocation = check_suffocation(world, voxels, old_pos);
             if old_suffocation {
                 use Direction::*;
                 let mut desuf_dir = YPlus;
                 for dir in &[YPlus, YMinus, XMinus, XPlus, ZMinus, ZPlus] {
                     let dir_suffocation =
-                        check_suffocation(world, &voxels, old_pos + dir.to_vec().map(|c| c as f64));
+                        check_suffocation(world, voxels, old_pos + dir.to_vec().map(|c| c as f64));
                     if !dir_suffocation {
                         desuf_dir = *dir;
                         break;
@@ -237,8 +237,8 @@ fn determine_wall_contacts(aabb: AABB, world: &World, voxels: &WorldBlocks) -> [
                 maxaabb.maxs[maxis] -= TOUCH_EPSILON;
             }
         }
-        contacts[axis * 2] = aabb_voxel_intersection(minaabb, world, &voxels, None);
-        contacts[axis * 2 + 1] = aabb_voxel_intersection(maxaabb, world, &voxels, None);
+        contacts[axis * 2] = aabb_voxel_intersection(minaabb, world, voxels, None);
+        contacts[axis * 2 + 1] = aabb_voxel_intersection(maxaabb, world, voxels, None);
     }
     contacts
 }

@@ -155,7 +155,7 @@ async fn client_netmain(
                     let msg = &msgbuf[0..bytes_received?];
                     match authflow_client_try_accept_handshake_ack(
                         &hs0state,
-                        &msg,
+                        msg,
                         (
                             &shared_state.client_id_keys.0,
                             &shared_state.client_id_keys.1,
