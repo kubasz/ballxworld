@@ -9,6 +9,7 @@ use bxw_util::smallvec::*;
 use bxw_util::taskpool::{Task, TaskPool};
 use std::any::*;
 use std::cell::Cell;
+use std::ops::DerefMut;
 use std::sync::atomic::*;
 use std::sync::mpsc::*;
 
@@ -16,14 +17,21 @@ use std::sync::mpsc::*;
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Debug)]
 pub enum ChunkDataState {
     Unloaded = 0,
-    Loading = 1,
-    Loaded = 2,
-    Updating = 3,
+    WaitingOnIo,
+    NotInIo,
+    Loading,
+    Loaded,
+    Updating,
+    Errored,
 }
 
 impl ChunkDataState {
     pub fn requires_load_request(self) -> bool {
-        self == ChunkDataState::Unloaded
+        self == Self::Unloaded || self == Self::NotInIo
+    }
+
+    pub fn is_loaded(self) -> bool {
+        self == Self::Loaded || self == Self::Updating
     }
 }
 
@@ -38,7 +46,7 @@ type KindsSmallVec = SmallVec<[usize; 6]>;
 pub type AnyChunkData = Option<Arc<dyn Any + Send + Sync>>;
 pub type AnyChunkDataArc = Arc<dyn Any + Send + Sync>;
 
-pub trait ChunkDataHandler {
+pub trait ChunkDataHandler: Any {
     fn status_array(&self) -> &Vec<ChunkDataState>;
     fn status_array_mut(&mut self) -> &mut Vec<ChunkDataState>;
     /// (ChunkDataKind, requires 26 populated neighbors)
@@ -401,6 +409,67 @@ impl World {
         self.flush_sync_tasks();
         let mut remaining = 256 - self.tasks_in_pool.load(Ordering::SeqCst);
         let mut tasks = Vec::with_capacity(32);
+        let mut storage_write_requests: Vec<(ChunkPosition, Vec<u8>, Vec<u8>)> = Vec::new();
+        let mut storage_read_requests: Vec<ChunkPosition> = Vec::new();
+        {
+            let mut storage_responses = std::mem::take(self.storage.lock_responses().deref_mut());
+            for resp in storage_responses.drain(..) {
+                use storage::ChunkIoResponse::*;
+                match resp {
+                    ReadOk {
+                        cpos,
+                        voxel_data,
+                        entity_data,
+                    } => {
+                        let cid = self.allocation.get(&cpos).copied();
+                        if let Some(cid) = cid {
+                            for kind in self.handlers.iter() {
+                                let mut kind = kind.borrow_mut();
+                                if !kind.serializable() {
+                                    continue;
+                                }
+                                if kind.status_array().get(cid).copied()
+                                    != Some(ChunkDataState::WaitingOnIo)
+                                {
+                                    continue;
+                                }
+                                let r = kind.deserialize_data(self, cid, &voxel_data);
+                                if let Err(err) = r {
+                                    log::error!(
+                                        "Error loading chunk {} from storage: {}",
+                                        cpos,
+                                        err
+                                    );
+                                    kind.status_array_mut()[cid] = ChunkDataState::Errored;
+                                } else {
+                                    kind.status_array_mut()[cid] = ChunkDataState::Loaded;
+                                }
+                                let _ = entity_data;
+                            }
+                        }
+                    }
+                    ReadMissing { cpos } => {
+                        let cid = self.allocation.get(&cpos).copied();
+                        if let Some(cid) = cid {
+                            for kind in self.handlers.iter() {
+                                let mut kind = kind.borrow_mut();
+                                if !kind.serializable() {
+                                    continue;
+                                }
+                                if kind.status_array().get(cid).copied()
+                                    != Some(ChunkDataState::WaitingOnIo)
+                                {
+                                    continue;
+                                }
+                                kind.status_array_mut()[cid] = ChunkDataState::NotInIo;
+                            }
+                        }
+                    }
+                    WriteOk { .. } => {}
+                    ClosedOk => {}
+                }
+            }
+        }
         for _deltan in 0..4096 {
             if let Some(delta) = self.remaining_deltas.pop() {
                 let cid = match self.allocation.get(&delta.cpos).copied() {
@@ -417,6 +486,12 @@ impl World {
                     for kind in delta.handlers {
                         let mut kind = self.handlers[kind].borrow_mut();
                         if kind.status_array()[cid] != ChunkDataState::Unloaded {
+                            if kind.serializable() {
+                                let data = kind.serialize_data(self, cid);
+                                if let Some(data) = data {
+                                    storage_write_requests.push((delta.cpos, data, Vec::new()));
+                                }
+                            }
                             let _arc = kind.swap_data(self, cid, None);
                             kind.status_array_mut()[cid] = ChunkDataState::Unloaded;
                         }
@@ -431,21 +506,32 @@ impl World {
                 } else {
                     for kind in delta.handlers {
                         let mut kind = self.handlers[kind].borrow_mut();
-                        if kind.status_array()[cid] == ChunkDataState::Loaded {
-                            continue;
-                        } else {
-                            let task = kind.create_chunk_update_task(self, delta.cpos, cid);
-                            if let Some(task) = task {
+                        let mut status = kind.status_array()[cid];
+                        use ChunkDataState::*;
+                        if !kind.serializable() && status == ChunkDataState::Unloaded {
+                            status = ChunkDataState::NotInIo;
+                        }
+                        match status {
+                            Loaded | WaitingOnIo | Loading | Updating | Errored => continue,
+                            Unloaded => {
+                                storage_read_requests.push(delta.cpos);
+                                kind.status_array_mut()[cid] = ChunkDataState::WaitingOnIo;
                                 remaining -= 1;
-                                self.tasks_in_pool.fetch_add(1, Ordering::SeqCst);
-                                let cnt = self.tasks_in_pool.clone();
-                                tasks.push(task.compose_with(Task::new(
-                                    move || {
-                                        cnt.fetch_sub(1, Ordering::SeqCst);
-                                    },
-                                    false,
-                                    false,
-                                )));
+                            }
+                            NotInIo => {
+                                let task = kind.create_chunk_update_task(self, delta.cpos, cid);
+                                if let Some(task) = task {
+                                    remaining -= 1;
+                                    self.tasks_in_pool.fetch_add(1, Ordering::SeqCst);
+                                    let cnt = self.tasks_in_pool.clone();
+                                    tasks.push(task.compose_with(Task::new(
+                                        move || {
+                                            cnt.fetch_sub(1, Ordering::SeqCst);
+                                        },
+                                        false,
+                                        false,
+                                    )));
+                                }
                             }
                         }
                     }
@@ -459,6 +545,21 @@ impl World {
         }
         if !tasks.is_empty() {
             task_pool.push_tasks(tasks.into_iter());
+        }
+        if !storage_read_requests.is_empty() || !storage_write_requests.is_empty() {
+            let mut storage_requests = self.storage.lock_requests();
+            if !storage_read_requests.is_empty() {
+                storage_requests.push_back(storage::ChunkIoRequest::TryRead {
+                    positions: storage_read_requests,
+                });
+            }
+            if !storage_write_requests.is_empty() {
+                storage_requests.push_back(storage::ChunkIoRequest::Write {
+                    positions: storage_write_requests,
+                });
+            }
+            drop(storage_requests);
+            self.storage.notify_worker();
         }
         bxw_util::debug_data::DEBUG_DATA
             .chunk_queued_deltas
@@ -676,18 +777,19 @@ fn can_request_load(
             return false;
         };
         let statuses = &load_data.status_arrays[depkind];
-        if neighbours {
-            !iter_neighbors(cpos, false).any(|npos| {
-                load_data
-                    .allocation
-                    .get(&npos)
-                    .copied()
-                    .map(|nid| ChunkDataState::requires_load_request(statuses[nid]))
-                    .unwrap_or(true)
-            })
-        } else {
-            !ChunkDataState::requires_load_request(statuses[cid])
-        }
+        ChunkDataState::is_loaded(statuses[cid])
+            && if neighbours {
+                iter_neighbors(cpos, false).all(|npos| {
+                    load_data
+                        .allocation
+                        .get(&npos)
+                        .copied()
+                        .map(|nid| ChunkDataState::is_loaded(statuses[nid]))
+                        .unwrap_or(false)
+                })
+            } else {
+                true
+            }
     } else {
         true
     }

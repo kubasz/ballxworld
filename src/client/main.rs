@@ -340,25 +340,51 @@ pub fn client_main() {
                     rect: GuiRect::from_xywh((0.0, 5.0), (0.0, 5.0), (0.0, 400.0), (0.0, 300.0)),
                 },
             });
-            gui.push_cmd(GuiOrderedCmd {
-                z_index: GUI_Z_LAYER_BACKGROUND + GUI_Z_OFFSET_CONTROL,
-                color: GUI_BLACK,
-                cmd: GuiCmd::FreeText {
-                    text: Cow::from(format!(
-                        "{}\nLookV: {:?}\nLookP: {:?}\nPlace dir: {} {:?}\n{:?}\n",
-                        DEBUG_DATA.hud_format(),
-                        look_pos,
-                        look_precise_pos,
-                        i_orientation,
-                        OctahedralOrientation::from_index(i_orientation as usize).unwrap(),
-                        OctahedralOrientation::from_index(i_orientation as usize)
-                            .unwrap()
-                            .to_matrixi(),
-                    )),
-                    scale: 0.5,
-                    start_at: gv2((0.0, 10.0), (0.0, 10.0)),
-                },
-            });
+            {
+                let pl_x = DEBUG_DATA.local_player_x.load(Ordering::Relaxed) / 10;
+                let pl_y = DEBUG_DATA.local_player_y.load(Ordering::Relaxed) / 10;
+                let pl_z = DEBUG_DATA.local_player_z.load(Ordering::Relaxed) / 10;
+                let pl_chunk = bxw_world::ChunkPosition::from(bxw_world::BlockPosition::new(
+                    pl_x as i32,
+                    pl_y as i32,
+                    pl_z as i32,
+                ));
+                let pl_cidx = world.get_chunk_index(pl_chunk);
+                let mut debug_panel_text = format!(
+                    "{}\nLookV: {:?}\nLookP: {:?}\nPlace dir: {} {:?}\n{:?}\nPlayer CPOS, CIDX: {}, {:?}\n",
+                    DEBUG_DATA.hud_format(),
+                    look_pos,
+                    look_precise_pos,
+                    i_orientation,
+                    OctahedralOrientation::from_index(i_orientation as usize).unwrap(),
+                    OctahedralOrientation::from_index(i_orientation as usize)
+                        .unwrap()
+                        .to_matrixi(),
+                    pl_chunk,
+                    pl_cidx,
+                );
+                if let Some(pl_cidx) = pl_cidx {
+                    let handler_statuses = std::array::IntoIter::new([
+                        bxw_world::worldmgr::CHUNK_BLOCK_DATA,
+                        bxw_world::worldmgr::CHUNK_MESH_DATA,
+                    ])
+                    .map(|hid| world.get_handler(hid).borrow().status_array()[pl_cidx]);
+                    use std::fmt::Write;
+                    writeln!(&mut debug_panel_text, "Chunk data states: ",).unwrap();
+                    for cds in handler_statuses {
+                        writeln!(&mut debug_panel_text, "{:?}, ", cds).unwrap();
+                    }
+                }
+                gui.push_cmd(GuiOrderedCmd {
+                    z_index: GUI_Z_LAYER_BACKGROUND + GUI_Z_OFFSET_CONTROL,
+                    color: GUI_BLACK,
+                    cmd: GuiCmd::FreeText {
+                        text: Cow::from(debug_panel_text),
+                        scale: 0.5,
+                        start_at: gv2((0.0, 10.0), (0.0, 10.0)),
+                    },
+                });
+            }
             gui.push_cmd(GuiOrderedCmd {
                 z_index: GUI_Z_LAYER_BACKGROUND + GUI_Z_OFFSET_CONTROL,
                 color: GUI_WHITE,
